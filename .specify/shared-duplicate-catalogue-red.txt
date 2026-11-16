@@ -1,0 +1,362 @@
+FEFEFEFE                                                                 [100%]
+=================================== ERRORS ====================================
+_ ERROR at teardown of FastIndexCatalogueTests.test_count_and_rows_share_one_snapshot _
+
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmpikcc7zvk', dir_fd = None
+onexc = <function TemporaryDirectory._rmtree.<locals>.onexc at 0x000001C9AC627B60>
+
+    def _rmtree_unsafe(path, dir_fd, onexc):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        try:
+            st = os.lstat(path)
+        except OSError as err:
+            onexc(os.lstat, path, err)
+            return
+        try:
+            if _rmtree_islink(st):
+                # symlinks to directories are forbidden, see bug #1669
+                raise OSError("Cannot call rmtree on a symbolic link")
+        except OSError as err:
+            onexc(os.path.islink, path, err)
+            # can't continue even if onexc hook returns
+            return
+        def onerror(err):
+            if not isinstance(err, FileNotFoundError):
+                onexc(os.scandir, err.filename, err)
+        results = os.walk(path, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files)
+        for dirpath, dirnames, filenames in results:
+            for name in dirnames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.rmdir(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.rmdir, fullname, err)
+            for name in filenames:
+                fullname = os.path.join(dirpath, name)
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmpikcc7zvk\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:701: PermissionError
+
+During handling of the above exception, another exception occurred:
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:975: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:955: in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:852: in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:705: in _rmtree_unsafe
+    onexc(os.unlink, fullname, err)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmpikcc7zvk\\index.sqlite'
+exc = PermissionError(13, 'The process cannot access the file because it is being used by another process')
+
+    def onexc(func, path, exc):
+        if isinstance(exc, PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmpikcc7zvk\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:930: PermissionError
+_ ERROR at teardown of FastIndexCatalogueTests.test_incomplete_root_change_or_busy_catalogue_is_not_success _
+
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmprfea9gbe', dir_fd = None
+onexc = <function TemporaryDirectory._rmtree.<locals>.onexc at 0x000001C9AC6271C0>
+
+    def _rmtree_unsafe(path, dir_fd, onexc):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        try:
+            st = os.lstat(path)
+        except OSError as err:
+            onexc(os.lstat, path, err)
+            return
+        try:
+            if _rmtree_islink(st):
+                # symlinks to directories are forbidden, see bug #1669
+                raise OSError("Cannot call rmtree on a symbolic link")
+        except OSError as err:
+            onexc(os.path.islink, path, err)
+            # can't continue even if onexc hook returns
+            return
+        def onerror(err):
+            if not isinstance(err, FileNotFoundError):
+                onexc(os.scandir, err.filename, err)
+        results = os.walk(path, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files)
+        for dirpath, dirnames, filenames in results:
+            for name in dirnames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.rmdir(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.rmdir, fullname, err)
+            for name in filenames:
+                fullname = os.path.join(dirpath, name)
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmprfea9gbe\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:701: PermissionError
+
+During handling of the above exception, another exception occurred:
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:975: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:955: in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:852: in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:705: in _rmtree_unsafe
+    onexc(os.unlink, fullname, err)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmprfea9gbe\\index.sqlite'
+exc = PermissionError(13, 'The process cannot access the file because it is being used by another process')
+
+    def onexc(func, path, exc):
+        if isinstance(exc, PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmprfea9gbe\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:930: PermissionError
+_ ERROR at teardown of FastIndexCatalogueTests.test_more_than_one_hundred_thousand_files_are_not_truncated _
+
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp99_8ibn3', dir_fd = None
+onexc = <function TemporaryDirectory._rmtree.<locals>.onexc at 0x000001C9AE657E20>
+
+    def _rmtree_unsafe(path, dir_fd, onexc):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        try:
+            st = os.lstat(path)
+        except OSError as err:
+            onexc(os.lstat, path, err)
+            return
+        try:
+            if _rmtree_islink(st):
+                # symlinks to directories are forbidden, see bug #1669
+                raise OSError("Cannot call rmtree on a symbolic link")
+        except OSError as err:
+            onexc(os.path.islink, path, err)
+            # can't continue even if onexc hook returns
+            return
+        def onerror(err):
+            if not isinstance(err, FileNotFoundError):
+                onexc(os.scandir, err.filename, err)
+        results = os.walk(path, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files)
+        for dirpath, dirnames, filenames in results:
+            for name in dirnames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.rmdir(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.rmdir, fullname, err)
+            for name in filenames:
+                fullname = os.path.join(dirpath, name)
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp99_8ibn3\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:701: PermissionError
+
+During handling of the above exception, another exception occurred:
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:975: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:955: in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:852: in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:705: in _rmtree_unsafe
+    onexc(os.unlink, fullname, err)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp99_8ibn3\\index.sqlite'
+exc = PermissionError(13, 'The process cannot access the file because it is being used by another process')
+
+    def onexc(func, path, exc):
+        if isinstance(exc, PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp99_8ibn3\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:930: PermissionError
+_ ERROR at teardown of FastIndexCatalogueTests.test_stream_uses_shared_database_without_walk_or_legacy_cache _
+
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp0ovqt_is', dir_fd = None
+onexc = <function TemporaryDirectory._rmtree.<locals>.onexc at 0x000001C9AE657E20>
+
+    def _rmtree_unsafe(path, dir_fd, onexc):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        try:
+            st = os.lstat(path)
+        except OSError as err:
+            onexc(os.lstat, path, err)
+            return
+        try:
+            if _rmtree_islink(st):
+                # symlinks to directories are forbidden, see bug #1669
+                raise OSError("Cannot call rmtree on a symbolic link")
+        except OSError as err:
+            onexc(os.path.islink, path, err)
+            # can't continue even if onexc hook returns
+            return
+        def onerror(err):
+            if not isinstance(err, FileNotFoundError):
+                onexc(os.scandir, err.filename, err)
+        results = os.walk(path, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files)
+        for dirpath, dirnames, filenames in results:
+            for name in dirnames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.rmdir(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.rmdir, fullname, err)
+            for name in filenames:
+                fullname = os.path.join(dirpath, name)
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp0ovqt_is\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:701: PermissionError
+
+During handling of the above exception, another exception occurred:
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:975: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:955: in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:852: in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py:705: in _rmtree_unsafe
+    onexc(os.unlink, fullname, err)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp0ovqt_is\\index.sqlite'
+exc = PermissionError(13, 'The process cannot access the file because it is being used by another process')
+
+    def onexc(func, path, exc):
+        if isinstance(exc, PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\Truong\\AppData\\Local\\Temp\\tmp0ovqt_is\\index.sqlite'
+
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\tempfile.py:930: PermissionError
+================================== FAILURES ===================================
+_______ FastIndexCatalogueTests.test_count_and_rows_share_one_snapshot ________
+
+self = <tests.test_fast_index_catalogue.FastIndexCatalogueTests testMethod=test_count_and_rows_share_one_snapshot>
+
+    def test_count_and_rows_share_one_snapshot(self):
+        stream = self.ns['generate_fast_index']()
+        prefix = next(stream)
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO file_index VALUES('late.bin','late.bin',0,1,123,'application/octet-stream')")
+        body = json.loads(prefix + ''.join(stream))
+>       self.assertEqual(3, body['total'])
+E       AssertionError: 3 != 0
+
+tests\test_fast_index_catalogue.py:70: AssertionError
+_ FastIndexCatalogueTests.test_incomplete_root_change_or_busy_catalogue_is_not_success _
+
+self = <tests.test_fast_index_catalogue.FastIndexCatalogueTests testMethod=test_incomplete_root_change_or_busy_catalogue_is_not_success>
+
+    def test_incomplete_root_change_or_busy_catalogue_is_not_success(self):
+        client = self.app.test_client()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute('UPDATE index_state SET ready=0')
+>       self.assertEqual(503, client.get('/api/disk/fast_index').status_code)
+E       AssertionError: 503 != 200
+
+tests\test_fast_index_catalogue.py:77: AssertionError
+_ FastIndexCatalogueTests.test_more_than_one_hundred_thousand_files_are_not_truncated _
+
+self = <tests.test_fast_index_catalogue.FastIndexCatalogueTests testMethod=test_more_than_one_hundred_thousand_files_are_not_truncated>
+
+    def test_more_than_one_hundred_thousand_files_are_not_truncated(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute('DELETE FROM file_index')
+            conn.executemany('INSERT INTO file_index VALUES(?,?,0,1,123,?)',
+                ((str(index)+'.bin',str(index)+'.bin','application/octet-stream') for index in range(100001)))
+        body = json.loads(''.join(self.ns['generate_fast_index']()))
+>       self.assertEqual(100001, body['total'])
+E       AssertionError: 100001 != 0
+
+tests\test_fast_index_catalogue.py:60: AssertionError
+_ FastIndexCatalogueTests.test_stream_uses_shared_database_without_walk_or_legacy_cache _
+
+self = <tests.test_fast_index_catalogue.FastIndexCatalogueTests testMethod=test_stream_uses_shared_database_without_walk_or_legacy_cache>
+
+    def test_stream_uses_shared_database_without_walk_or_legacy_cache(self):
+        Path(self.ns['CACHE_FILE']).write_text('{"files":[],"total":0}')
+        with patch.object(os, 'walk', side_effect=AssertionError('Second filesystem walk is forbidden')):
+            body = json.loads(''.join(self.ns['generate_fast_index']()))
+>       self.assertEqual(1, body['catalogue_protocol'])
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'catalogue_protocol'
+
+tests\test_fast_index_catalogue.py:46: KeyError
+=========================== short test summary info ===========================
+FAILED tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_count_and_rows_share_one_snapshot
+FAILED tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_incomplete_root_change_or_busy_catalogue_is_not_success
+FAILED tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_more_than_one_hundred_thousand_files_are_not_truncated
+FAILED tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_stream_uses_shared_database_without_walk_or_legacy_cache
+ERROR tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_count_and_rows_share_one_snapshot
+ERROR tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_incomplete_root_change_or_busy_catalogue_is_not_success
+ERROR tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_more_than_one_hundred_thousand_files_are_not_truncated
+ERROR tests/test_fast_index_catalogue.py::FastIndexCatalogueTests::test_stream_uses_shared_database_without_walk_or_legacy_cache
+4 failed, 4 errors in 4.03s

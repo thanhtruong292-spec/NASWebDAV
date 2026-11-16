@@ -316,7 +316,7 @@ data class NasSystemStatus(
     val diskParts: List<DiskPart> = emptyList(),
     val fanStatus: String = "--",
     val fanMode: String = "auto",
-    val fanOnTemp: Float = 45f,
+    val fanOnTemp: Float = 42f,
     val fanOffTemp: Float = 40f,
     val fanRpm: Int? = null,
     val fanPercent: Int? = null,

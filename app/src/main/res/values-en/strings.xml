@@ -226,4 +226,7 @@
     <string name="crash_dsn_label">Sentry DSN (self-hosted)</string>
     <string name="crash_dsn_saved">Reporting config saved</string>
     <string name="crash_dsn_need">Enter DSN before enabling</string>
+    <string name="search_partial_title">Results are incomplete</string>
+    <string name="search_partial_description">The NAS catalogue is incomplete. Matching files may appear after the next scan.</string>
+    <string name="search_partial_retry">Partial results · Search again</string>
 </resources>

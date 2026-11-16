@@ -1,0 +1,4 @@
+{"plan": [[0, 0, 0, "SCAN TABLE file_index"], [0, 0, 0, "USE TEMP B-TREE FOR ORDER BY"]]}
+{"sql_milliseconds": 10563.81, "rows": 300}
+{"sql_milliseconds": 5594.82, "rows": 300}
+{"sql_milliseconds": 791.23, "rows": 300}

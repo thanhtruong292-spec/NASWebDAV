@@ -19,7 +19,7 @@ class DuplicateCoordinatorTests(unittest.TestCase):
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
         self.root = self.work.name
-        source = Path(__file__).resolve().parents[1] / '.specify/patches/verified-duplicate-service.py'
+        source = Path(os.environ.get('NAS_BACKEND_SOURCE', str(Path(__file__).resolve().parents[1] / '.specify/patches/verified-duplicate-service.py')))
         nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(n, ast.FunctionDef)]
         for node in nodes:
             node.decorator_list = []
@@ -31,6 +31,15 @@ class DuplicateCoordinatorTests(unittest.TestCase):
                        jsonify=lambda body: body)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), self.ns)
         Path(self.root, 'a').write_bytes(b'abc')
+        self.ns['_refresh_file_index_for_search'] = lambda: None
+        self.ns['_index_scan_lock'] = __import__('threading').Lock()
+        conn = self.ns['_duplicate_db']()
+        conn.execute('CREATE TABLE file_index(path TEXT PRIMARY KEY,is_dir INTEGER,size INTEGER)')
+        conn.execute("INSERT INTO file_index VALUES('a',0,3)")
+        conn.execute('CREATE TABLE index_state(id INTEGER,root TEXT,ready INTEGER)')
+        conn.execute('INSERT INTO index_state VALUES(1,?,1)',(self.root,))
+        conn.commit()
+        conn.close()
 
     def test_hash_is_reused_only_for_same_physical_version(self):
         info = self.ns['_duplicate_file_info']('a')
@@ -59,6 +68,20 @@ class DuplicateCoordinatorTests(unittest.TestCase):
             body, status = self.ns[route]()
             self.assertEqual(409, status)
             self.assertEqual('JSON object required', body['error'])
+
+    def test_shared_catalogue_discovers_unhashed_equal_size_and_reuses_verified_digest(self):
+        digest = hashlib.sha256(b'abc').hexdigest()
+        found = self.ns['_duplicate_find_matches'](digest,3)
+        self.assertEqual(['a'],found['unverified'])
+        self.assertEqual([],found['matches'])
+        self.assertTrue(found['index_ready'])
+        info = self.ns['_duplicate_file_info']('a')
+        self.ns['_duplicate_save_hash']('a',info['version'],digest)
+        self.assertEqual(['a'],self.ns['_duplicate_find_matches'](digest,3)['matches'])
+        Path(self.root,'a').write_bytes(b'xyz')
+        os.utime(os.path.join(self.root,'a'),(1,2))
+        self.assertEqual([],self.ns['_duplicate_find_matches'](digest,3)['matches'])
+        self.assertEqual(['a'],self.ns['_duplicate_find_matches'](digest,3)['unverified'])
 
     def cleanup_fixture(self):
         Path(self.root, 'copy').write_bytes(b'abc')
@@ -117,6 +140,24 @@ class DuplicateCoordinatorTests(unittest.TestCase):
         with patch.dict('sys.modules', fcntl=fake):
             with self.assertRaises(ValueError):
                 self.ns['_duplicate_cleanup']('copy', 'a', victim['version'], keeper['version'], digest)
+        self.assertEqual(b'abc', Path(self.root, 'copy').read_bytes())
+        self.assertEqual(b'abc', Path(self.root, 'a').read_bytes())
+        self.assertFalse(list(Path(directory).glob('*.json')))
+
+    def test_expired_nas_work_lease_rolls_back_before_unlink(self):
+        keeper, victim, digest, directory = self.cleanup_fixture()
+        self.ns['_duplicate_open_lease'] = lambda info: os.open(os.path.join(directory, 'lease-fixture'), os.O_RDONLY | os.O_CREAT)
+        checks = [True, True, False]
+        coordinator = types.SimpleNamespace(owns_lease=lambda *args: checks.pop(0))
+        self.ns['nas_work_coordinator'] = coordinator
+        self.ns['INDEX_DB_PATH'] = os.path.join(self.root, 'index.sqlite')
+        fake = types.SimpleNamespace(flock=lambda *args: None, LOCK_EX=1, LOCK_NB=2,
+                                     F_GETLEASE=3, F_RDLCK=4, fcntl=lambda *args: 4)
+        with patch.dict('sys.modules', fcntl=fake):
+            with self.assertRaisesRegex(ValueError, 'maintenance lease expired'):
+                self.ns['_duplicate_cleanup'](
+                    'copy', 'a', victim['version'], keeper['version'], digest,
+                    {'name': 'duplicates', 'owner': 'client:fixture', 'token': 'expired'})
         self.assertEqual(b'abc', Path(self.root, 'copy').read_bytes())
         self.assertEqual(b'abc', Path(self.root, 'a').read_bytes())
         self.assertFalse(list(Path(directory).glob('*.json')))

@@ -13,10 +13,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
-import java.net.URLDecoder
 
 /** Generates a thumbnail only for a media item currently being displayed. */
 object OnDemandThumbGenerator {
@@ -80,16 +82,30 @@ object OnDemandThumbGenerator {
         val thumbDir = context.getDir("persistent_thumbnails", Context.MODE_PRIVATE)
         val thumbFile = File(thumbDir, "thumb_$safeHash.jpg")
         val tempFile = File.createTempFile("thumb_source_", ".media", context.cacheDir)
+        val stagedThumb = File.createTempFile("thumb_", ".jpg", thumbDir)
         var bitmap: Bitmap? = null
         try {
             // CC-005 P1: encode theo segment (tránh 404 với tên file có dấu/cách).
             val encodedUrl = encodeThumbUrl(sourceUrl)
+            val path = android.net.Uri.decode(URL(encodedUrl).path)
+            val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+            val client = NasApplication.instance.thumbnailApiClient
+            val check = Request.Builder().url("$apiBase/api/thumb/exists").header("Authorization", auth)
+                .post(JSONObject().put("paths", JSONArray().put(path)).toString()
+                    .toRequestBody("application/json".toMediaType())).build()
+            val sourceVersion = client.newCall(check).execute().use { response ->
+                if (response.code in listOf(404, 405, 501)) return@use null
+                if (!response.isSuccessful) return@withContext null
+                val state = JSONObject(response.body?.string() ?: return@withContext null)
+                if (state.getJSONArray("missing").length() == 0) return@withContext null
+                val versions = state.optJSONObject("source_versions") ?: return@use null
+                versions.optString(path).takeIf { it.isNotEmpty() } ?: return@withContext null
+            }
             val sourceRequest = Request.Builder()
                 .url(encodedUrl)
                 .header("Authorization", auth)
                 .head()
                 .build()
-            val client = NasApplication.instance.thumbnailApiClient
             val contentLength = client.newCall(sourceRequest).execute().use { response ->
                 if (response.isSuccessful) response.header("Content-Length")?.toLongOrNull() else null
             }
@@ -122,14 +138,13 @@ object OnDemandThumbGenerator {
             bitmap = if (isVideo) decodeVideo(tempFile) else decodeImage(tempFile)
             val decoded = bitmap ?: return@withContext null
             if (!thumbDir.exists()) thumbDir.mkdirs()
-            FileOutputStream(thumbFile).use { output ->
+            FileOutputStream(stagedThumb).use { output ->
                 if (!decoded.compress(Bitmap.CompressFormat.JPEG, AppConfig.THUMBNAIL_QUALITY, output)) {
                     return@withContext null
                 }
             }
-            if (thumbFile.length() == 0L) return@withContext null
-
-            uploadToNas(sourceUrl, auth, thumbFile)
+            if (stagedThumb.length() == 0L || !uploadToNas(apiBase, path, auth, stagedThumb, sourceVersion) ||
+                !stagedThumb.renameTo(thumbFile)) return@withContext null
             thumbFile
         } catch (e: CancellationException) {
             throw e
@@ -139,6 +154,7 @@ object OnDemandThumbGenerator {
         } finally {
             bitmap?.recycle()
             tempFile.delete()
+            stagedThumb.delete()
         }
     }
 
@@ -183,24 +199,23 @@ object OnDemandThumbGenerator {
         return scaled
     }
 
-    private fun uploadToNas(sourceUrl: String, auth: String, thumbFile: File) {
-        val parsed = URL(sourceUrl)
-        val path = URLDecoder.decode(parsed.path, "UTF-8")
-        val apiUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/upload"
+    private fun uploadToNas(apiBase: String, path: String, auth: String, thumbFile: File, sourceVersion: String?): Boolean {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("path", path)
+            .apply { if (sourceVersion != null) addFormDataPart("source_version", sourceVersion) }
             .addFormDataPart("thumb", thumbFile.name, thumbFile.asRequestBody("image/jpeg".toMediaType()))
             .build()
         val request = Request.Builder()
-            .url(apiUrl)
+            .url("$apiBase/api/thumb/upload")
             .header("Authorization", auth)
             .post(body)
             .build()
-        NasApplication.instance.thumbnailApiClient.newCall(request).execute().use { response ->
+        return NasApplication.instance.thumbnailApiClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.w(TAG, "NAS thumbnail upload failed: HTTP ${response.code}")
             }
+            response.isSuccessful
         }
     }
 }

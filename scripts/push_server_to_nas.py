@@ -21,9 +21,20 @@ def validate_server_source(path):
     tree = ast.parse(source)
     functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
     required = {"api_fast_search", "api_storage_summary", "requires_auth",
-                "_index_resolve_directory", "_duplicate_cleanup", "api_duplicate_content"}
+                "_index_resolve_directory", "_duplicate_cleanup", "api_duplicate_content",
+                "api_duplicate_find", "api_duplicate_capabilities"}
     if not required.issubset(functions):
         raise ValueError("Backend is incomplete, outdated or a placeholder; refusing to upload/restart")
+    companion = os.path.join(os.path.dirname(path), "nas_work_coordinator.py")
+    if any(isinstance(node, (ast.Import, ast.ImportFrom)) and
+           any(item.name == "nas_work_coordinator" for item in node.names) for node in ast.walk(tree)):
+        with open(companion, "r", encoding="utf-8") as handle:
+            module = ast.parse(handle.read())
+        names = {node.name for node in module.body if isinstance(node, ast.FunctionDef)}
+        if not {"initialize", "request_job", "claim_next", "checkpoint", "get_status"}.issubset(names):
+            raise ValueError("Incomplete NAS work coordinator; refusing deployment")
+        return companion
+    return None
 
 NAS_HOST = os.environ.get("NAS_HOST", "192.168.100.254")
 NAS_USER = os.environ.get("NAS_USER", "root")
@@ -52,13 +63,22 @@ def main():
         print("ERROR: %s not found" % (LOCAL_PATH,))
         sys.exit(1)
 
-    validate_server_source(LOCAL_PATH)
+    companion = validate_server_source(LOCAL_PATH)
 
     target = "%s@%s:%s" % (NAS_USER, NAS_HOST, NAS_PATH)
     ssh_target = "%s@%s" % (NAS_USER, NAS_HOST)
 
     print("1. Uploading %s -> %s" % (LOCAL_PATH, target))
-    run(["scp", LOCAL_PATH, target])
+    run(["scp", LOCAL_PATH, target + ".next"])
+    if companion:
+        run(["scp", companion, "%s@%s:/opt/nas_work_coordinator.py.next" % (NAS_USER, NAS_HOST)])
+
+    # Publish the dependency before its importer; running processes keep their loaded module.
+    publish = "set -eu; test \"$(pgrep -c ffmpeg || true)\" = 0; python3 -m py_compile /opt/nas_api_server.py.next; "
+    if companion:
+        publish += "python3 -m py_compile /opt/nas_work_coordinator.py.next; chmod 644 /opt/nas_work_coordinator.py.next; mv /opt/nas_work_coordinator.py.next /opt/nas_work_coordinator.py; "
+    publish += "chmod 644 /opt/nas_api_server.py.next; mv /opt/nas_api_server.py.next /opt/nas_api_server.py"
+    run(["ssh", ssh_target, publish])
 
     print("2. Restarting nas_api_server daemon...")
     run(["ssh", ssh_target, "systemctl restart nas_api"])

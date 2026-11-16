@@ -15,28 +15,23 @@ def _build_storage_summary(max_seconds=45, refresh=False):
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
     try:
         conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_snapshot (id INTEGER PRIMARY KEY, root TEXT, scanned_at REAL, payload TEXT)')
-        conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_revision (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)')
-        conn.execute('INSERT OR IGNORE INTO storage_summary_revision VALUES(1,0)')
-        conn.execute('DROP TRIGGER IF EXISTS storage_summary_insert')
-        for event, suffix, condition in (
-                ('BEFORE INSERT', 'insert_v2', ' WHEN NOT EXISTS (SELECT 1 FROM file_index WHERE path=NEW.path AND name IS NEW.name AND is_dir IS NEW.is_dir AND size IS NEW.size)'),
-                ('AFTER DELETE', 'delete', ''),
-                ('AFTER UPDATE', 'update', ' WHEN OLD.path IS NOT NEW.path OR OLD.name IS NOT NEW.name OR OLD.is_dir IS NOT NEW.is_dir OR OLD.size IS NOT NEW.size')):
-            conn.execute('CREATE TRIGGER IF NOT EXISTS storage_summary_' + suffix +
-                         ' ' + event + ' ON file_index' + condition +
-                         ' BEGIN UPDATE storage_summary_revision SET revision=revision+1 WHERE id=1; END')
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'storage_summary_%'").fetchall():
+            conn.execute('DROP TRIGGER IF EXISTS "%s"' % row[0].replace('"', '""'))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_summary_revision'").fetchone():
+            conn.execute('DROP TABLE storage_summary_revision')
         conn.commit()
         conn.execute('BEGIN')
-        revision = conn.execute('SELECT revision FROM storage_summary_revision WHERE id=1').fetchone()[0]
-        state = conn.execute('SELECT root, scanned_at, ready FROM index_state WHERE id=1').fetchone()
+        state = conn.execute('SELECT root, scanned_at, ready, catalogue_revision FROM index_state WHERE id=1').fetchone()
         root = _get_webdav_public_dir()
         if not state or not root or state[0] != os.path.realpath(root):
             raise ValueError('File index unavailable for the configured root')
+        revision = state[3]
         cached = conn.execute('SELECT payload FROM storage_summary_snapshot WHERE id=1 AND root=?', (state[0],)).fetchone()
         if cached and not refresh:
             result = json.loads(cached[0])
-            result['partial'] = not bool(state[2]) or _index_scan_lock.locked()
-            if result.get('index_revision') != revision and time.time() - result.get('summary_updated_at', result['scanned_at']) >= 300 and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
+            revision_changed = result.get('catalogue_revision', -1) != revision
+            result['partial'] = not bool(state[2]) or _index_scan_lock.locked() or revision_changed
+            if revision_changed and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
                 def rebuild():
                     try:
                         _build_storage_summary(refresh=True)
@@ -68,6 +63,7 @@ def _build_storage_summary(max_seconds=45, refresh=False):
             'partial': not bool(state[2]) or _index_scan_lock.locked(),
             'scanned_at': int(state[1]), 'source': 'file_index',
             'summary_updated_at': int(time.time()), 'index_revision': revision,
+            'catalogue_revision': revision,
             'metadata_scope': 'indexed_snapshot',
         }
         conn.commit()

@@ -1170,6 +1170,12 @@ fun BrowserScreen(
                 }
             } else {
 
+            if (isSearching && fileBrowserVM.searchCatalogueIncomplete && displayedFiles.isNotEmpty()) {
+                TextButton(onClick = { fileBrowserVM.searchFiles(searchQuery) }) {
+                    Text(stringResource(R.string.search_partial_retry))
+                }
+            }
+
             // SỬA LỖI: Sử dụng trực tiếp nestedScroll() sau khi đã import
             Box(Modifier.fillMaxSize().nestedScroll(pullToRefreshState.nestedScrollConnection)) {
                 if (isSearching && searchQuery.isNotEmpty() && isServerSearchActive) {
@@ -1547,6 +1553,7 @@ fun BrowserScreen(
                         // loc category trong / thu muc trong. Ban cu hien "Khong
                         // tim thay" ngay ca khi BFS van dang chay -> nhap nhay.
                         targetState = if (isSearching && searchQuery.isNotEmpty() && isServerSearchActive) "loading"
+                            else if (isSearching && fileBrowserVM.searchCatalogueIncomplete) "partial"
                             else if (isSearching && searchQuery.isNotEmpty()) "noresult"
                             else if (selectedCategory != "ALL") "nocategory" else "empty",
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
@@ -1564,7 +1571,15 @@ fun BrowserScreen(
                                 }
                             } else {
                                 val showSearchEmpty = state == "noresult"
-                                if (showSearchEmpty) {
+                                if (state == "partial") {
+                                    NasEmptyState(
+                                        icon = Icons.Default.Search,
+                                        title = stringResource(R.string.search_partial_title),
+                                        description = stringResource(R.string.search_partial_description),
+                                        actionText = stringResource(R.string.action_retry),
+                                        onAction = { fileBrowserVM.searchFiles(searchQuery) }
+                                    )
+                                } else if (showSearchEmpty) {
                                     NasEmptyState(
                                         icon = Icons.Default.SearchOff,
                                         title = "Không tìm thấy kết quả",

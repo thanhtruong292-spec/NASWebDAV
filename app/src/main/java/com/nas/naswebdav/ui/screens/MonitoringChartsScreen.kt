@@ -103,8 +103,14 @@ fun MonitoringChartCard() {
     var showReport by remember { mutableStateOf(false) }
     val report = sysMonitorVM.dailyReport
 
-    LaunchedEffect(sysMonitorVM.metricsHours) {
-        sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
+    val chartExpanded = ExclusivePanelState.current.value == "chart"
+    LaunchedEffect(chartExpanded, sysMonitorVM.metricsHours) {
+        if (chartExpanded) {
+            while (true) {
+                sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
+                kotlinx.coroutines.delay(60_000L)
+            }
+        }
     }
     LaunchedEffect(Unit) {
         sysMonitorVM.fetchDailyReport()
@@ -119,7 +125,7 @@ fun MonitoringChartCard() {
         Column(Modifier.padding(8.dp)) {
             // Mo doc quyen: chart mo dong bo voi ExclusivePanelState — khi mo
             // panel khac (OMV, Tasks) thi chart tu cup.
-            val chartExpanded = com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value == "chart"
+
 
             // Header — nhấn để mở/đóng (không ripple)
             Row(
@@ -134,7 +140,7 @@ fun MonitoringChartCard() {
                     Icon(Icons.Default.Insights, null, tint = _ChartAccentCyan, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("GIÁM SÁT", fontSize = _ChartPanelTitleSize, color = _ChartPanelTitle, fontWeight = FontWeight.Black, letterSpacing = _ChartPanelTitleLetterSpacing)
-                    val ageSec = if (sysMonitorVM.lastMetricsRefreshAt > 0L) ((System.currentTimeMillis() - sysMonitorVM.lastMetricsRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
+                    val ageSec = if (sysMonitorVM.lastHistoryRefreshAt > 0L) ((System.currentTimeMillis() - sysMonitorVM.lastHistoryRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
                     val refreshLabel = when {
                         ageSec < 0 -> "Đang chờ dữ liệu"
                         ageSec < 60 -> "Mới ${ageSec}s"
@@ -155,7 +161,8 @@ fun MonitoringChartCard() {
                             ) {
                                 // Force open chart panel (overrides other panels)
                                 com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "chart"
-                                sysMonitorVM.fetchMetricsHistory(hourValues[i])
+                                if (selected && chartExpanded) sysMonitorVM.fetchMetricsHistory(hourValues[i])
+                                else sysMonitorVM.selectMetricsHours(hourValues[i])
                             }
                         ) {
                             Text(label, fontSize = 12.sp,
@@ -210,7 +217,7 @@ fun MonitoringChartCard() {
             Spacer(Modifier.height(10.dp))
 
             // Vùng biểu đồ — hiển thị theo trạng thái
-            val history = sysMonitorVM.metricsHistory
+            val history = sysMonitorVM.metricsHistory.toList()
             val error   = sysMonitorVM.metricsError
             when {
                 // Có lỗi: hiện thông báo + nút Refresh

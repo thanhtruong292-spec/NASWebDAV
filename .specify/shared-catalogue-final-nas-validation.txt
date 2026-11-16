@@ -1,0 +1,27 @@
+c9f15bd2427711f19402b5a58677d31adc46f5623efd2c5996d5601392dd10a9  backend/nas_api_server.py
+17ca667c311e9b307674ea13b321a430815739e460a40938b32d25452f34b1b1  backend/nas_work_coordinator.py
+Python 3.5.3
+PASS test_search_refresh_ignores_only_its_own_interactive_idle_gate
+PASS test_nas_busy_refresh_marks_previous_catalogue_unready
+PASS test_index_pass_pauses_and_releases_lease_when_nas_becomes_busy
+test_adds_catalogue_revision_to_existing_index_state (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_catalogue_change_requeues_completed_file_jobs_but_not_ondemand_work (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_checkpoints_resume_after_expired_lease_and_reject_stale_owner (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_completed_job_releases_lease_and_next_job_runs (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_rejects_invalid_job_and_progress (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_root_change_restarts_checkpoint_but_not_running_job (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_uses_catalogue_database_and_grants_only_one_global_lease (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+test_worker_can_claim_only_its_supported_job_without_blocking_other_work (test_nas_work_coordinator.NasWorkCoordinatorTests) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.186s
+
+OK
+test_stream_uses_shared_database_without_walk_or_legacy_cache (test_fast_index_catalogue.FastIndexCatalogueTests) ... ok
+test_count_and_rows_share_one_snapshot (test_fast_index_catalogue.FastIndexCatalogueTests) ... ok
+test_incomplete_root_change_or_busy_catalogue_is_not_success (test_fast_index_catalogue.FastIndexCatalogueTests) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 4.696s
+
+OK

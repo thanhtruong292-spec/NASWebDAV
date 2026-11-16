@@ -37,6 +37,10 @@ import urllib.request
 import urllib.error
 import urllib.parse
 try:
+    from backend import nas_work_coordinator
+except ImportError:
+    import nas_work_coordinator
+try:
     import psutil
 except ImportError:
     psutil = None
@@ -489,6 +493,15 @@ _USER_IDLE_S = 90  # khong co request nao 90s moi cho daemon chay
 
 _NON_INTERACTIVE_HIT_PREFIXES = (
     "/api/ping", "/api/v1/ping",
+    "/api/work/", "/api/v1/work/",
+    "/api/system/idle", "/api/v1/system/idle",
+    "/api/disk/fast_index", "/api/v1/disk/fast_index",
+    "/api/duplicates/file", "/api/v1/duplicates/file",
+    "/api/duplicates/hash", "/api/v1/duplicates/hash",
+    "/api/duplicates/content", "/api/v1/duplicates/content",
+    "/api/thumb/exists", "/api/v1/thumb/exists",
+    "/api/thumb/upload", "/api/v1/thumb/upload",
+    "/api/thumb/activity", "/api/v1/thumb/activity",
     "/api/alerts/poll", "/api/v1/alerts/poll",
     "/api/status", "/api/v1/status",
     "/api/tools/smart_organize/", "/api/v1/tools/smart_organize/",
@@ -511,9 +524,10 @@ def _stamp_user_hit():
     except Exception:
         pass
 
-INDEX_DB_PATH = "/var/lib/nas_fast_index.db"
+FILE_INDEX_FRESHNESS_SECONDS = 60.0
 _index_lock = threading.Lock()
 _index_scan_lock = threading.Lock()
+_index_mutation_wake = threading.Event()
 
 def _remove_diacritics_py(s):
     import unicodedata
@@ -539,9 +553,12 @@ def _init_index_db():
             );
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_norm_name ON file_index(norm_name);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_file_search_order ON file_index(is_dir DESC,name ASC,norm_name)")
             if "parent" not in [row[1] for row in conn.execute("PRAGMA table_info(file_index)")]:
                 conn.execute("ALTER TABLE file_index ADD COLUMN parent TEXT")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_file_parent ON file_index(parent)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_file_time_path ON file_index(mtime DESC,path) WHERE is_dir=0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_file_size_path ON file_index(size,is_dir,path)")
             conn.execute("CREATE TABLE IF NOT EXISTS index_directories (path TEXT PRIMARY KEY, stamp TEXT, complete INTEGER NOT NULL DEFAULT 0)")
             conn.execute("CREATE TABLE IF NOT EXISTS index_state (id INTEGER PRIMARY KEY, root TEXT, generation INTEGER NOT NULL, ready INTEGER NOT NULL, incomplete_reason TEXT)")
             state_columns = [row[1] for row in conn.execute("PRAGMA table_info(index_state)")]
@@ -553,6 +570,7 @@ def _init_index_db():
             conn.commit()
         finally:
             conn.close()
+        nas_work_coordinator.initialize(INDEX_DB_PATH)
     except Exception as e:
         log.warning("[FileIndex] DB init error: %s" % str(e))
 
@@ -611,16 +629,107 @@ def _scan_file_index(search_root):
     if not _index_scan_lock.acquire(False):
         return {"index_ready": False, "index_incomplete_reason": "scan_in_progress", "checked_dirs": 0, "enumerated_dirs": 0}
     try:
-        return _scan_file_index_pass(search_root)
+        return _run_file_index_job(search_root)
     finally:
         _index_scan_lock.release()
 
 
 def _background_file_index_refresh(search_root):
     try:
-        _scan_file_index(search_root)
+        # Search updates the interactive-idle timer; keep NAS resource gates
+        # while allowing its own demand refresh to run.
+        _run_file_index_job(search_root, ignore_user_idle=True)
     except Exception as e:
         log.warning("[FileIndex] Background refresh incomplete: %s", e)
+    finally:
+        _index_scan_lock.release()
+
+
+def _mark_file_index_unready(root, reason):
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        with _index_lock:
+            conn.execute("UPDATE index_state SET ready=0,incomplete_reason=? WHERE id=1 AND root=?", (reason, root))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def _index_mutated_directories(directories):
+    """Invalidate the nearest indexed parents after a successful batch of writes."""
+    if not directories:
+        return
+    conn = None
+    try:
+        root = _get_webdav_public_dir()
+        if not root:
+            return
+        root = os.path.realpath(root)
+        parents = set()
+        for directory in directories:
+            directory = os.path.abspath(directory)
+            if directory == root or directory.startswith(root + os.sep):
+                rel = os.path.relpath(directory, root)
+                parents.add("" if rel == "." else rel.replace(os.sep, "/") + "/")
+        if not parents:
+            return
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+        marker = "mutation-" + uuid.uuid4().hex
+        with _index_lock:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM index_state WHERE id=1 AND root=?", (root,)).fetchone():
+                return
+            for parent in parents:
+                while not conn.execute("UPDATE index_directories SET stamp=?,complete=0 WHERE path=?",
+                                       (marker, parent)).rowcount and parent:
+                    parent = parent.rstrip("/").rpartition("/")[0]
+                    parent = parent + "/" if parent else ""
+            nas_work_coordinator.bump_catalogue_revision(conn)
+            conn.execute("UPDATE index_state SET ready=0,incomplete_reason='file_mutation_pending',scanned_at=0 WHERE id=1")
+            conn.commit()
+    except (OSError, ValueError, sqlite3.Error) as error:
+        log.warning("[FileIndex] Cannot record changed directories: %s", error)
+    finally:
+        if conn is not None:
+            conn.close()
+        _index_mutation_wake.set()
+
+
+def _run_file_index_job(search_root, ignore_user_idle=False):
+    root = os.path.realpath(search_root) if search_root else ""
+    if not root:
+        return {"index_ready": False, "index_incomplete_reason": "invalid_root", "checked_dirs": 0, "enumerated_dirs": 0}
+    nas_work_coordinator.request_job(INDEX_DB_PATH, "index", root, priority=100)
+    if not _background_heavy_work_allowed(ignore_user_idle=ignore_user_idle):
+        _mark_file_index_unready(root, "nas_busy")
+        return {"index_ready": False, "index_incomplete_reason": "nas_busy", "checked_dirs": 0, "enumerated_dirs": 0}
+    lease = nas_work_coordinator.claim_next(
+        INDEX_DB_PATH, "nas:index", True, lease_seconds=3600, job_name="index")
+    if not lease:
+        _mark_file_index_unready(root, "maintenance_busy")
+        return {"index_ready": False, "index_incomplete_reason": "maintenance_busy", "checked_dirs": 0, "enumerated_dirs": 0}
+    try:
+        result = _scan_file_index_pass(root, lease, ignore_user_idle=ignore_user_idle)
+        if result.get("work_state") == "paused":
+            return result
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM index_directories").fetchone()[0]
+        finally:
+            conn.close()
+        checked = result.get("checked_dirs", 0)
+        complete = bool(result.get("index_ready"))
+        nas_work_coordinator.checkpoint(
+            INDEX_DB_PATH, "index", lease["owner"], lease["token"], "",
+            min(checked, total), total, state="complete" if complete else "retry",
+            error="" if complete else result.get("index_incomplete_reason", "incomplete"))
+        result["work_state"] = "complete" if complete else "retry"
+        return result
+    except Exception as exc:
+        nas_work_coordinator.checkpoint(
+            INDEX_DB_PATH, "index", lease["owner"], lease["token"], "", 0, 0,
+            state="retry", error=str(exc))
+        raise
 
 
 def _refresh_file_index_for_search():
@@ -638,13 +747,16 @@ def _refresh_file_index_for_search():
     same_root = bool(row and row[0] == os.path.realpath(current_root))
     if same_root and time.time() - float(row[1]) < 5.0:
         return
-    if same_root and row[2]:
-        _scan_file_index(current_root)
-    else:
+    if not _index_scan_lock.acquire(False):
+        return
+    try:
         threading.Thread(target=_background_file_index_refresh, args=(current_root,), daemon=True).start()
+    except Exception:
+        _index_scan_lock.release()
+        raise
 
 
-def _scan_file_index_pass(search_root):
+def _scan_file_index_pass(search_root, work_lease=None, ignore_user_idle=False):
     """Stat known directories; reconcile only stable successful directory reads."""
     import stat
     root = os.path.realpath(search_root) if search_root else ""
@@ -664,7 +776,11 @@ def _scan_file_index_pass(search_root):
                 built = False
                 conn.execute("DELETE FROM file_index")
                 conn.execute("DELETE FROM index_directories")
-            conn.execute("INSERT OR REPLACE INTO index_state (id,root,generation,ready,incomplete_reason,built) VALUES (1, ?, ?, 0, 'scan_pending', ?)", (root, generation, int(built)))
+                nas_work_coordinator.bump_catalogue_revision(conn)
+            if state:
+                conn.execute("UPDATE index_state SET root=?, generation=?, ready=0, incomplete_reason='scan_pending', built=?, scanned_at=0 WHERE id=1", (root, generation, int(built)))
+            else:
+                conn.execute("INSERT INTO index_state (id,root,generation,ready,incomplete_reason,built) VALUES (1, ?, ?, 0, 'scan_pending', ?)", (root, generation, int(built)))
             conn.execute("INSERT OR IGNORE INTO index_directories (path) VALUES ('')")
             conn.commit()
         # One-time legacy migration preserves provisional search results and uses
@@ -680,6 +796,7 @@ def _scan_file_index_pass(search_root):
                 parents.append((parent, row[0]))
             with _index_lock:
                 conn.executemany("UPDATE file_index SET parent=? WHERE path=?", parents)
+                nas_work_coordinator.bump_catalogue_revision(conn)
                 conn.commit()
         if not state:
             with _index_lock:
@@ -687,6 +804,23 @@ def _scan_file_index_pass(search_root):
                 conn.commit()
         pending = [row[0] for row in conn.execute("SELECT path FROM index_directories ORDER BY path")]
         visited = set()
+        def check_batch(rel):
+            directory_total = conn.execute("SELECT COUNT(*) FROM index_directories").fetchone()[0]
+            if not _background_heavy_work_allowed(ignore_user_idle=ignore_user_idle):
+                with _index_lock:
+                    conn.execute("UPDATE index_state SET ready=0,incomplete_reason='nas_busy' WHERE id=1 AND root=?", (root,))
+                    conn.commit()
+                if not nas_work_coordinator.checkpoint(
+                    INDEX_DB_PATH, "index", work_lease["owner"], work_lease["token"], rel,
+                    min(checked, directory_total), directory_total, state="paused", error="nas_busy"):
+                    raise RuntimeError("index_work_lease_lost")
+                return {"index_ready": False, "index_incomplete_reason": "nas_busy",
+                        "checked_dirs": checked, "enumerated_dirs": enumerated, "work_state": "paused"}
+            if not nas_work_coordinator.checkpoint(
+                INDEX_DB_PATH, "index", work_lease["owner"], work_lease["token"], rel,
+                min(checked, directory_total), directory_total, state="running"):
+                raise RuntimeError("index_work_lease_lost")
+
         for rel in pending:
             if rel in visited:
                 continue
@@ -696,6 +830,10 @@ def _scan_file_index_pass(search_root):
                 continue
             path = os.path.join(root, *rel.rstrip("/").split("/")) if rel else root
             checked += 1
+            if work_lease and checked % 25 == 0:
+                paused = check_batch(rel)
+                if paused:
+                    return paused
             try:
                 if ".." in rel.split("/") or rel.startswith(("/", "\\")):
                     raise ValueError("Unsafe directory path")
@@ -710,7 +848,11 @@ def _scan_file_index_pass(search_root):
                 entries = []
                 children = []
                 complete = True
-                for name in names:
+                for offset, name in enumerate(names):
+                    if work_lease and offset and offset % 1024 == 0:
+                        paused = check_batch(rel)
+                        if paused:
+                            return paused
                     if name.startswith(".") or name in ("@eaDir", "#recycle"):
                         continue
                     full = os.path.join(path, name)
@@ -736,12 +878,16 @@ def _scan_file_index_pass(search_root):
                 enumerated += 1
                 present = set(entry[0] for entry in entries)
                 with _index_lock:
+                    if not conn.execute("SELECT 1 FROM index_directories WHERE path=? AND stamp IS ?", (rel, saved[0])).fetchone():
+                        continue
                     old = conn.execute("SELECT path,name,norm_name,is_dir,size,mtime,mime,parent FROM file_index WHERE parent=?", (rel,)).fetchall()
                     previous = dict((row[0], row) for row in old)
+                    removed = False
                     for old_row in old:
                         old_path, old_dir = old_row[0], old_row[3]
                         if old_path in present:
                             continue
+                        removed = True
                         if old_dir:
                             conn.execute("DELETE FROM file_index WHERE path>=? AND path<?", (old_path, old_path.rstrip("/") + "0"))
                             conn.execute("DELETE FROM index_directories WHERE path>=? AND path<?", (old_path, old_path.rstrip("/") + "0"))
@@ -751,6 +897,8 @@ def _scan_file_index_pass(search_root):
                     conn.executemany("INSERT OR REPLACE INTO file_index (path,name,norm_name,is_dir,size,mtime,mime,parent) VALUES (?,?,?,?,?,?,?,?)", changed)
                     conn.executemany("INSERT OR IGNORE INTO index_directories (path) VALUES (?)", [(child,) for child in children])
                     conn.execute("UPDATE index_directories SET stamp=?, complete=? WHERE path=?", (before, int(complete), rel))
+                    if removed or changed:
+                        nas_work_coordinator.bump_catalogue_revision(conn)
                     conn.commit()
                 pending.extend(child for child in children if child not in visited)
             except (OSError, ValueError) as e:
@@ -760,9 +908,9 @@ def _scan_file_index_pass(search_root):
                     conn.commit()
                 log.warning("[FileIndex] Directory read incomplete: %s (%s)", rel, e)
             time.sleep(0.01)
-        incomplete = conn.execute("SELECT COUNT(*) FROM index_directories WHERE complete=0 OR stamp IS NULL").fetchone()[0]
-        unread = conn.execute("SELECT COUNT(*) FROM index_directories WHERE stamp IS NULL").fetchone()[0]
         with _index_lock:
+            incomplete = conn.execute("SELECT COUNT(*) FROM index_directories WHERE complete=0 OR stamp IS NULL").fetchone()[0]
+            unread = conn.execute("SELECT COUNT(*) FROM index_directories WHERE stamp IS NULL").fetchone()[0]
             conn.execute("UPDATE index_state SET ready=?, incomplete_reason=?, scanned_at=?, built=? WHERE id=1",
                          (int(incomplete == 0), "unreadable_or_symlink_scope" if incomplete else "", time.time(), int(built or unread == 0)))
             conn.commit()
@@ -806,15 +954,16 @@ def _get_webdav_public_dir():
 
 def _file_indexer_watchdog():
     """Reuse directory listings across passes and daemon restarts."""
-    _init_index_db()
     while True:
+        _index_mutation_wake.clear()
         try:
             result = _scan_file_index(_get_webdav_public_dir())
             log.info("[FileIndex] Checked %s directories, enumerated %s, ready=%s",
                      result["checked_dirs"], result["enumerated_dirs"], result["index_ready"])
         except Exception as e:
             log.warning("[FileIndex] Index pass incomplete: %s", e)
-        time.sleep(1800)
+        if _index_mutation_wake.wait(1800):
+            time.sleep(5)  # Coalesce completed writes before invoking the idle-gated index job.
 
 @app.route('/api/search', methods=['GET'])
 def api_fast_search():
@@ -927,7 +1076,9 @@ def api_fast_search():
             cache_conn = None
             try:
                 cache_conn = sqlite3.connect(INDEX_DB_PATH, timeout=0.1)
-                cache_conn.executemany("UPDATE file_index SET size=?,mtime=? WHERE path=? AND size=? AND mtime=? AND EXISTS (SELECT 1 FROM index_state WHERE id=1 AND root=?)", metadata_updates)
+                cursor = cache_conn.executemany("UPDATE file_index SET size=?,mtime=? WHERE path=? AND size=? AND mtime=? AND EXISTS (SELECT 1 FROM index_state WHERE id=1 AND root=?)", metadata_updates)
+                if cursor.rowcount > 0:
+                    nas_work_coordinator.bump_catalogue_revision(cache_conn)
                 cache_conn.commit()
             except sqlite3.Error as error:
                 log.debug('[SearchAPI] Metadata persistence deferred: %s', error)
@@ -1307,23 +1458,27 @@ def _get_webdav_root():
 WEBDAV_FILE_ROOT = _get_webdav_root()
 
 SYSTEM_DB_DIR = "/var/lib/nas_api"
-try:
-    os.makedirs(SYSTEM_DB_DIR, exist_ok=True)
-except Exception:
-    SYSTEM_DB_DIR = "/tmp/nas_api"
-    os.makedirs(SYSTEM_DB_DIR, exist_ok=True)
-
-DB_PATH = os.path.join(SYSTEM_DB_DIR, "nas_index.db")
+os.makedirs(SYSTEM_DB_DIR, exist_ok=True)
+DB_PATH = INDEX_DB_PATH = os.path.join(SYSTEM_DB_DIR, "nas_index.db")
 
 # Tự động migrate cơ sở dữ liệu cũ từ HDD sang bộ nhớ hệ thống OS partition (nếu có)
 try:
     _old_db_path = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_index.db")
     if os.path.exists(_old_db_path) and not os.path.exists(DB_PATH):
-        import shutil
-        shutil.copy2(_old_db_path, DB_PATH)
+        # SQLite's online backup includes committed WAL pages. Publish only a complete snapshot.
+        with tempfile.NamedTemporaryFile(dir=SYSTEM_DB_DIR, prefix=".system-db-", delete=False) as tmp_db:
+            snapshot = tmp_db.name
+        try:
+            subprocess.check_call(["sqlite3", _old_db_path, ".backup " + snapshot])
+            os.link(snapshot, DB_PATH)
+        finally:
+            os.unlink(snapshot)
         log.info("[DB] Đã di chuyển nas_index.db từ HDD sang bộ nhớ hệ thống OS: %s", DB_PATH)
 except Exception as _mig_err:
-    log.warning("[DB] Lỗi khi copy DB cũ: %s", _mig_err)
+    log.error("[DB] Lỗi khi copy DB cũ: %s", _mig_err)
+    raise
+
+nas_work_coordinator.import_legacy_catalogue(DB_PATH, "/var/lib/nas_fast_index.db")
 
 PID_FILE = "/var/run/nas_api_server.pid"
 LAN_WHITELIST_PATH = "/etc/nas/lan_whitelist.conf"
@@ -3291,166 +3446,76 @@ def get_cpu_temp():
     return "--\u00b0C"
 
 
-_HDD_TEMP_CACHE = {"value": "--\u00b0C", "ts": 0}
+_HDD_TEMP_CACHE = {"value": "--°C", "ts": None, "attempt": None, "paused": True, "cool": 0}
 _HDD_TEMP_CACHE_TTL = 60
 _HDD_TEMP_REFRESH_LOCK = threading.Lock()
 
 
 def _cache_hdd_temp(value):
-    if value and value != "--\u00b0C":
-        _HDD_TEMP_CACHE["value"] = value
-        _HDD_TEMP_CACHE["ts"] = time.time()
+    temp = int(value.replace("°C", ""))
+    paused = _HDD_TEMP_CACHE["paused"]
+    cool = min(2, _HDD_TEMP_CACHE["cool"] + 1) if temp <= 40 else 0
+    if temp >= 42:
+        paused = True
+    elif cool == 2:
+        paused = False
+    _HDD_TEMP_CACHE.update(value=value, ts=time.monotonic(), paused=paused, cool=cool)
     return value
 
 
 def get_hdd_temp():
-    """L?y nhi?t để ổ cứng — uu tien OMV RPC, fallback smartctl/sysfs."""
-    import re
+    now = time.monotonic()
+    ts = _HDD_TEMP_CACHE["ts"]
+    if ts is not None and now - ts < _HDD_TEMP_CACHE_TTL:
+        return _HDD_TEMP_CACHE["value"]
+    # Share an in-flight SMART sample before reporting sensor failure.
+    if not _HDD_TEMP_REFRESH_LOCK.acquire(timeout=2.0):
+        return "--°C"
     try:
-        cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
-        if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
-            return cached
-    except Exception:
-        pass
-    if not _HDD_TEMP_REFRESH_LOCK.acquire(False):
-        return _HDD_TEMP_CACHE.get("value", "--\u00b0C")
-    try:
-        cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
-        if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
-            return cached
-        val = _get_hdd_temp_uncached()
-        if not val:
-            val = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
-            _HDD_TEMP_CACHE["ts"] = time.time()
-        return val
+        now = time.monotonic()
+        ts = _HDD_TEMP_CACHE["ts"]
+        if ts is not None and now - ts < _HDD_TEMP_CACHE_TTL:
+            return _HDD_TEMP_CACHE["value"]
+        last = _HDD_TEMP_CACHE["attempt"]
+        if last is not None and now - last < _HDD_TEMP_CACHE_TTL:
+            return "--°C"
+        _HDD_TEMP_CACHE["attempt"] = now
+        try:
+            value = _get_hdd_temp_uncached()
+        except Exception:
+            value = None
+        if not value or value == "--°C":
+            _HDD_TEMP_CACHE.update(paused=True, cool=0)
+            return "--°C"
+        return value
     finally:
         _HDD_TEMP_REFRESH_LOCK.release()
+
+
+def _hdd_maintenance_allowed():
+    return get_hdd_temp() != "--°C" and not _HDD_TEMP_CACHE["paused"]
 
 
 def _get_hdd_temp_uncached():
     """Refresh HDD temperature once. Caller must hold _HDD_TEMP_REFRESH_LOCK."""
     import re
-    # Phuong phap 0 (uu tien): L?y tu OMV Smart enumerateDevices
-    try:
-        # Disabled for dashboard path: OMV enumerates every disk and can wedge on
-        # a failing USB import device. Use direct target-HDD probes below instead.
-        omv_out = ""
-        if omv_out and omv_out.strip().startswith("{"):
-            devs = json.loads(omv_out)
-            dev_list = list(devs.values()) if isinstance(devs, dict) else devs
-            dev = _select_target_omv_smart_device(dev_list)
-            if dev:
-                temp_str = dev.get("temperature", "")
-                if temp_str and temp_str != "--\u00b0C":
-                    # OMV tr? v? "31°C" hoac "31"
-                    temp_str = str(temp_str).replace("\u00b0C", "").strip()
-                    if temp_str.isdigit() and 10 < int(temp_str) < 100:
-                        return _cache_hdd_temp("%s\u00b0C" % temp_str)
-    except Exception:
-        pass
-    # Phuong phap 1: smartctl voi regex chinh xac
-    for disk_path in [_target_hdd_device_path()]:
-        try:
-            # Dung 2>&1 de l?y ca stdout va stderr
-            if not _validate_disk_path(disk_path):
-                continue
-            output = run_cmd(["sudo", "smartctl", "-A", disk_path, "-d", "sat"], merge_stderr=True)
-            if not output or "open device" in output.lower():
-                output = run_cmd(["sudo", "smartctl", "-A", disk_path], merge_stderr=True)
-            if output and "temperature" in output.lower():
-                for line in output.split("\n"):
-                    line_lower = line.lower()
-                    if "temperature" not in line_lower:
-                        continue
-                    # Format: "194 Temperature_Celsius ... - 33 (0 8 0 0 0)"
-                    # L?y so dau tien sau dau '-' hoac sau cot cuoi (truoc dau ngoac)
-                    match = re.search(r'-\s+(\d+)(?:\s*\(|$)', line)
-                    if match:
-                        temp_val = int(match.group(1))
-                        if 10 < temp_val < 100:
-                            return _cache_hdd_temp("%d\u00b0C" % temp_val)
-                    # Fallback: l?y so hop le cuoi cung trong dong (truoc ngoac don)
-                    line_before_paren = line.split("(")[0]
-                    nums = re.findall(r'\b(\d{2})\b', line_before_paren)
-                    for n in reversed(nums):
-                        if 10 < int(n) < 100:
-                            return _cache_hdd_temp("%d\u00b0C" % int(n))
-        except Exception:
-            pass
-        # Phuong phap 2: hddtemp
-        try:
-            output = run_cmd(["sudo", "hddtemp", "-n", disk_path], merge_stderr=True)
-            if output and output.strip().replace("-", "").isdigit():
-                temp_val = int(output.strip())
-                if 10 < temp_val < 100:
-                    return _cache_hdd_temp("%d\u00b0C" % temp_val)
-        except Exception:
-            pass
-    # Xong buoc lap qua cac disk
-    # Phuong phap 3: drivetemp kernel module (psutil) chi dung neu label dung o NAS.
-    try:
-        temps = psutil.sensors_temperatures()
-        if "drivetemp" in temps:
-            for entry in temps["drivetemp"]:
-                label = str(getattr(entry, "label", "") or "").lower()
-                if _target_hdd_devname().lower() in label and entry.current > 0:
-                    return _cache_hdd_temp("%d\u00b0C" % int(entry.current))
-    except Exception:
-        pass
-    # Phuong phap 4: Đọc truc tiep tu sysfs hwmon (không cần smartctl)
-    try:
-        import glob
-        # Tim hwmon cua o dữ liệu NAS
-        target_name = _target_hdd_devname()
-        hwmon_paths = glob.glob("/sys/block/%s/device/hwmon/hwmon*/temp1_input" % target_name)
-        if not hwmon_paths:
-            hwmon_paths = glob.glob("/sys/block/%s/device/hwmon/*/temp1_input" % target_name)
-        for hp in hwmon_paths:
-            with open(hp) as f:
-                temp_milli = int(f.read().strip())
-                if temp_milli > 1000:
-                    temp_c = temp_milli // 1000
-                else:
-                    temp_c = temp_milli
-                if 10 < temp_c < 100:
-                    return _cache_hdd_temp("%d\u00b0C" % temp_c)
-    except Exception:
-        pass
-    # Phuong phap 5: Quet tất c? hwmon devices tim drivetemp
-    try:
-        import glob
-        for hwmon_dir in glob.glob("/sys/class/hwmon/hwmon*/"):
-            try:
-                name_file = os.path.join(hwmon_dir, "name")
-                if os.path.exists(name_file):
-                    with open(name_file) as f:
-                        name = f.read().strip().lower()
-                    if ("drivetemp" in name or "hdd" in name) and _target_hdd_devname() in hwmon_dir:
-                        temp_file = os.path.join(hwmon_dir, "temp1_input")
-                        if os.path.exists(temp_file):
-                            with open(temp_file) as f:
-                                temp_milli = int(f.read().strip())
-                                temp_c = temp_milli // 1000 if temp_milli > 1000 else temp_milli
-                                if 10 < temp_c < 100:
-                                    return _cache_hdd_temp("%d\u00b0C" % temp_c)
-            except Exception:
-                continue
-    except Exception:
-        pass
-    # Phuong phap 6: Thu load kernel module drivetemp
-    try:
-        run_cmd(["modprobe", "drivetemp"])
-        import time
-        time.sleep(0.5)
-        temps = psutil.sensors_temperatures()
-        if "drivetemp" in temps:
-            for entry in temps["drivetemp"]:
-                label = str(getattr(entry, "label", "") or "").lower()
-                if _target_hdd_devname().lower() in label and entry.current > 0:
-                    return _cache_hdd_temp("%d\u00b0C" % int(entry.current))
-    except Exception:
-        pass
-    return "--\u00b0C"
+    disk = _target_hdd_device_path()
+    if not disk or not _validate_disk_path(disk):
+        return "--°C"
+    for device_args in (["-d", "sat"], []):
+        report = run_cmd(["sudo", "smartctl", "-i", "-A"] + device_args + [disk], merge_stderr=True) or ""
+        serial = re.search(r"^Serial Number:\s*(\S+)", report, re.M | re.I)
+        if not serial:
+            continue
+        if serial.group(1).upper() not in TARGET_HDD_SERIAL_HINTS:
+            return "--°C"
+        for line in report.splitlines():
+            fields = line.split()
+            if len(fields) >= 10 and fields[0] == "194" and fields[9].isdigit():
+                temp = int(fields[9])
+                if 0 < temp < 100:
+                    return _cache_hdd_temp("%d°C" % temp)
+    return "--°C"
 
 
 def get_uptime():
@@ -4013,16 +4078,6 @@ def _update_status_cache():
                 cached_hdd_temp = get_hdd_temp()
             except Exception:
                 cached_hdd_temp = "--°C"
-            if cached_hdd_temp == "--°C":
-                try:
-                    with _disk_health_lock:
-                        disk_temp = (_disk_health_last_sample or {}).get("temp_c")
-                    cached_hdd_temp = "%s°C" % disk_temp if disk_temp else "--°C"
-                except Exception:
-                    cached_hdd_temp = "--°C"
-            if cached_hdd_temp == "--°C" and _smart_cache and _smart_cache.get("data"): 
-                cached_hdd_temp = _smart_cache["data"].get("temperature", "--°C")
-
             actual_ram_pct = round((float(actual_used) / float(mem.total)) * 100.0, 1)
             data = {
                 "temperature": cached_hdd_temp,
@@ -4296,6 +4351,8 @@ def _heavy_background_processes():
 
 def _background_heavy_work_allowed(ignore_user_idle=False):
     try:
+        if not _hdd_maintenance_allowed():
+            return False
         now = time.time()
         try:
             _gate_cache_s = float(globals().get("_get_heavy_gate_cache_s", lambda: 5.0)())
@@ -4547,16 +4604,12 @@ def _check_torrent_completion():
     return new_completed
 
 
-def _check_hdd_temp_alert(threshold=60):
-    """Kiểm tra nhi?t để HDD co vuot nguong cầnh b?o khong."""
-    try:
-        with _disk_health_lock:
-            val = int((_disk_health_last_sample or {}).get("temp_c") or 0)
-        if val > 0:
-            return val, val >= threshold
+def _check_hdd_temp_alert(threshold=45):
+    value = get_hdd_temp()
+    if value == "--°C":
         return 0, False
-    except Exception:
-        return 0, False
+    temp = int(value.replace("°C", ""))
+    return temp, temp >= threshold
 
 
 def _cron_worker():
@@ -4582,15 +4635,15 @@ def _cron_worker():
 
             # --- 2. Kiểm tra nhi?t để HDD (mới 60 gi?y) ---
             # NOTE: get_hdd_temp() co cache 60s rieng, không wake HDD th?m lan nua
-            temp_val, is_hot = _check_hdd_temp_alert(threshold=60)
+            temp_val, is_hot = _check_hdd_temp_alert()
             with _alert_state_lock:
                 prev_alerted = _alert_states["hdd_temp_alerted"]
             if is_hot and not prev_alerted:
-                msg = "CẢNH BÁO: Nhiệt độ HDD đang cao: %d\u00b0C (> 60\u00b0C)!" % temp_val
+                msg = "CẢNH BÁO: Nhiệt độ HDD đang cao: %d\u00b0C!" % temp_val
                 _push_alert("HDD_TEMP_HIGH", msg, "ERROR")
                 with _alert_state_lock:
                     _alert_states["hdd_temp_alerted"] = True
-            elif not is_hot:
+            elif temp_val and not is_hot:
                 with _alert_state_lock:
                     _alert_states["hdd_temp_alerted"] = False
 
@@ -5766,6 +5819,7 @@ def api_scan_broken_mp4():
                         scan_dirs.append(_entry_path)
 
         quarantined = []
+        changed_dirs = set()
         total_scanned = 0
 
         for scan_dir in scan_dirs:
@@ -5820,6 +5874,7 @@ def api_scan_broken_mp4():
                             if os.path.exists(dest):
                                 dest = dest + ".{0}".format(int(time.time()))
                             os.rename(fpath, dest)
+                            changed_dirs.update((os.path.dirname(fpath), os.path.dirname(dest)))
                             quarantined.append({
                                 "path": rel_path,
                                 "size": os.path.getsize(dest) if os.path.exists(dest) else 0,
@@ -5833,6 +5888,7 @@ def api_scan_broken_mp4():
                                 "error": str(e)
                             })
 
+        _index_mutated_directories(changed_dirs)
         log.info("[BackupScan] scanned=%d broken=%d dry_run=%s", total_scanned, len(quarantined), dry_run)
         return jsonify({
             "status": "success",
@@ -6324,7 +6380,7 @@ def _save_fan_settings(settings):
 # ============================================================================
 PWM_PATH = "/sys/class/pwm/pwmchip0/pwm0"
 FAN_POWER_GPIO = "79"
-FAN_DEFAULT_ON_TEMP = 45.0
+FAN_DEFAULT_ON_TEMP = 42.0
 FAN_DEFAULT_OFF_TEMP = 40.0
 FAN_CPU_FORCE_ON_TEMP = 75.0
 FAN_HDD_FORCE_ON_TEMP = 60.0
@@ -6468,10 +6524,6 @@ def _pwm_apply_on(duty=10000, period=10000):
 # Endpoint nh? — chi liet ke path + mtime, KHONG mo tung file de Đọc EXIF
 # (trảnh stress disk). Client tu group theo mtime client-side.
 # ============================================================================
-# Cache toan bo danh sach anh (da sort mtime desc) de tranh os.walk toan o moi
-# request. NAS RAM ~1GB + HDD 7200rpm: walk toan o moi lan la cuc ky ton I/O.
-_PHOTOS_TIMELINE_CACHE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "photos_timeline_cache.json")
-_PHOTOS_TIMELINE_DB_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "photos_timeline_cache.sqlite")
 # Sau khi giải phóng cấu trúc lớn (list 385K+ ảnh), glibc thường GIỮ pages trong
 # arena thay vì trả về OS -> RSS không giảm trên NAS RAM ~1GB. gc.collect() thu
 # hồi vòng tham chiếu, malloc_trim(0) ép glibc trả heap rảnh về kernel. ctypes là
@@ -6491,233 +6543,42 @@ def _release_memory_to_os():
         pass
 
 
-_photos_timeline_cache = {
-    "items": [],  # Legacy fallback only. SQLite index is the primary cache.
-    "count": 0,
-    "ts": 0,
-    "loaded": False,
-    "loading": False,
-    "lock": threading.Lock(),
-    "rebuilding": False,
-    "error": ""
-}
-_PHOTOS_TIMELINE_CACHE_TTL = 300  # 5 phut
-
-
-def _load_photos_timeline_cache_file():
-    with _photos_timeline_cache["lock"]:
-        if _photos_timeline_cache.get("loaded"):
-            return
-        _photos_timeline_cache["loaded"] = True
+@app.route('/api/media/recent', methods=['GET'])
+@requires_auth
+def api_recent_media():
+    kind = request.args.get("kind")
+    if kind not in ("image", "video"):
+        return jsonify({"error": "Expected image or video"}), 400
+    scope = request.args.get("root", "")
+    if scope and ("\\" in scope or any(p in ("", ".", "..") for p in scope.split("/"))):
+        return jsonify({"error": "Invalid media root"}), 400
+    extensions = _IMAGE_EXTS if kind == "image" else _VIDEO_EXTS
+    where = "is_dir=0 AND (" + " OR ".join(["lower(name) LIKE ?"] * len(extensions)) + ")"
+    params = ["%" + ext for ext in sorted(extensions)]
+    if scope:
+        where += " AND path>=? AND path<?"
+        params.extend([scope + "/", scope + "0"])
+    root = _get_webdav_public_dir()
+    if not root:
+        return jsonify({"error": "catalogue_root_unavailable"}), 503
+    items = []
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
     try:
-        if not os.path.exists(_PHOTOS_TIMELINE_DB_FILE):
-            return
-        conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT value FROM meta WHERE key='ts'")
-            row = cur.fetchone()
-            ts_loaded = float(row[0]) if row else 0
-            cur.execute("SELECT value FROM meta WHERE key='count'")
-            row = cur.fetchone()
-            count_loaded = int(row[0]) if row else 0
-        finally:
-            conn.close()
-        with _photos_timeline_cache["lock"]:
-            _photos_timeline_cache["items"] = []
-            _photos_timeline_cache["count"] = count_loaded
-            _photos_timeline_cache["ts"] = ts_loaded
-        _release_memory_to_os()
-    except Exception as e:
-        log.warning("[PhotoTimeline] Không tải được cache file: %s", e)
-
-
-def _photos_timeline_cache_load_worker():
-    try:
-        _load_photos_timeline_cache_file()
-    finally:
-        with _photos_timeline_cache["lock"]:
-            _photos_timeline_cache["loading"] = False
-
-
-def _ensure_photos_timeline_cache_loaded():
-    with _photos_timeline_cache["lock"]:
-        if _photos_timeline_cache.get("loaded") or _photos_timeline_cache.get("loading"):
-            return
-        _photos_timeline_cache["loading"] = True
-    threading.Thread(target=_photos_timeline_cache_load_worker, daemon=True, name="PhotoTimelineCacheLoad").start()
-
-
-def _save_photos_timeline_cache_file(items, ts):
-    try:
-        os.makedirs(os.path.dirname(_PHOTOS_TIMELINE_CACHE_FILE), exist_ok=True)
-        tmp_path = _PHOTOS_TIMELINE_CACHE_FILE + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump({"ts": ts, "items": items}, f, ensure_ascii=False, separators=(",", ":"))
-        os.replace(tmp_path, _PHOTOS_TIMELINE_CACHE_FILE)
-    except Exception as e:
-        log.warning("[PhotoTimeline] Không lưu được cache file: %s", e)
-
-
-def _photos_timeline_query(offset, limit, target_year=None, target_month=None):
-    if not os.path.exists(_PHOTOS_TIMELINE_DB_FILE):
-        return None
-    where = ""
-    params = []
-    if target_year is not None and target_month is not None:
-        start_dt = datetime.datetime(target_year, target_month, 1)
-        if target_month == 12:
-            end_dt = datetime.datetime(target_year + 1, 1, 1)
-        else:
-            end_dt = datetime.datetime(target_year, target_month + 1, 1)
-        start_ts = int(time.mktime(start_dt.timetuple()))
-        end_ts = int(time.mktime(end_dt.timetuple()))
-        where = "WHERE mtime >= ? AND mtime < ?"
-        params.extend([start_ts, end_ts])
-    conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM photos %s" % where, params)
-        total = int(cur.fetchone()[0] or 0)
-        cur.execute(
-            "SELECT path, mtime, size FROM photos %s ORDER BY mtime DESC LIMIT ? OFFSET ?" % where,
-            params + [limit, offset]
-        )
-        page = [{"path": str(p), "mtime": int(m), "size": int(s)} for p, m, s in cur.fetchall()]
-        return total, page
+        conn.execute("BEGIN")
+        state = conn.execute("SELECT root,ready,scanned_at FROM index_state WHERE id=1").fetchone()
+        same_root = state and state[0] == os.path.realpath(root)
+        ready = bool(same_root and state[1] and time.time() - state[2] <= FILE_INDEX_FRESHNESS_SECONDS)
+        if same_root:
+            rows = conn.execute("SELECT path,name,mtime,size,mime FROM file_index WHERE " + where +
+                                " ORDER BY mtime DESC,path LIMIT 100", params)
+            items = [{"path": "/webdav/" + path, "name": name, "mtime": mtime, "size": size, "mime": mime}
+                     for path, name, mtime, size, mime in rows]
     finally:
         conn.close()
+    if not ready:
+        _refresh_file_index_for_search()
+    return jsonify({"source": "file_index", "index_ready": ready, "items": items})
 
-
-# Script quét chạy trong PROCESS CON: walk + sort 385K ảnh rồi ghi JSONL đã sort.
-# Toàn bộ RAM churn (path string, os.stat, list, sort temp) nằm trong con; con
-# thoát -> OS thu hồi 100%. Parent long-lived KHÔNG tự walk/sort nên arena không
-# phình dần sau mỗi chu kỳ rebuild (nguyên nhân RSS creep 217->282MB trước đây).
-_PHOTOS_TIMELINE_SCAN_SCRIPT = r'''
-import os, sys, json
-root = sys.argv[1]
-out = sys.argv[2]
-thumb_dir = sys.argv[3]
-exts = set(e for e in sys.argv[4].split(',') if e)
-rows = []
-for dp, dirs, files in os.walk(root):
-    dirs[:] = [d for d in dirs if not d.startswith('.') and d != thumb_dir and d != '#recycle']
-    for name in files:
-        if name.startswith('.'):
-            continue
-        ext = os.path.splitext(name)[1].lower()
-        if ext not in exts:
-            continue
-        full = os.path.join(dp, name)
-        try:
-            st = os.stat(full)
-            rel = os.path.relpath(full, root).replace('\\', '/')
-            rows.append((rel, int(st.st_mtime), st.st_size))
-        except Exception:
-            continue
-rows.sort(key=lambda x: x[1], reverse=True)
-with open(out, 'w', encoding='utf-8') as f:
-    for r in rows:
-        f.write(json.dumps([r[0], r[1], r[2]], ensure_ascii=False))
-        f.write('\n')
-'''
-
-
-def _photos_timeline_rebuild_worker():
-    error = ""
-    tmp_jsonl = _PHOTOS_TIMELINE_CACHE_FILE + ".scan.jsonl"
-    tmp_db = _PHOTOS_TIMELINE_DB_FILE + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(_PHOTOS_TIMELINE_CACHE_FILE), exist_ok=True)
-        try:
-            if os.path.exists(tmp_db):
-                os.remove(tmp_db)
-        except Exception:
-            pass
-        exts_csv = ",".join(sorted(_IMAGE_EXTS))
-        proc = subprocess.run(
-            [sys.executable, "-c", _PHOTOS_TIMELINE_SCAN_SCRIPT,
-             WEBDAV_FILE_ROOT, tmp_jsonl, THUMB_DIR_NAME, exts_csv],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800
-        )
-        if proc.returncode != 0:
-            error = "scan rc=%d %s" % (proc.returncode, (proc.stderr or b"")[-160:].decode("utf-8", "ignore"))
-            log.warning("[PhotoTimeline] Rebuild subprocess lỗi: %s", error)
-        else:
-            conn = sqlite3.connect(tmp_db, timeout=_cfg_sqlite_timeout("sqlite_timeout_60", 60.0))
-            count = 0
-            with open(tmp_jsonl, "r", encoding="utf-8") as f:
-                cur = conn.cursor()
-                cur.execute("PRAGMA journal_mode=OFF")
-                cur.execute("PRAGMA synchronous=OFF")
-                cur.execute("CREATE TABLE photos(path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL)")
-                batch = []
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        a = json.loads(line)
-                        batch.append((str(a[0]), int(a[1]), int(a[2])))
-                        if len(batch) >= 1000:
-                            cur.executemany("INSERT OR REPLACE INTO photos(path, mtime, size) VALUES(?,?,?)", batch)
-                            count += len(batch)
-                            batch = []
-                    except Exception:
-                        continue
-                if batch:
-                    cur.executemany("INSERT OR REPLACE INTO photos(path, mtime, size) VALUES(?,?,?)", batch)
-                    count += len(batch)
-                cur.execute("CREATE INDEX idx_photos_mtime ON photos(mtime DESC)")
-                cur.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-                cache_ts = time.time()
-                cur.executemany("INSERT INTO meta(key, value) VALUES(?,?)", [
-                    ("ts", str(cache_ts)),
-                    ("count", str(count)),
-                    ("schema", "2"),
-                ])
-                conn.commit()
-            conn.close()
-            os.replace(tmp_db, _PHOTOS_TIMELINE_DB_FILE)
-            cache_ts = time.time()
-            with _photos_timeline_cache["lock"]:
-                _photos_timeline_cache["items"] = []
-                _photos_timeline_cache["count"] = count
-                _photos_timeline_cache["ts"] = cache_ts
-            try:
-                os.remove(_PHOTOS_TIMELINE_CACHE_FILE)
-            except Exception:
-                pass
-    except subprocess.TimeoutExpired:
-        error = "scan timeout 1800s"
-        log.warning("[PhotoTimeline] Rebuild subprocess timeout")
-    except Exception as e:
-        error = str(e)[:200]
-        log.warning("[PhotoTimeline] Rebuild cache lỗi: %s", e)
-    finally:
-        try:
-            if os.path.exists(tmp_jsonl):
-                os.remove(tmp_jsonl)
-        except Exception:
-            pass
-        try:
-            if os.path.exists(tmp_db):
-                os.remove(tmp_db)
-        except Exception:
-            pass
-    with _photos_timeline_cache["lock"]:
-        _photos_timeline_cache["error"] = error
-        _photos_timeline_cache["rebuilding"] = False
-    # List cũ đã thành rác sau swap. Trả pages rảnh về OS.
-    _release_memory_to_os()
-
-
-def _ensure_photos_timeline_rebuild():
-    with _photos_timeline_cache["lock"]:
-        if _photos_timeline_cache.get("rebuilding"):
-            return
-        _photos_timeline_cache["rebuilding"] = True
-    threading.Thread(target=_photos_timeline_rebuild_worker, daemon=True, name="PhotoTimelineRebuild").start()
 
 @app.route('/api/photos/timeline', methods=['GET'])
 @requires_auth
@@ -6739,69 +6600,38 @@ def api_photos_timeline():
     except Exception:
         offset = 0
 
-    target_year = None
-    target_month = None
+    predicate = "is_dir=0 AND (" + " OR ".join(["lower(name) LIKE ?"] * len(_IMAGE_EXTS)) + ")"
+    params = ["%" + ext for ext in sorted(_IMAGE_EXTS)]
     if month_filter:
         try:
-            parts = month_filter.split("-")
-            target_year = int(parts[0])
-            target_month = int(parts[1])
-        except Exception:
-            pass
+            start = datetime.datetime.strptime(month_filter, "%Y-%m")
+            end = datetime.datetime(start.year + (start.month == 12), start.month % 12 + 1, 1)
+            params.extend([int(time.mktime(start.timetuple())) * 1000, int(time.mktime(end.timetuple())) * 1000])
+            predicate += " AND mtime>=? AND mtime<?"
+        except (ValueError, OverflowError, OSError):
+            return jsonify({"error": "Invalid month (YYYY-MM)"}), 400
 
-    now = time.time()
-    cache = _photos_timeline_cache
-    _ensure_photos_timeline_cache_loaded()
-    with cache["lock"]:
-        items = cache["items"]
-        cached_count = int(cache.get("count", 0) or 0)
-        cache_ts = float(cache.get("ts", 0) or 0)
-        loading = bool(cache.get("loading"))
-        rebuilding = bool(cache.get("rebuilding"))
-        error = cache.get("error", "")
-    cache_stale = now - cache_ts >= _PHOTOS_TIMELINE_CACHE_TTL
-    if cache_stale and not loading and not rebuilding:
-        _ensure_photos_timeline_rebuild()
-        rebuilding = True
-
-    db_result = _photos_timeline_query(offset, limit, target_year, target_month)
-    if db_result is not None:
-        total, page = db_result
-        return jsonify({
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": page,
-            "filter_month": month_filter or None,
-            "cache_age_seconds": int(max(0, now - cache_ts)) if cache_ts else None,
-            "scanning": loading or rebuilding,
-            "error": error or None,
-        })
-
-    # Legacy fallback only while SQLite index is being rebuilt for the first time.
-    if target_year is not None:
-        filtered = []
-        for it in items:
-            dt = datetime.datetime.fromtimestamp(it[1])
-            if dt.year == target_year and dt.month == target_month:
-                filtered.append(it)
-        items = filtered
-
-    total = len(items) if items else cached_count
-    page = [
-        {"path": it[0], "mtime": it[1], "size": it[2]}
-        for it in items[offset:offset + limit]
-    ]
-    return jsonify({
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "items": page,
-        "filter_month": month_filter or None,
-        "cache_age_seconds": int(max(0, now - cache_ts)) if cache_ts else None,
-        "scanning": loading or rebuilding,
-        "error": error or None,
-    })
+    total, items, age = 0, [], None
+    refresh = True
+    root = _get_webdav_public_dir()
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        conn.execute("BEGIN")
+        state = conn.execute("SELECT root,ready,scanned_at FROM index_state WHERE id=1").fetchone()
+        if root and state and state[0] == os.path.realpath(root):
+            age = int(max(0, time.time() - state[2])) if state[2] else None
+            refresh = not state[1] or age is None or age >= 300
+            total = conn.execute("SELECT COUNT(*) FROM file_index WHERE " + predicate, params).fetchone()[0]
+            rows = conn.execute("SELECT path,mtime,size FROM file_index WHERE " + predicate +
+                                " ORDER BY mtime DESC,path LIMIT ? OFFSET ?", params + [limit, offset])
+            items = [{"path": path, "mtime": mtime // 1000, "size": size} for path, mtime, size in rows]
+    finally:
+        conn.close()
+    if refresh and root:
+        _refresh_file_index_for_search()
+    return jsonify({"total": total, "offset": offset, "limit": limit, "items": items,
+                    "filter_month": month_filter or None, "cache_age_seconds": age,
+                    "scanning": bool(refresh and root), "error": None if root else "catalogue_root_unavailable"})
 
 
 # ============================================================================
@@ -7093,7 +6923,7 @@ def _disk_health_sample_once():
         normalized_warnings = [normalize_vietnamese_message(w) for w in warnings]
         sample["score"] = score
         sample["warnings"] = normalized_warnings
-        _cache_hdd_temp("%d°C" % int(sample.get("temp_c") or 0)) if sample.get("temp_c") else None
+
 
         with _disk_health_lock:
             _disk_health_last_sample = sample
@@ -7853,28 +7683,23 @@ def _build_storage_summary(max_seconds=45, refresh=False):
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
     try:
         conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_snapshot (id INTEGER PRIMARY KEY, root TEXT, scanned_at REAL, payload TEXT)')
-        conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_revision (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)')
-        conn.execute('INSERT OR IGNORE INTO storage_summary_revision VALUES(1,0)')
-        conn.execute('DROP TRIGGER IF EXISTS storage_summary_insert')
-        for event, suffix, condition in (
-                ('BEFORE INSERT', 'insert_v2', ' WHEN NOT EXISTS (SELECT 1 FROM file_index WHERE path=NEW.path AND name IS NEW.name AND is_dir IS NEW.is_dir AND size IS NEW.size)'),
-                ('AFTER DELETE', 'delete', ''),
-                ('AFTER UPDATE', 'update', ' WHEN OLD.path IS NOT NEW.path OR OLD.name IS NOT NEW.name OR OLD.is_dir IS NOT NEW.is_dir OR OLD.size IS NOT NEW.size')):
-            conn.execute('CREATE TRIGGER IF NOT EXISTS storage_summary_' + suffix +
-                         ' ' + event + ' ON file_index' + condition +
-                         ' BEGIN UPDATE storage_summary_revision SET revision=revision+1 WHERE id=1; END')
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'storage_summary_%'").fetchall():
+            conn.execute('DROP TRIGGER IF EXISTS "%s"' % row[0].replace('"', '""'))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_summary_revision'").fetchone():
+            conn.execute('DROP TABLE storage_summary_revision')
         conn.commit()
         conn.execute('BEGIN')
-        revision = conn.execute('SELECT revision FROM storage_summary_revision WHERE id=1').fetchone()[0]
-        state = conn.execute('SELECT root, scanned_at, ready FROM index_state WHERE id=1').fetchone()
+        state = conn.execute('SELECT root, scanned_at, ready, catalogue_revision FROM index_state WHERE id=1').fetchone()
         root = _get_webdav_public_dir()
         if not state or not root or state[0] != os.path.realpath(root):
             raise ValueError('File index unavailable for the configured root')
+        revision = state[3]
         cached = conn.execute('SELECT payload FROM storage_summary_snapshot WHERE id=1 AND root=?', (state[0],)).fetchone()
         if cached and not refresh:
             result = json.loads(cached[0])
-            result['partial'] = not bool(state[2]) or _index_scan_lock.locked()
-            if result.get('index_revision') != revision and time.time() - result.get('summary_updated_at', result['scanned_at']) >= 300 and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
+            revision_changed = result.get('catalogue_revision', -1) != revision
+            result['partial'] = not bool(state[2]) or _index_scan_lock.locked() or revision_changed
+            if revision_changed and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
                 def rebuild():
                     try:
                         _build_storage_summary(refresh=True)
@@ -7906,6 +7731,7 @@ def _build_storage_summary(max_seconds=45, refresh=False):
             'partial': not bool(state[2]) or _index_scan_lock.locked(),
             'scanned_at': int(state[1]), 'source': 'file_index',
             'summary_updated_at': int(time.time()), 'index_revision': revision,
+            'catalogue_revision': revision,
             'metadata_scope': 'indexed_snapshot',
         }
         conn.commit()
@@ -8060,7 +7886,15 @@ def _duplicate_sync_directory(directory):
 
 def _duplicate_db():
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
-    conn.execute('CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL)')
+    conn.execute("CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL, path TEXT NOT NULL DEFAULT '')")
+    if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
+        try:
+            conn.execute("ALTER TABLE verified_file_hashes ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
+                conn.close()
+                raise
+    conn.execute('CREATE INDEX IF NOT EXISTS verified_sha_size_path ON verified_file_hashes(sha256,size,path)')
     conn.commit()
     return conn
 
@@ -8068,8 +7902,19 @@ def _duplicate_db():
 def _duplicate_lookup(info):
     conn = _duplicate_db()
     try:
-        row = conn.execute('SELECT sha256 FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
+        row = conn.execute('SELECT sha256,path FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
                            (info['file_id'], info['version'], info['size'])).fetchone()
+        if row and row[1] != info['path']:
+            valid_path = False
+            if row[1]:
+                try:
+                    previous = _duplicate_file_info(row[1])
+                    valid_path = previous['file_id'] == info['file_id'] and previous['version'] == info['version']
+                except (OSError, ValueError):
+                    pass
+            if not valid_path:
+                conn.execute('UPDATE verified_file_hashes SET path=? WHERE file_id=?', (info['path'],info['file_id']))
+                conn.commit()
         return row[0] if row else ''
     finally:
         conn.close()
@@ -8083,8 +7928,8 @@ def _duplicate_save_hash(relative, version, sha256):
         raise ValueError('File changed during verification')
     conn = _duplicate_db()
     try:
-        conn.execute('INSERT OR REPLACE INTO verified_file_hashes VALUES(?,?,?,?,?)',
-                     (info['file_id'], info['version'], info['size'], sha256, time.time()))
+        conn.execute('INSERT OR REPLACE INTO verified_file_hashes(file_id,version,size,sha256,verified_at,path) VALUES(?,?,?,?,?,?)',
+                     (info['file_id'], info['version'], info['size'], sha256, time.time(), info['path']))
         conn.commit()
     finally:
         conn.close()
@@ -8104,12 +7949,21 @@ def _duplicate_work_dir():
     return directory
 
 
-def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256):
+def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256, work_lease=None):
     import fcntl
     import uuid
     _duplicate_validate_namespace()
     directory = _duplicate_work_dir()
+    def require_work_lease():
+        if work_lease is not None:
+            if (not isinstance(work_lease, dict) or work_lease.get('name') != 'duplicates' or
+                    not isinstance(work_lease.get('owner'), str) or len(work_lease.get('owner')) > 128 or
+                    not isinstance(work_lease.get('token'), str) or len(work_lease.get('token')) > 128 or
+                    not nas_work_coordinator.owns_lease(INDEX_DB_PATH, 'duplicates',
+                                                        work_lease.get('owner'), work_lease.get('token'))):
+                raise ValueError('NAS duplicate maintenance lease expired or is not owned')
     with os.fdopen(_duplicate_open_namespace_lock(True), 'r') as lock:
+        require_work_lease()
         keeper = _duplicate_file_info(keeper_path)
         victim = _duplicate_file_info(victim_path)
         if keeper['file_id'] == victim['file_id']:
@@ -8132,6 +7986,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 os.fsync(recovery.fileno())
             _duplicate_sync_directory(directory)
             try:
+                require_work_lease()
                 os.rename(victim['physical'], quarantine)
                 _duplicate_sync_directory(os.path.dirname(victim['physical']))
                 _duplicate_sync_directory(directory)
@@ -8145,6 +8000,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
                     raise ValueError('File was requested for writing; cleanup cancelled')
                 # shortcut: external root/SSH mutations are outside the managed namespace lock.
+                require_work_lease()
                 os.unlink(quarantine)
             except Exception:
                 if os.path.lexists(quarantine) and not os.path.lexists(victim['physical']):
@@ -8164,6 +8020,15 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
             conn = _duplicate_db()
             conn.execute('DELETE FROM verified_file_hashes WHERE file_id=?', (victim['file_id'],))
             conn.execute('DELETE FROM file_index WHERE path=?', (victim_path,))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_hashes'").fetchone():
+                conn.execute('DELETE FROM file_hashes WHERE path IN (?,?)',
+                             (victim_path, '/webdav/' + victim_path))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='thumb_neg_cache'").fetchone():
+                conn.execute('DELETE FROM thumb_neg_cache WHERE path=?', (victim['physical'],))
+            parent = victim_path.rsplit('/', 1)[0] + '/' if '/' in victim_path else ''
+            conn.execute('UPDATE index_directories SET stamp=NULL,complete=0 WHERE path=?', (parent,))
+            nas_work_coordinator.bump_catalogue_revision(conn)
+            conn.execute("UPDATE index_state SET ready=0,incomplete_reason='file_mutation_pending',scanned_at=0 WHERE id=1")
             conn.commit()
         except sqlite3.Error as error:
             log.warning('[Duplicates] Deleted file metadata refresh deferred: %s', error)
@@ -8172,6 +8037,56 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 conn.close()
         return {'deleted': True, 'path': victim_path, 'keeper': keeper_path,
                 'logical_bytes_removed': victim['size']}
+
+
+def _duplicate_find_matches(sha256, size, after=''):
+    if not isinstance(sha256, str) or len(sha256) != 64 or any(c not in '0123456789abcdef' for c in sha256):
+        raise ValueError('Complete SHA256 required')
+    if not isinstance(size, int) or size < 0 or size > 9223372036854775807 or not isinstance(after, str) or len(after) > 4096:
+        raise ValueError('Invalid size or cursor')
+    _refresh_file_index_for_search()
+    conn = _duplicate_db()
+    try:
+        state = conn.execute('SELECT root,ready FROM index_state WHERE id=1').fetchone()
+        public = _get_webdav_public_dir()
+        ready = bool(state and public and state[0] == os.path.realpath(public) and state[1] and not _index_scan_lock.locked())
+        rows = conn.execute('SELECT path FROM file_index WHERE is_dir=0 AND size=? AND path>? UNION SELECT path FROM verified_file_hashes WHERE sha256=? AND size=? AND path>? ORDER BY path LIMIT 64', (size,after,sha256,size,after)).fetchall()
+    finally:
+        conn.close()
+    matches, unverified = [], []
+    for row in rows:
+        path = row[0]
+        try:
+            info = _duplicate_file_info(path)
+            if info['size'] != size:
+                continue
+            known = _duplicate_lookup(info)
+            if known == sha256:
+                matches.append(path)
+            elif not known:
+                unverified.append(path)
+        except (OSError, ValueError):
+            pass
+    return {'matches': matches, 'unverified': unverified, 'index_ready': ready,
+            'next_cursor': rows[-1][0] if len(rows) == 64 else ''}
+
+
+@app.route('/api/duplicates/capabilities', methods=['GET', 'POST'])
+@requires_admin
+def api_duplicate_capabilities():
+    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True})
+
+
+@app.route('/api/duplicates/find', methods=['POST'])
+@requires_admin
+def api_duplicate_find():
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        return jsonify(_duplicate_find_matches(body.get('sha256'), body.get('size'), body.get('after', '')))
+    except (OSError, ValueError) as error:
+        return jsonify({'error': str(error)}), 409
 
 
 @app.route('/api/duplicates/file', methods=['POST'])
@@ -8210,7 +8125,7 @@ def api_duplicate_cleanup():
         if not isinstance(body, dict):
             raise ValueError('JSON object required')
         result = _duplicate_cleanup(body.get('victim'), body.get('keeper'), body.get('victim_version'),
-                                    body.get('keeper_version'), body.get('sha256'))
+                                    body.get('keeper_version'), body.get('sha256'), body.get('work_lease'))
         return jsonify(result)
     except (OSError, ValueError) as error:
         return jsonify({'deleted': False, 'error': str(error)}), 409
@@ -8615,7 +8530,7 @@ def _create_backup_tarball():
         "files": [],
     }
     all_files = list(_BACKUP_FILES) + _backup_dynamic_files()
-    with tarfile.open(full_path, "w:gz") as tar:
+    with _open_private_backup_tar(full_path) as tar:
         for src, arcname, _crit in all_files:
             if not os.path.exists(src): continue
             try:
@@ -9544,7 +9459,53 @@ def _usb_import_copy_error_message(err, src):
     return str(err)
 
 
-def _usb_import_copy_file_with_progress(src, dst, totals):
+def _usb_import_file_version(path):
+    current = os.stat(path)
+    return (current.st_dev, current.st_ino, current.st_size,
+            current.st_mtime_ns, current.st_ctime_ns)
+
+
+def _usb_import_copy_file_with_progress(src, dst, totals, overwrite=True):
+    if os.path.exists(dst) and os.path.samefile(src, dst):
+        raise ValueError('Source and destination refer to the same file')
+    if not overwrite and os.path.lexists(dst):
+        raise FileExistsError(dst)
+    source_version = _usb_import_file_version(src)
+    temporary = tempfile.NamedTemporaryFile(prefix='.nas-usb-', dir=os.path.dirname(dst), delete=False)
+    staged = temporary.name
+    temporary.close()
+    try:
+        checksum = _usb_import_write_file_with_progress(src, staged, totals)
+        if _usb_import_cancel.is_set():
+            raise InterruptedError('USB import cancelled')
+        if _usb_import_file_version(src) != source_version:
+            raise ValueError('Source changed during USB copy')
+        if os.path.getsize(staged) != source_version[2]:
+            raise IOError('Incomplete USB copy')
+        with open(staged, 'r+b') as handle:
+            os.fsync(handle.fileno())
+        with os.fdopen(_duplicate_open_namespace_lock(False), 'r') as lock:
+            if _usb_import_cancel.is_set():
+                raise InterruptedError('USB import cancelled')
+            if overwrite:
+                os.replace(staged, dst)
+            else:
+                os.link(staged, dst)
+                os.unlink(staged)
+            if os.name != 'nt':
+                parent_fd = os.open(os.path.dirname(dst), os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(parent_fd)
+                finally:
+                    os.close(parent_fd)
+        totals.setdefault("changed_dirs", set()).add(os.path.dirname(dst))
+        return checksum
+    finally:
+        if os.path.exists(staged):
+            os.unlink(staged)
+
+
+def _usb_import_write_file_with_progress(src, dst, totals):
     buf_size = 8 * 1024 * 1024  # 8MB buffer — tối ưu cho USB 3.0 sequential read
     file_size = 0
     try:
@@ -9645,13 +9606,18 @@ def _usb_import_copy_tree(candidate, settings):
     with _usb_import_lock:
         prev_dest = _usb_import_state.get("dest_dir", "")
         prev_id = _usb_import_state.get("active_id", "")
+        prev_session = _usb_import_state.get("session_id", "")
         prev_status = _usb_import_state.get("status", "")
         prev_plan_index = int(_usb_import_state.get("plan_index") or 0)
         prev_pending_conflicts = list(_usb_import_state.get("pending_conflicts") or [])
         prev_pending_errors = list(_usb_import_state.get("pending_errors") or [])
-    can_resume = bool(settings.get("resume_enabled", True) and prev_id == ident and prev_status in ("copying", "cancelled", "error") and prev_dest and os.path.isdir(prev_dest))
     dest_base = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), safe_label)
-    session_id = hashlib.sha1(("%s|%s" % (ident, dest_base)).encode("utf-8", errors="ignore")).hexdigest()[:12]
+    copy_mode = settings.get("copy_mode", "new_only")
+    session_id = hashlib.sha1(("%s|%s|%s" % (ident, dest_base, copy_mode)).encode("utf-8", errors="ignore")).hexdigest()[:12]
+    can_resume = bool(settings.get("resume_enabled", True) and prev_id == ident and
+                      prev_status in ("copying", "cancelled", "error") and prev_dest and
+                      os.path.realpath(prev_dest) == os.path.realpath(dest_base) and
+                      prev_session == session_id and os.path.isdir(prev_dest))
     plan_file, plan_meta_file, files_total, bytes_total, plan_reused = _usb_import_build_or_reuse_plan(src_root, dest_base, session_id, can_resume)
     conflict_file = os.path.join(dest_base, ".usb_import_conflicts_%s.jsonl" % session_id)
     if not plan_reused:
@@ -9716,7 +9682,7 @@ def _usb_import_copy_tree(candidate, settings):
                 return
             try:
                 _usb_import_ensure_dir(os.path.dirname(dst))
-                if os.path.exists(dst):
+                if os.path.exists(dst) and copy_mode != "overwrite":
                     conflict_item = _usb_import_conflict_item(src, dst, dest_base, src_size)
                     if conflict_handle is not None:
                         conflict_handle.write(json.dumps(conflict_item, ensure_ascii=False) + "\n")
@@ -9744,7 +9710,7 @@ def _usb_import_copy_tree(candidate, settings):
                         )
                         last_conflict_emit = now_emit
                     continue
-                checksum = _usb_import_copy_file_with_progress(src, dst, totals)
+                checksum = _usb_import_copy_file_with_progress(src, dst, totals, overwrite=(copy_mode == "overwrite"))
                 _usb_import_apply_path_permissions(dst, is_dir=False)
                 done += 1
                 bytes_done = totals["bytes_done"]
@@ -9764,7 +9730,6 @@ def _usb_import_copy_tree(candidate, settings):
             except InterruptedError:
                 raise
             except Exception as e:
-                _usb_import_move_partial(dst)
                 retry_item = _usb_import_error_item(src, dst, dest_base, e, src_size)
                 if getattr(e, "errno", None) == 5:
                     failed += 1
@@ -9802,7 +9767,7 @@ def _usb_import_copy_tree(candidate, settings):
                 try:
                     if not src or not os.path.exists(src):
                         raise FileNotFoundError(src or item.get("source_name") or "source")
-                    if os.path.exists(dst):
+                    if os.path.exists(dst) and copy_mode != "overwrite":
                         conflict_item = _usb_import_conflict_item(src, dst, dest_base, src_size)
                         if conflict_handle is not None:
                             conflict_handle.write(json.dumps(conflict_item, ensure_ascii=False) + "\n")
@@ -9814,7 +9779,7 @@ def _usb_import_copy_tree(candidate, settings):
                         skipped += 1
                         totals["skipped"] = skipped
                         continue
-                    checksum = _usb_import_copy_file_with_progress(src, dst, totals)
+                    checksum = _usb_import_copy_file_with_progress(src, dst, totals, overwrite=(copy_mode == "overwrite"))
                     _usb_import_apply_path_permissions(dst, is_dir=False)
                     done += 1
                     bytes_done = totals["bytes_done"]
@@ -9833,7 +9798,6 @@ def _usb_import_copy_tree(candidate, settings):
                 except InterruptedError:
                     raise
                 except Exception as e:
-                    _usb_import_move_partial(dst)
                     failed += 1
                     totals["failed"] = failed
                     pending_error_count += 1
@@ -9938,6 +9902,7 @@ def _usb_import_copy_tree(candidate, settings):
             "checksum": bool(settings.get("verify_checksum", False)),
         })
     finally:
+        _index_mutated_directories(totals.get("changed_dirs"))
         if manifest_handle is not None:
             try:
                 manifest_handle.close()
@@ -10025,7 +9990,7 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
                 elif action != "overwrite":
                     raise ValueError("Hành động không hợp lệ.")
                 _usb_import_ensure_dir(os.path.dirname(final_dst))
-                _usb_import_copy_file_with_progress(src, final_dst, totals)
+                _usb_import_copy_file_with_progress(src, final_dst, totals, overwrite=(action == "overwrite"))
                 _usb_import_apply_path_permissions(final_dst, is_dir=False)
                 totals["done"] += 1
                 resolved += 1
@@ -10078,6 +10043,7 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
     except InterruptedError:
         _usb_import_set_state(status="cancelled", message="Đã huỷ xử lý file trùng.", finished_at=int(time.time()))
     finally:
+        _index_mutated_directories(totals.get("changed_dirs"))
         _usb_import_mark_stopped()
         _set_thumbnail_auto_block("usb_import", False)
         _usb_import_save_state()
@@ -10326,13 +10292,59 @@ def _backup_dynamic_files():
 
 
 def _ensure_backup_dir():
+    import stat
     try:
-        os.makedirs(_BACKUP_DIR, exist_ok=True)
+        if os.path.realpath(_BACKUP_DIR) != os.path.abspath(_BACKUP_DIR):
+            raise ValueError('Backup directory must not use symlinks')
+        parent = os.stat(os.path.dirname(_BACKUP_DIR))
+        if parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+            raise ValueError('Backup parent is not private to its owner')
+        os.makedirs(_BACKUP_DIR, mode=0o700, exist_ok=True)
+        fd = os.open(_BACKUP_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            if os.fstat(fd).st_uid != os.geteuid():
+                raise ValueError('Unexpected backup directory owner')
+            os.fchmod(fd, 0o700)
+            for name in os.listdir(_BACKUP_DIR):
+                if not name.startswith('Backup_NAS') or not name.endswith('.tar.gz'):
+                    continue
+                archive_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                try:
+                    info = os.fstat(archive_fd)
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+                        raise ValueError('Unsafe backup archive')
+                    os.fchmod(archive_fd, 0o600)
+                finally:
+                    os.close(archive_fd)
+        finally:
+            os.close(fd)
         return True
-    except Exception as e:
-        log.error("[Backup] Không tạo được thư mục: %s", e)
+    except Exception as error:
+        log.error('[Backup] Private backup directory unavailable: %s', error)
         return False
 
+
+def _open_private_backup_tar(path):
+    import contextlib
+    @contextlib.contextmanager
+    def create():
+        if not _ensure_backup_dir():
+            raise IOError('Private backup directory unavailable')
+        name = os.path.basename(path)
+        if os.path.abspath(os.path.dirname(path)) != os.path.realpath(_BACKUP_DIR) or not name.startswith('Backup_NAS') or not name.endswith('.tar.gz'):
+            raise ValueError('Invalid backup archive path')
+        directory_fd = os.open(_BACKUP_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+            with os.fdopen(fd, 'wb') as raw:
+                with tarfile.open(fileobj=raw, mode='w:gz') as archive:
+                    yield archive
+                raw.flush()
+                os.fsync(raw.fileno())
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    return create()
 
 
 def _backup_file_path(filename):
@@ -10372,7 +10384,7 @@ def api_backup_create():
         included = 0
         skipped = []
         all_files = list(_BACKUP_FILES) + _backup_dynamic_files()
-        with tarfile.open(full_path, "w:gz") as tar:
+        with _open_private_backup_tar(full_path) as tar:
             for src, arcname, critical in all_files:
                 if not os.path.exists(src):
                     skipped.append({"path": src, "reason": "không tồn tại"})
@@ -10756,6 +10768,10 @@ def api_fan_control():
         # khien API tra HTTP 500 du hardware da chuyen mode dung. /api/status van
         # tra mode cu vi cache không được cap nhat ngay.
         if mode == 'auto':
+            if settings.get('mode') != 'auto':
+                # A read already in progress belongs to the previous mode.
+                with _HDD_TEMP_REFRESH_LOCK:
+                    _HDD_TEMP_CACHE.update(ts=None, attempt=None, paused=True, cool=0)
             settings['mode'] = 'auto'
             settings['on_temp'] = float(data.get('on_temp', FAN_DEFAULT_ON_TEMP) or FAN_DEFAULT_ON_TEMP)
             settings['off_temp'] = float(data.get('off_temp', FAN_DEFAULT_OFF_TEMP) or FAN_DEFAULT_OFF_TEMP)
@@ -10763,8 +10779,6 @@ def api_fan_control():
                 settings['off_temp'] = max(28.0, settings['on_temp'] - 3.0)
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
             with _cache_lock:
                 _status_cache['fan_mode'] = 'auto'
                 _status_cache['fan_on_temp'] = settings['on_temp']
@@ -11204,11 +11218,13 @@ def _social_worker(job_id, url, folder):
         saved_files = []
         total_size = 0
         move_errors = []
+        changed_dirs = set()
         for fname, fsize in downloaded_files:
             src_path = os.path.join(tmp_dir, fname)
             dst_path = _social_destination_path(webdav_dest_base, fname, job_id)
             try:
                 shutil.move(src_path, dst_path)
+                changed_dirs.add(os.path.dirname(dst_path))
                 saved_files.append(os.path.basename(dst_path))
                 total_size += fsize
                 log.info('[Social] Saved %s (%d bytes)', dst_path, fsize)
@@ -11216,6 +11232,7 @@ def _social_worker(job_id, url, folder):
                 log.warning('[Social] Move failed: %s', mv_err)
                 move_errors.append('%s: %s' % (fname, str(mv_err)))
 
+        _index_mutated_directories(changed_dirs)
         if move_errors:
             _set_error('Khong luu duoc tep vao WebDAV: %s' % '; '.join(move_errors))
             return
@@ -12067,6 +12084,7 @@ def _screen_record_remux_worker(session_dir, sid, final_ts):
         with _screen_record_lock(sid):
             manifest = _read_screen_manifest(session_dir)
             if proc.returncode == 0 and os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0:
+                _index_mutated_directories((session_dir,))
                 manifest["final_mp4"] = os.path.relpath(final_mp4, WEBDAV_FILE_ROOT).replace(os.sep, "/")
                 manifest["remux_status"] = "done"
                 log.info("[ScreenRecord] Remux thành công phiên %s sang MP4", sid)
@@ -12112,6 +12130,7 @@ def _screen_record_finish_worker(session_dir, sid, total):
             manifest["missing"] = []
             manifest["completed_at"] = int(time.time())
             _write_screen_manifest(session_dir, manifest)
+        _index_mutated_directories((session_dir,))
         threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
     except Exception as e:
         log.warning("[ScreenRecord] finish worker loi: %s", e)
@@ -12523,6 +12542,7 @@ def api_organize_legacy_videos():
     target_exts = {".mpg", ".mpeg", ".avi", ".wmv", ".flv", ".mkv", ".mov", ".ts", ".m4v", ".3gp"}
     
     other_video_dir = os.path.join(WEBDAV_FILE_ROOT, "Other Video")
+    changed_dirs = set()
     
     moved_count = 0
     errors = []
@@ -12566,6 +12586,7 @@ def api_organize_legacy_videos():
                     
                 try:
                     shutil.move(old_path, new_path)
+                    changed_dirs.update((os.path.dirname(old_path), os.path.dirname(new_path)))
                     moved_count += 1
                     log.info("[Organize] Moved: %s -> %s", file, target_dir)
                 except Exception as e:
@@ -12574,6 +12595,7 @@ def api_organize_legacy_videos():
     # Fix quyen truy cap cho thư mục WebDAV vi script nay chay duoi quyen root
     # OpenMediaVault yeu cau ACL can ban (getfacl) va SGID (2775) de WebDAV nhin thay được
     if moved_count > 0:
+        _index_mutated_directories(changed_dirs)
         try:
             _run_acl_copy(WEBDAV_FILE_ROOT, other_video_dir)
             subprocess.run(["chown", "-R", "daica:webdav-users", other_video_dir])
@@ -12596,6 +12618,43 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", ".gif
 _VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v", ".3gp"}
 _ALL_MEDIA_EXTS = _IMAGE_EXTS | _VIDEO_EXTS
 
+def _smart_organize_candidates(base_dir, allowed_exts):
+    """Read bounded batches from one catalogue revision without holding a read lock during moves."""
+    if not base_dir:
+        raise ValueError("catalogue_root_unavailable")
+    root = os.path.realpath(base_dir)
+    predicate = " OR ".join(["lower(name) LIKE ?"] * len(allowed_exts))
+    extensions = ["%" + ext for ext in sorted(allowed_exts)]
+    after = ""
+    snapshot = None
+    while True:
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+        try:
+            conn.execute("BEGIN")
+            state = conn.execute("SELECT root,generation,catalogue_revision,ready,scanned_at FROM index_state WHERE id=1").fetchone()
+            if not state or state[0] != root or not state[3] or (snapshot is None and time.time() - state[4] > FILE_INDEX_FRESHNESS_SECONDS):
+                _refresh_file_index_for_search()
+                raise ValueError("catalogue_refresh_pending")
+            if snapshot is not None and state[:3] != snapshot:
+                raise ValueError("catalogue_changed")
+            snapshot = state[:3]
+            rows = conn.execute("SELECT path,size,mtime FROM file_index WHERE is_dir=0 AND path>? AND (" +
+                                predicate + ") ORDER BY path LIMIT 512", [after] + extensions).fetchall()
+        finally:
+            conn.close()
+        for rel, size, mtime in rows:
+            parts = rel.split("/")
+            if os.path.isabs(rel) or "\\" in rel or any(part in ("", ".", "..") for part in parts):
+                raise ValueError("Invalid indexed path")
+            label = datetime.datetime.fromtimestamp(mtime / 1000.0).strftime("%Y/%m")
+            if "/".join(parts[:-1]) == label or "/".join(parts[:-1]).endswith("/" + label):
+                continue
+            yield rel, size, mtime, label
+        if len(rows) < 512:
+            return
+        after = rows[-1][0]
+
+
 @app.route("/api/tools/smart_organize/scan", methods=["POST"])
 @requires_auth
 def api_smart_organize_scan():
@@ -12607,7 +12666,7 @@ def api_smart_organize_scan():
     data = request.get_json(force=True) or {}
     scan_filter = data.get("filter", "all")
 
-    base_dir = get_webdav_root()
+    base_dir = _get_webdav_public_dir()
 
     if scan_filter == "image":
         allowed_exts = _IMAGE_EXTS
@@ -12616,62 +12675,22 @@ def api_smart_organize_scan():
     else:
         allowed_exts = _ALL_MEDIA_EXTS
 
-    # Thu thap file, nhom theo YYYY/MM
-    groups_map = {}  # key = "2024/03", value = { "count": N, "size": S, "files": [...] }
+    groups_map = {}
     total = 0
-    # CC-005 P1: cap 50000 entries + deadline 120s (truoc day walk full disk vo han)
-    _scanned = [0]
-    _scan_deadline = time.time() + 120
-
-    for root, dirs, files in os.walk(base_dir):
-        # B? qua thư mục an va hệ thong
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
-        if time.time() > _scan_deadline or _scanned[0] > 50000:
-            break
-        for name in files:
-            if name.startswith('.'):
+    now = time.time()
+    try:
+        for rel, size, mtime, label in _smart_organize_candidates(base_dir, allowed_exts):
+            if now - mtime / 1000.0 < 86400:
                 continue
-            _scanned[0] += 1
-            if _scanned[0] > 50000 or time.time() > _scan_deadline:
-                break
-            ext = os.path.splitext(name)[1].lower()
-            if ext not in allowed_exts:
-                continue
-
-            full_path = os.path.join(root, name)
-            try:
-                st = os.stat(full_path)
-                mtime = st.st_mtime
-                size = st.st_size
-                dt = datetime.datetime.fromtimestamp(mtime)
-                label = "%04d/%02d" % (dt.year, dt.month)
-
-                rel_path = full_path[len(base_dir):]
-                if not rel_path.startswith("/"):
-                    rel_path = "/" + rel_path
-
-                # Kiểm tra file da nam trong thư mục YYYY/MM ch?a (b? qua neu da ??ng ch?)
-                parent_dir = os.path.dirname(rel_path).strip("/")
-                if parent_dir == label or parent_dir.endswith("/" + label):
-                    continue
-
-                if label not in groups_map:
-                    groups_map[label] = {"count": 0, "size": 0, "sample_files": []}
-
-                groups_map[label]["count"] += 1
-                groups_map[label]["size"] += size
-                total += 1
-
-                # Giu toi da 5 file mau de hien thi preview
-                if len(groups_map[label]["sample_files"]) < 5:
-                    groups_map[label]["sample_files"].append({
-                        "name": name,
-                        "path": rel_path,
-                        "size": size,
-                        "mtime": int(mtime * 1000)
-                    })
-            except Exception:
-                pass
+            group = groups_map.setdefault(label, {"count": 0, "size": 0, "sample_files": []})
+            group["count"] += 1
+            group["size"] += size
+            total += 1
+            if len(group["sample_files"]) < 5:
+                group["sample_files"].append({"name": rel.rsplit("/", 1)[-1], "path": "/" + rel,
+                                              "size": size, "mtime": mtime})
+    except ValueError as error:
+        return jsonify({"success": False, "error": str(error)}), 409
 
     # Sap xep theo thoi gian giam dan (mới nh?t truoc)
     sorted_labels = sorted(groups_map.keys(), reverse=True)
@@ -12722,9 +12741,11 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter, dry_run=
     # CC-005 P1/P2: dry_run (chỉ scan không move), manifest JSON old->new để undo,
     # skip file mtime<24h (tránh move file đang ghi), journal giữ 7 ngày trong .nas_meta.
 
+    import stat
     moved_count = 0
     errors = []
     affected_dirs = set()
+    changed_dirs = set()
     scanned_entries = 0
     max_entries = 50000
     deadline = time.time() + 1800
@@ -12746,96 +12767,80 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter, dry_run=
             errors=[],
         )
 
-        for root, dirs, files in os.walk(base_dir):
-            if time.time() >= deadline:
-                raise TimeoutError("Smart organize timed out")
-            if not _background_heavy_work_allowed(ignore_user_idle=True):
+        base_dir = os.path.realpath(base_dir)
+        for rel, size, indexed_mtime, label in _smart_organize_candidates(base_dir, allowed_exts):
+            if scanned_entries >= max_entries or time.time() >= deadline:
+                raise TimeoutError("Smart organize limit reached")
+            if scanned_entries % 120 == 0 and not _background_heavy_work_allowed(ignore_user_idle=True):
                 raise RuntimeError("Background heavy work is not allowed right now")
 
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
-
-            for name in files:
-                if name.startswith('.'):
+            scanned_entries += 1
+            name = rel.rsplit("/", 1)[-1]
+            full_path = os.path.join(base_dir, *rel.split("/"))
+            try:
+                if os.path.islink(full_path) or not os.path.realpath(full_path).startswith(base_dir + os.sep):
+                    raise ValueError("Source is outside public root or a symbolic link")
+                st = os.stat(full_path)
+                if not stat.S_ISREG(st.st_mode) or st.st_size != size or int(st.st_mtime * 1000) != indexed_mtime:
+                    raise ValueError("Source changed since catalogue scan")
+                mtime = st.st_mtime
+                # CC-005 P2: skip file mtime<24h (tránh move file đang ghi/upload dở).
+                if time.time() - mtime < 86400:
+                    _skip_fresh += 1
                     continue
-                if scanned_entries >= max_entries or time.time() >= deadline:
-                    raise TimeoutError("Smart organize limit reached")
-                if scanned_entries % 120 == 0 and not _background_heavy_work_allowed(ignore_user_idle=True):
-                    raise RuntimeError("Background heavy work is not allowed right now")
+                target_dir = os.path.join(base_dir, label)
+                if not os.path.realpath(target_dir).startswith(base_dir + os.sep):
+                    raise ValueError("Destination outside public root")
 
-                scanned_entries += 1
-                ext = os.path.splitext(name)[1].lower()
-                if ext not in allowed_exts:
-                    continue
+                new_path = os.path.join(target_dir, name)
+                if os.path.lexists(new_path):
+                    base_name, ex = os.path.splitext(name)
+                    _ts_suffix = int(time.time())
+                    _collision_idx = 0
+                    while os.path.lexists(new_path):
+                        if _collision_idx == 0:
+                            new_path = os.path.join(target_dir, "%s_%d%s" % (base_name, _ts_suffix, ex))
+                        else:
+                            new_path = os.path.join(target_dir, "%s_%d_%d%s" % (base_name, _ts_suffix, _collision_idx, ex))
+                        _collision_idx += 1
 
-                full_path = os.path.join(root, name)
-                try:
-                    st = os.stat(full_path)
-                    mtime = st.st_mtime
-                    # CC-005 P2: skip file mtime<24h (tránh move file đang ghi/upload dở).
-                    if time.time() - mtime < 86400:
-                        _skip_fresh += 1
-                        continue
-                    dt = datetime.datetime.fromtimestamp(mtime)
-                    label = "%04d/%02d" % (dt.year, dt.month)
-
-                    rel_path = full_path[len(base_dir):]
-                    if not rel_path.startswith("/"):
-                        rel_path = "/" + rel_path
-
-                    parent_dir = os.path.dirname(rel_path).strip("/")
-                    if parent_dir == label or parent_dir.endswith("/" + label):
-                        continue
-
-                    target_dir = os.path.join(base_dir, label)
-
-                    new_path = os.path.join(target_dir, name)
-                    if os.path.exists(new_path):
-                        base_name, ex = os.path.splitext(name)
-                        _ts_suffix = int(time.time())
-                        _collision_idx = 0
-                        while os.path.exists(new_path):
-                            if _collision_idx == 0:
-                                new_path = os.path.join(target_dir, "%s_%d%s" % (base_name, _ts_suffix, ex))
-                            else:
-                                new_path = os.path.join(target_dir, "%s_%d_%d%s" % (base_name, _ts_suffix, _collision_idx, ex))
-                            _collision_idx += 1
-
-                    # CC-005 P2: dry_run chi scan khong move (API cu default dry_run=0).
-                    _rel_old = full_path[len(base_dir):]
-                    if not _rel_old.startswith("/"):
-                        _rel_old = "/" + _rel_old
-                    _rel_new = new_path[len(base_dir):]
-                    if not _rel_new.startswith("/"):
-                        _rel_new = "/" + _rel_new
-                    if dry_run:
-                        _moves.append({"old": _rel_old, "new": _rel_new, "dry_run": True})
-                        moved_count += 1
-                        continue
-                    if not dry_run:
-                        os.makedirs(target_dir, exist_ok=True)
-                        affected_dirs.add(target_dir)
-                    shutil.move(full_path, new_path)
-                    _moves.append({"old": _rel_old, "new": _rel_new})
+                # CC-005 P2: dry_run chi scan khong move (API cu default dry_run=0).
+                _rel_old = full_path[len(base_dir):]
+                if not _rel_old.startswith("/"):
+                    _rel_old = "/" + _rel_old
+                _rel_new = new_path[len(base_dir):]
+                if not _rel_new.startswith("/"):
+                    _rel_new = "/" + _rel_new
+                if dry_run:
+                    _moves.append({"old": _rel_old, "new": _rel_new, "dry_run": True})
                     moved_count += 1
-                    if moved_count % 100 == 0:
-                        log.info("[SmartOrganize] moved %d files...", moved_count)
-                        _smart_organize_job_update(
-                            job_id,
-                            moved_count=moved_count,
-                            scanned=scanned_entries,
-                            error_count=len(errors),
-                        )
-                except Exception as e:
-                    errors.append(str(e))
-                    if len(errors) <= 20:
-                        _smart_organize_job_update(
-                            job_id,
-                            moved_count=moved_count,
-                            scanned=scanned_entries,
-                            error_count=len(errors),
-                            errors=errors[:20],
-                            last_error=str(e),
-                        )
+                    continue
+                if not dry_run:
+                    os.makedirs(target_dir, exist_ok=True)
+                    affected_dirs.add(target_dir)
+                shutil.move(full_path, new_path)
+                changed_dirs.update((os.path.dirname(full_path), os.path.dirname(new_path)))
+                _moves.append({"old": _rel_old, "new": _rel_new})
+                moved_count += 1
+                if moved_count % 100 == 0:
+                    log.info("[SmartOrganize] moved %d files...", moved_count)
+                    _smart_organize_job_update(
+                        job_id,
+                        moved_count=moved_count,
+                        scanned=scanned_entries,
+                        error_count=len(errors),
+                    )
+            except Exception as e:
+                errors.append(str(e))
+                if len(errors) <= 20:
+                    _smart_organize_job_update(
+                        job_id,
+                        moved_count=moved_count,
+                        scanned=scanned_entries,
+                        error_count=len(errors),
+                        errors=errors[:20],
+                        last_error=str(e),
+                    )
 
         if moved_count > 0:
             for d in affected_dirs:
@@ -12933,6 +12938,8 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter, dry_run=
             finished_at=time.time(),
         )
         log.warning("[SmartOrganize] Job %s stopped: %s", job_id, e)
+    finally:
+        _index_mutated_directories(changed_dirs)
 
 
 @app.route("/api/tools/smart_organize/execute", methods=["POST"])
@@ -12950,7 +12957,9 @@ def api_smart_organize_execute():
     except Exception:
         dry_run = bool(data.get("dry_run", False))
 
-    base_dir = get_webdav_root()
+    base_dir = _get_webdav_public_dir()
+    if not base_dir:
+        return jsonify({"success": False, "error": "catalogue_root_unavailable"}), 503
     if scan_filter == "image":
         allowed_exts = _IMAGE_EXTS
     elif scan_filter == "video":
@@ -13033,7 +13042,9 @@ def api_smart_organize_undo():
     job_id = str(data.get("job_id", "") or "").strip()
     if not job_id or "/" in job_id or "\\" in job_id or ".." in job_id:
         return jsonify({"success": False, "error": "job_id khong hop le"}), 400
-    base_dir = get_webdav_root()
+    base_dir = _get_webdav_public_dir()
+    if not base_dir:
+        return jsonify({"success": False, "error": "catalogue_root_unavailable"}), 503
     manifest_path = os.path.join(base_dir, ".nas_meta", "smart_organize_%s.json" % job_id)
     base_real = os.path.realpath(base_dir)
     mani_real = os.path.realpath(manifest_path)
@@ -13048,6 +13059,7 @@ def api_smart_organize_undo():
         return jsonify({"success": False, "error": "manifest loi: %s" % str(e)[:100]}), 500
     moves = (mani or {}).get("moves", []) if isinstance(mani, dict) else []
     restored = 0
+    changed_dirs = set()
     skipped = 0
     errs = []
     for m in moves:
@@ -13079,11 +13091,13 @@ def api_smart_organize_undo():
                 skipped += 1
                 continue
             shutil.move(new_abs, old_abs)
+            changed_dirs.update((os.path.dirname(new_abs), os.path.dirname(old_abs)))
             restored += 1
         except Exception as e:
             errs.append(str(e)[:120])
             if len(errs) >= 20:
                 break
+    _index_mutated_directories(changed_dirs)
     return jsonify({"success": True, "job_id": job_id, "restored": restored,
                     "skipped": skipped, "errors": errs[:20]})
 
@@ -13129,75 +13143,47 @@ def get_webdav_root():
     _cached_webdav_root = best_path.rstrip('/')
     return _cached_webdav_root
 
-CACHE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".naswebdav", "tmp", "nas_fast_index_cache.json")
-
 def generate_fast_index(force=False):
-    import time
-    if not force and os.path.exists(CACHE_FILE):
-        if time.time() - os.path.getmtime(CACHE_FILE) < 86400: # 24 hours
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk: break
-                    yield chunk
-            return
-
-    base_dir = get_webdav_root()
-    media_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".mp4", ".mkv", ".mov", ".avi"}
-    base_len = len(base_dir)
-
+    """Stream one complete public-root SQL snapshot; never walk or cache JSON."""
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
     try:
-        cache_f = open(CACHE_FILE, "w", encoding="utf-8")
-    except Exception:
-        cache_f = None
-
-    yield '{"files":['
-    if cache_f: cache_f.write('{"files":[')
-
-    total = 0
-    first = True
-    # CC-005 P1: cap 100000 entries + deadline 120s (walk full disk treo HDD/gay timeout)
-    _fi_scanned = [0]
-    _fi_deadline = time.time() + 120
-    _fi_truncated = [False]
-    for root, dirs, files in os.walk(base_dir):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
-        if time.time() > _fi_deadline or _fi_scanned[0] > 100000:
-            _fi_truncated[0] = True
-            break
-        for name in files:
-            if name.startswith('.'): continue
-            _fi_scanned[0] += 1
-            if _fi_scanned[0] > 100000 or time.time() > _fi_deadline:
-                _fi_truncated[0] = True
+        conn.execute('BEGIN')
+        state = conn.execute('SELECT root,generation,ready,scanned_at,catalogue_revision FROM index_state WHERE id=1').fetchone()
+        root = _get_webdav_public_dir()
+        if not root or not state or state[0] != os.path.realpath(root):
+            _refresh_file_index_for_search()
+            raise ValueError('catalogue_root_unavailable')
+        if not state[2] or _index_scan_lock.locked():
+            _refresh_file_index_for_search()
+            raise ValueError('catalogue_refresh_pending')
+        # Allow retry/backoff to consume a completed refresh instead of starting
+        # another scan on every request after the search five-second interval.
+        if time.time() - state[3] > 60:
+            _refresh_file_index_for_search()
+            raise ValueError('catalogue_refresh_pending')
+        total = conn.execute('SELECT COUNT(*) FROM file_index WHERE is_dir=0').fetchone()[0]
+        metadata = {'catalogue_protocol': 1, 'source': 'file_index', 'index_ready': True,
+                    'index_generation': state[1], 'catalogue_updated_at': state[3],
+                    'catalogue_revision': state[4],
+                    'truncated': False, 'total': total}
+        yield json.dumps(metadata, ensure_ascii=False)[:-1] + ',"files":['
+        cursor = conn.execute('SELECT path,name,size,mtime,mime FROM file_index NOT INDEXED WHERE is_dir=0')
+        first = True
+        while True:
+            rows = cursor.fetchmany(512)
+            if not rows:
                 break
-            ext = os.path.splitext(name)[1].lower()
-            if ext not in media_exts: continue
-            full_path = os.path.join(root, name)
-            try:
-                st = os.stat(full_path)
-                rel_path = full_path[base_len:]
-                if not rel_path.startswith("/"): rel_path = "/" + rel_path
-                
-                s = json.dumps({"name": name, "path": "/webdav" + rel_path, "size": st.st_size, "mtime": int(st.st_mtime * 1000)})
-                if not first:
-                    yield ','
-                    if cache_f: cache_f.write(',')
+            chunks = []
+            for path, name, size, mtime, mime in rows:
+                if os.path.isabs(path) or '\\' in path or any(part in ('', '.', '..') for part in path.split('/')):
+                    raise ValueError('Invalid indexed path')
+                chunks.append(('' if first else ',') + json.dumps({'name': name,
+                    'path': '/webdav/' + path, 'size': size, 'mtime': mtime, 'mime': mime}, ensure_ascii=False))
                 first = False
-                
-                yield s
-                if cache_f: cache_f.write(s)
-                total += 1
-            except Exception as e: log.debug("[M4] Ignored exception: %s", e)
-
-    tail = '], "total": %d}' % total
-    yield tail
-    if cache_f:
-        try:
-            cache_f.write(tail)
-        finally:
-            # P1-9: Always close cache_f to prevent FD leak on exception
-            cache_f.close()
+            yield ''.join(chunks)
+        yield ']}'
+    finally:
+        conn.close()
 
 @app.route("/api/disk/trash_batch", methods=["POST"])
 @requires_auth
@@ -13212,10 +13198,13 @@ def api_disk_trash_batch():
     if len(files) > 500:
         return jsonify({"error": "Batch qua lon (toi da 500 file/lan)"}), 400
     
-    webdav_root = get_webdav_root()
+    webdav_root = _get_webdav_public_dir()
+    if not webdav_root:
+        return jsonify({"error": "Configured WebDAV root is unavailable"}), 503
         
     success = 0
     errors = []
+    removed_paths = []
     
     for webdav_path in files:
         if not webdav_path.startswith("/webdav/"):
@@ -13255,18 +13244,48 @@ def api_disk_trash_batch():
             counter += 1
             
         try:
+            was_directory = os.path.isdir(local_path)
             os.rename(local_path, dest_path)
             success += 1
+            removed_paths.append((rel_path.rstrip("/") + ("/" if was_directory else ""), local_path))
         except Exception as e:
             errors.append({"path": webdav_path, "error": str(e)})
             
-    # CC-005 P1/P2: unify ve CACHE_FILE global, xoa ca path cu /tmp neu sot.
-    for _cc005_cf in (CACHE_FILE, "/tmp/nas_fast_index_cache.json"):
+    if removed_paths:
+        conn = None
         try:
-            if os.path.exists(_cc005_cf):
-                os.remove(_cc005_cf)
-        except Exception as e:
-            log.debug("[FastIndex] Could not remove cache file %s: %s", _cc005_cf, e)
+            conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
+            tables = set(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+            for rel_path, physical_path in removed_paths:
+                relative_root = rel_path.rstrip("/")
+                prefix = relative_root + "/"
+                upper = relative_root + "0"
+                conn.execute("DELETE FROM file_index WHERE path=? OR (path>=? AND path<?)",
+                             (rel_path, prefix, upper))
+                conn.execute("DELETE FROM index_directories WHERE path=? OR (path>=? AND path<?)",
+                             (relative_root, prefix, upper))
+                webdav_root = "/webdav/" + relative_root
+                webdav_prefix = webdav_root + "/"
+                webdav_upper = webdav_root + "0"
+                for table in ("file_hashes", "verified_file_hashes"):
+                    if table in tables:
+                        conn.execute("DELETE FROM " + table + " WHERE path IN (?,?) OR (path>=? AND path<?) OR (path>=? AND path<?)",
+                                     (relative_root, webdav_root, prefix, upper, webdav_prefix, webdav_upper))
+                if "thumb_neg_cache" in tables:
+                    physical_root = physical_path.rstrip(os.sep)
+                    physical_prefix = physical_root + os.sep
+                    conn.execute("DELETE FROM thumb_neg_cache WHERE path=? OR (path>=? AND path<?)",
+                                 (physical_root, physical_prefix, physical_root + "0"))
+            nas_work_coordinator.bump_catalogue_revision(conn)
+            conn.execute("UPDATE index_state SET ready=0,incomplete_reason='file_mutation_pending',scanned_at=0 WHERE id=1")
+            conn.commit()
+        except sqlite3.Error as error:
+            if conn is not None:
+                conn.rollback()
+            log.warning("[Trash] Shared file index reconciliation deferred: %s", error)
+        finally:
+            if conn is not None:
+                conn.close()
             
     return jsonify({
         "success_count": success,
@@ -13276,8 +13295,25 @@ def api_disk_trash_batch():
 @app.route("/api/disk/fast_index")
 @requires_auth
 def api_fast_index():
-    force = request.args.get("force", "0") == "1"
-    return Response(generate_fast_index(force), mimetype='application/json')
+    chunks = generate_fast_index()
+    try:
+        first = next(chunks)
+    except (ValueError, sqlite3.Error, OSError):
+        chunks.close()
+        return jsonify({'catalogue_protocol': 1, 'index_ready': False,
+                        'error': 'catalogue_refresh_pending'}), 503, {'Retry-After': '2'}
+
+    def stream():
+        try:
+            yield first
+            for chunk in chunks:
+                yield chunk
+        finally:
+            chunks.close()
+    response = Response(stream(), mimetype='application/json')
+    response.headers['Cache-Control'] = 'no-store'
+    response.call_on_close(chunks.close)
+    return response
 
 @app.route("/api/disk/hash_batch", methods=["POST"])
 @requires_auth
@@ -13327,27 +13363,10 @@ def api_hash_batch():
 
     return jsonify(result)
 
-# ============ FILE HASH STORE — quan ly file qua ma hash + tim trung lap ====
-# Kho SQLite rieng (.nas_meta/file_hashes.db): moi file 1 row (path, size,
-# mtime, sha256 full, partial 1MB). PC/app tinh hash roi POST len luu; API
-# duplicates nhom theo sha256 de bao trung lap. Khong quet tu dong — chi luu
-# khi client gui (do client render/hash, NAS chi luu tru).
-_HASH_DB_PATH = None  # khoi tao lazy duoi .nas_meta
-_HASH_DB_LOCK = threading.Lock()
-
-
+# ============ FILE HASH STORE — cùng DB với file_index và work queue =========
 def _hash_db():
-    """Mo (va tao bang neu chua co) kho hash. Tra connection moi — caller dong."""
-    global _HASH_DB_PATH
-    import sqlite3
-    if _HASH_DB_PATH is None:
-        try:
-            meta = os.path.join(get_webdav_root(), ".nas_meta")
-            os.makedirs(meta, exist_ok=True)
-            _HASH_DB_PATH = os.path.join(meta, "file_hashes.db")
-        except Exception:
-            _HASH_DB_PATH = "/tmp/nas_file_hashes.db"
-    conn = sqlite3.connect(_HASH_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
+    """Open the shared index database and migrate the legacy hash table once."""
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
     try:
         conn.execute("""CREATE TABLE IF NOT EXISTS file_hashes (
             path TEXT PRIMARY KEY, size INTEGER NOT NULL DEFAULT 0,
@@ -13355,9 +13374,34 @@ def _hash_db():
             partial TEXT NOT NULL DEFAULT '', scanned_at INTEGER NOT NULL DEFAULT 0)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hashes_sha ON file_hashes(sha256)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hashes_size ON file_hashes(size)")
+        conn.execute("CREATE TABLE IF NOT EXISTS file_hash_migrations (name TEXT PRIMARY KEY, migrated_at REAL NOT NULL)")
+        conn.commit()
+        migrated = conn.execute("SELECT 1 FROM file_hash_migrations WHERE name='legacy_file_hashes'").fetchone()
+        if not migrated:
+            legacy_root = _get_webdav_public_dir()
+            legacy_path = os.path.join(legacy_root, ".nas_meta", "file_hashes.db") if legacy_root else ""
+            if legacy_path and os.path.isfile(legacy_path) and os.path.realpath(legacy_path) != os.path.realpath(INDEX_DB_PATH):
+                conn.execute("ATTACH DATABASE ? AS legacy_hashes", (legacy_path,))
+                try:
+                    legacy_table = conn.execute(
+                        "SELECT 1 FROM legacy_hashes.sqlite_master WHERE type='table' AND name='file_hashes'").fetchone()
+                    if legacy_table:
+                        columns = set(row[1] for row in conn.execute("PRAGMA legacy_hashes.table_info(file_hashes)"))
+                        if {"path", "size", "mtime", "sha256", "partial", "scanned_at"}.issubset(columns):
+                            conn.execute("""INSERT OR IGNORE INTO file_hashes(path,size,mtime,sha256,partial,scanned_at)
+                                SELECT CASE WHEN h.path LIKE '/webdav/%' THEN substr(h.path,9) ELSE trim(h.path,'/') END,
+                                       h.size,h.mtime,lower(h.sha256),h.partial,h.scanned_at
+                                FROM legacy_hashes.file_hashes h
+                                WHERE length(h.sha256)=64 AND h.sha256 NOT GLOB '*[^0-9a-fA-F]*'
+                                  AND h.path NOT LIKE '%..%' AND h.path NOT LIKE '%\\%'""")
+                            conn.commit()
+                finally:
+                    conn.execute("DETACH DATABASE legacy_hashes")
+            conn.execute("INSERT OR REPLACE INTO file_hash_migrations(name,migrated_at) VALUES('legacy_file_hashes',?)", (time.time(),))
         conn.commit()
     except Exception:
-        pass
+        conn.rollback()
+        log.debug("[HashStore] Shared hash database migration deferred", exc_info=True)
     return conn
 
 
@@ -13637,6 +13681,48 @@ def _get_thumb_path(base_dir, file_path):
         hash_str = file_path_real
     safe_hash = hashlib.md5(hash_str.encode('utf-8')).hexdigest()
     return os.path.join(base_dir_real, THUMB_DIR_NAME, safe_hash + ".jpg")
+
+def _thumb_current(source, target, minimum_size=0):
+    try:
+        src = os.stat(source)
+        cached = os.stat(target)
+        try:
+            version = os.getxattr(target, "user.nas_source_version")
+        except (AttributeError, OSError):
+            version = None
+        if version is not None:
+            return cached.st_size > 0 and version == _duplicate_stat_version(src).encode("ascii")
+        return (cached.st_size > minimum_size and
+                cached.st_mtime_ns >= max(src.st_mtime_ns, src.st_ctime_ns))
+    except OSError:
+        return False
+
+
+def _publish_thumb(source, target, write_jpeg, expected_version=None):
+    """Stage the JPEG beside its destination and publish only for the source we read."""
+    src = os.stat(source)
+    version = _duplicate_stat_version(src)
+    if expected_version is not None and expected_version != version:
+        raise ValueError("source_version_changed")
+    fd, staged = tempfile.mkstemp(prefix=".thumb-", suffix=".jpg", dir=os.path.dirname(target))
+    os.close(fd)
+    try:
+        if not write_jpeg(staged):
+            return False
+        if os.path.getsize(staged) == 0:
+            return False
+        try:
+            os.setxattr(staged, "user.nas_source_version", version.encode("ascii"))
+        except (AttributeError, OSError):
+            pass  # Filesystems without xattrs use the JPEG timestamp.
+        if _duplicate_stat_version(os.stat(source)) != version:
+            raise ValueError("source_version_changed")
+        os.replace(staged, target)
+        return True
+    finally:
+        if os.path.exists(staged):
+            os.remove(staged)
+
 
 def _generate_image_thumb(src_path, dst_path):
     """Generate JPEG thumbnail for images. Handles HEIC/HEIF detection and skips
@@ -13995,14 +14081,32 @@ _THUMB_NEG_CACHE_TTL = 7 * 24 * 3600
 _THUMB_NEG_CACHE_LOADED = False
 
 def _thumb_neg_db():
+    conn = None
     try:
-        import sqlite3
-        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS thumb_neg_cache (path TEXT PRIMARY KEY, ts REAL)")
+        cur.execute("CREATE TABLE IF NOT EXISTS thumbnail_cache_migrations (name TEXT PRIMARY KEY, migrated_at REAL NOT NULL)")
         conn.commit()
+        migrated = cur.execute("SELECT 1 FROM thumbnail_cache_migrations WHERE name='legacy_thumb_neg_cache'").fetchone()
+        if not migrated:
+            legacy_path = DB_PATH
+            if legacy_path and os.path.isfile(legacy_path) and os.path.realpath(legacy_path) != os.path.realpath(INDEX_DB_PATH):
+                conn.execute("ATTACH DATABASE ? AS legacy_thumbnail", (legacy_path,))
+                try:
+                    legacy_table = conn.execute(
+                        "SELECT 1 FROM legacy_thumbnail.sqlite_master WHERE type='table' AND name='thumb_neg_cache'").fetchone()
+                    if legacy_table:
+                        conn.execute("INSERT OR IGNORE INTO thumb_neg_cache(path,ts) SELECT path,ts FROM legacy_thumbnail.thumb_neg_cache")
+                        conn.commit()
+                finally:
+                    conn.execute("DETACH DATABASE legacy_thumbnail")
+            cur.execute("INSERT OR REPLACE INTO thumbnail_cache_migrations(name,migrated_at) VALUES('legacy_thumb_neg_cache',?)", (time.time(),))
+            conn.commit()
         return conn
     except Exception:
+        if conn is not None:
+            conn.close()
         return None
 
 def _thumb_neg_load():
@@ -14042,7 +14146,8 @@ def _thumb_neg_cached(real_path):
             ts = _THUMB_NEG_CACHE.get(real_path)
             if ts is None:
                 return False
-            if time.time() - ts > _THUMB_NEG_CACHE_TTL:
+            src = os.stat(real_path)
+            if time.time() - ts > _THUMB_NEG_CACHE_TTL or max(src.st_mtime, src.st_ctime) > ts:
                 _THUMB_NEG_CACHE.pop(real_path, None)
                 return False
             return True
@@ -14080,10 +14185,10 @@ def _process_one_thumb(args):
         return False
     try:
         if ext in MEDIA_IMAGE_EXTS:
-            if _generate_image_thumb(full_path, thumb_path):
+            if _publish_thumb(full_path, thumb_path, lambda staged: _generate_image_thumb(full_path, staged)):
                 return True
         elif ext in MEDIA_VIDEO_EXTS:
-            if _generate_video_thumb(full_path, thumb_path):
+            if _publish_thumb(full_path, thumb_path, lambda staged: _generate_video_thumb(full_path, staged)):
                 return True
     except Exception as e:
         log.warning("[Thumb] Lỗi xử lý thumbnail cho %s: %s", os.path.basename(full_path), e)
@@ -14103,6 +14208,34 @@ def _process_one_thumb(args):
     # nen ffmpeg/Pillow sua loi (codec update, libheif, ...) se khong bao gio retry.
     # Placeholder chi nen ghi khi nguoi dung goi /api/thumb on-demand, khong phai tu daemon.
     return False
+
+
+def _thumbnail_catalogue_page(after_path="", limit=512):
+    """Read one bounded page from the ready canonical file_index snapshot."""
+    if not isinstance(after_path, str) or len(after_path) > 2048:
+        raise ValueError("Invalid thumbnail catalogue cursor")
+    if after_path and (os.path.isabs(after_path) or "\\" in after_path or
+                       any(part in ("", ".", "..") for part in after_path.split("/"))):
+        raise ValueError("Invalid thumbnail catalogue cursor")
+    if not isinstance(limit, int) or limit < 1 or limit > 1024:
+        raise ValueError("Invalid thumbnail catalogue page size")
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        conn.execute("BEGIN")
+        state = conn.execute("SELECT root,ready,catalogue_revision FROM index_state WHERE id=1").fetchone()
+        if not state or not state[0] or not state[1]:
+            return {"ready": False, "root": state[0] if state else "", "revision": state[2] if state else 0, "rows": []}
+        rows = conn.execute(
+            "SELECT path,name FROM file_index WHERE is_dir=0 AND path>? ORDER BY path LIMIT ?",
+            (after_path, limit)).fetchall()
+        for rel_path, _name in rows:
+            if (os.path.isabs(rel_path) or "\\" in rel_path or
+                    any(part in ("", ".", "..") for part in rel_path.split("/"))):
+                raise ValueError("Invalid indexed thumbnail path")
+        return {"ready": True, "root": state[0], "revision": int(state[2] or 0), "rows": rows}
+    finally:
+        conn.close()
+
 
 def _thumbnail_generator():
     """Background daemon: 24/7 bulk thumbnail generator for NAS.
@@ -14131,8 +14264,6 @@ def _thumbnail_generator():
     """
     global _thumb_stats, _thumb_scan_requested
 
-    _THUMB_EXCLUDE_DIRS = {".thumbnails", ".trash", ".nas_meta", ".git", ".recycle", "@eaDir", "#recycle"}
-    _THUMB_SMB_ROOTS = ["/srv/dev-disk-by-label-data", "/sharedfolders/Data", "/var/www/webdav/public"]
     # FIX-AV1-RETRY-STORM: daemon quét toàn disk mỗi vòng; file AV1/corrupt
     # (ffmpeg 3.2 không decoder) bị probe + spawn ffmpeg lại vô ích mỗi vòng,
     # ~2300 warning/ngày trong log 2026-09-15. Giãn rescan 300s -> 1800s.
@@ -14140,72 +14271,40 @@ def _thumbnail_generator():
     #  (1) app yeu cau tay (action=scan), (2) du 24h + that su idle.
     _RESCAN_INTERVAL_S = 86400  # 24h giua cac lan quet tu dong
 
-    def _scan_roots():
-        """Walk all media roots, deduplicate by realpath, yield media files."""
-        seen = set()
-        roots = []
-        try:
-            roots.append(os.path.realpath(get_webdav_root()))
-        except Exception:
-            pass
-        roots.extend(_THUMB_SMB_ROOTS)
-        for root in roots:
-            if not root or not os.path.isdir(root):
-                continue
-            try:
-                for dirpath, dirnames, filenames in os.walk(root, topdown=True):
-                    # Prune system dirs in-place so os.walk skips them
-                    dirnames[:] = [d for d in dirnames
-                                   if d not in _THUMB_EXCLUDE_DIRS
-                                   and not d.startswith(".")
-                                   and not d.startswith("_broken_quarantine")]
-                    for fname in filenames:
-                        if fname.startswith("."):
-                            continue
-                        ext = os.path.splitext(fname)[1].lower()
-                        if ext not in MEDIA_ALL_EXTS:
-                            continue
-                        full = os.path.join(dirpath, fname)
-                        try:
-                            real = os.path.realpath(full)
-                        except OSError:
-                            continue
-                        if real in seen:
-                            continue
-                        seen.add(real)
-                        yield (real, ext)
-            except Exception as e:
-                log.warning("[Thumbnail] Scan error on %s: %s", root, e)
+    def _scan_roots(after_path=""):
+        """Read media candidates from the canonical file_index in bounded pages."""
+        cursor_path = after_path
+        while True:
+            page = _thumbnail_catalogue_page(cursor_path, 512)
+            if not page["ready"]:
+                break
+            if page["root"] != os.path.realpath(base_dir) or page["revision"] != catalogue_revision:
+                raise RuntimeError("catalogue_changed")
+            rows = page["rows"]
+            if not rows:
+                break
+            for rel_path, name in rows:
+                cursor_path = rel_path
+                if any(part.startswith(".") or part in ("_broken_quarantine",) for part in rel_path.split("/")):
+                    continue
+                ext = os.path.splitext(name)[1].lower()
+                yield (os.path.join(base_dir, *rel_path.split("/")), ext, rel_path)
 
     # FIX-PLACEHOLDER-STALE: real thumbnails are >= 2KB; old error placeholders
     # created by _create_placeholder_thumb() are ~700 bytes (320x180 JPEG, quality 60,
     # solid color + red X). Treat anything <= 1200 bytes as stale placeholder and retry.
     _PLACEHOLDER_MAX_SIZE = 1200
 
-    def _needs_thumb(real_path):
+    def _needs_thumb(real_path, base=None):
         """Return True if the thumbnail is missing, zero-byte, or a stale placeholder."""
         try:
-            base = get_webdav_root()
+            base = base or get_webdav_root()
             tp = _get_thumb_path(base, real_path)
-            if not os.path.exists(tp):
-                return True
-            sz = os.path.getsize(tp)
-            if sz == 0:
-                return True
-            # Placeholder detection: real thumbnail JPEG at quality 80 is always >= 2KB.
-            # Old error placeholders (_create_placeholder_thumb) are ~700 bytes.
-            if sz <= _PLACEHOLDER_MAX_SIZE:
-                return True
-            return False
+            return not _thumb_current(real_path, tp, _PLACEHOLDER_MAX_SIZE)
         except Exception:
             return True
 
     log.info("[Thumbnail] Background daemon starting (24/7 idle worker).")
-
-    # FIX-PLACEHOLDER-STALE: on first startup, delete all old error placeholders
-    # so _needs_thumb() triggers retry for every file that previously failed.
-    # Placeholders are ~700 bytes (320x180 JPEG at quality 60); real thumbnails are >= 2KB.
-    _cleaned_placeholders = False
 
     # FIX-THUMB-INIT: first scan runs IMMEDIATELY (last_full_scan = far in past).
     # The old code set last_full_scan = 0, then checked now - 0 < 300 (True)
@@ -14213,14 +14312,24 @@ def _thumbnail_generator():
     last_full_scan = 0.0
     _last_gate_closed_log_sig = None
     while True:
+        thumb_lease = None
+        thumb_checkpoint_cursor = ""
+        thumb_completed = 0
+        thumb_total = 0
         try:
             now = time.time()
             # Re-evaluate TTL even while paused. Without this, a crashed app's
             # stale activity block would never expire because the worker only slept.
             with _thumb_gate_lock:
                 _apply_thumbnail_gate_locked()
-                manual_scan = bool(globals().get("_thumb_scan_requested", False))
-            due_daily = (now - last_full_scan) >= _RESCAN_INTERVAL_S
+                requested_in_memory = bool(globals().get("_thumb_scan_requested", False))
+            saved_jobs = nas_work_coordinator.get_status(INDEX_DB_PATH, "thumbnail")
+            saved_job = saved_jobs[0] if saved_jobs else None
+            expired_run = bool(saved_job and saved_job["state"] == "running" and not saved_job.get("owner"))
+            manual_scan = requested_in_memory or bool(saved_job and saved_job["state"] in ("queued", "paused", "retry")) or expired_run
+            due_daily = (not saved_job or saved_job["state"] == "failed" or
+                         (saved_job["state"] == "complete" and
+                          now - float(saved_job["updated_at"]) >= _RESCAN_INTERVAL_S))
             # Gate check FIRST (so pause takes effect immediately, not 5 min later).
             _heavy_ok = _background_heavy_work_allowed()
             if not _thumb_paused.is_set() or not _heavy_ok:
@@ -14243,100 +14352,89 @@ def _thumbnail_generator():
             if not manual_scan and not due_daily:
                 time.sleep(5)
                 continue
+            root = _get_webdav_public_dir()
+            if not root:
+                time.sleep(30)
+                continue
+            nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail", os.path.realpath(root), priority=20)
+            thumb_lease = nas_work_coordinator.claim_next(
+                INDEX_DB_PATH, "nas:thumbnail", True, lease_seconds=3600, job_name="thumbnail")
+            if not thumb_lease:
+                time.sleep(5)
+                continue
             if manual_scan:
                 with _thumb_gate_lock:
                     globals()["_thumb_scan_requested"] = False
             last_full_scan = now
             log.info("[Thumbnail] Starting scan pass (manual=%s) ...", manual_scan)
 
-            base_dir = get_webdav_root()
+            base_dir = thumb_lease["root"]
+            conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+            try:
+                conn.execute("BEGIN")
+                state = conn.execute("SELECT root,ready,catalogue_revision FROM index_state WHERE id=1").fetchone()
+                if not state or state[0] != os.path.realpath(base_dir) or not state[1]:
+                    nas_work_coordinator.checkpoint(
+                        INDEX_DB_PATH, "thumbnail", thumb_lease["owner"], thumb_lease["token"], "",
+                        0, 0, state="paused", error="catalogue_not_ready")
+                    thumb_lease = None
+                    time.sleep(5)
+                    continue
+                catalogue_revision = int(state[2] or 0)
+                ext_predicate = " OR ".join(["lower(name) LIKE ?"] * len(MEDIA_ALL_EXTS))
+                media_total = conn.execute(
+                    "SELECT COUNT(*) FROM file_index WHERE is_dir=0 AND (" + ext_predicate + ")",
+                    tuple("%%%s" % ext for ext in sorted(MEDIA_ALL_EXTS))).fetchone()[0]
+            finally:
+                conn.close()
+            saved_cursor = thumb_lease.get("cursor", "")
+            saved_revision, separator, after_path = saved_cursor.partition("\n")
+            if separator and saved_revision == str(catalogue_revision):
+                thumb_checkpoint_cursor = saved_cursor
+                thumb_completed = min(thumb_lease.get("completed", 0), media_total)
+            else:
+                after_path = ""
+                thumb_completed = 0
+            total = thumb_completed
+            thumb_total = media_total
             thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
             try:
                 os.makedirs(thumb_dir, exist_ok=True)
             except Exception:
                 pass
 
-            # FIX-ZERO-BYTE-SCRUB: every scan pass, sweep .thumbs/ for 0-byte files
-            # and delete them. A 0-byte file is always cruft: it cannot be a real
-            # JPEG (save() always writes the SOI marker = >= 2 bytes), it cannot be
-            # a placeholder (which is ~700 bytes), and it cannot be useful as a
-            # cache entry. _needs_thumb() already treats 0-byte as 'needs retry',
-            # but sweeping them keeps the directory clean and prevents inode churn.
-            try:
-                removed_zero = 0
-                for name in os.listdir(thumb_dir):
-                    if not name.endswith(".jpg"):
-                        continue
-                    full = os.path.join(thumb_dir, name)
-                    try:
-                        if os.path.isfile(full) and os.path.getsize(full) == 0:
-                            os.remove(full)
-                            removed_zero += 1
-                    except Exception:
-                        continue
-                if removed_zero:
-                    log.info("[Thumbnail] Scrubbed %d zero-byte files from %s", removed_zero, THUMB_DIR_NAME)
-            except Exception as e:
-                log.debug("[Thumbnail] Zero-byte scrub skipped: %s", e)
-
-            # FIX-PLACEHOLDER-STALE: clean up old error placeholders once at startup
-            # so files previously marked "failed" get a fresh attempt.
-            if not _cleaned_placeholders:
-                _cleaned_placeholders = True
-                try:
-                    removed = 0
-                    for name in os.listdir(thumb_dir):
-                        try:
-                            full = os.path.join(thumb_dir, name)
-                            if not os.path.isfile(full):
-                                continue
-                            if os.path.getsize(full) <= _PLACEHOLDER_MAX_SIZE:
-                                os.remove(full)
-                                removed += 1
-                                if removed % 200 == 0:
-                                    log.info("[Thumbnail] Cleaned %d stale placeholders so far ...", removed)
-                        except Exception:
-                            continue
-                    if removed:
-                        log.warning("[Thumbnail] Cleaned %d stale placeholder files; daemon will retry them.", removed)
-                except Exception as e:
-                    log.warning("[Thumbnail] Placeholder cleanup failed: %s", e)
-
-            # FIX-ZERO-BYTE-SCRUB-NAS: sweep all media roots for settled 0-byte
-            # files (excluding active uploads via mtime check) each scan pass.
-            try:
-                _scrub_roots = [base_dir] + _THUMB_SMB_ROOTS
-                _scrub_stale_zero_byte_files(_scrub_roots)
-            except Exception as e:
-                log.debug("[Thumbnail] NAS zero-byte scrub skipped: %s", e)
-
-            # Single-pass: walk + generate in one pass. Walking 847K files twice
-            # on the RK3328 HDD takes >20 minutes; single-pass cuts that in half.
-            # total_media is updated incrementally so ETA improves as we go.
-            total = 0
+            # One bounded file_index pass replaces separate WebDAV and SMB tree walks.
             generated_count = 0
             error_count = 0
+            interrupted = False
             with _thumb_stats_lock:
-                _thumb_stats["generated"] = 0
+                _thumb_stats["generated"] = thumb_completed
                 _thumb_stats["errors"] = 0
                 _thumb_stats["running"] = True
                 _thumb_stats["paused"] = False
                 _thumb_stats["start_time"] = now
                 _thumb_stats["last_file"] = ""
+                _thumb_stats["total_media"] = media_total
 
-            for real_path, ext in _scan_roots():
+            for real_path, ext, rel_path in _scan_roots(after_path):
                 # Re-check gates each iteration — pause may flip mid-scan
                 if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
                     with _thumb_stats_lock:
                         _thumb_stats["running"] = False
                         _thumb_stats["paused"] = True
                     log.info("[Thumbnail] Gate closed mid-scan — processed %d/%d so far.", total, _thumb_stats["total_media"])
+                    interrupted = True
                     break
+                if ext not in MEDIA_ALL_EXTS:
+                    continue
                 total += 1
-                # Update total_media incrementally so client ETA improves as we scan
-                if total % 500 == 0:
-                    with _thumb_stats_lock:
-                        _thumb_stats["total_media"] = total
+                thumb_checkpoint_cursor = str(catalogue_revision) + "\n" + rel_path
+                thumb_completed = total
+                if total % 25 == 0:
+                    if not nas_work_coordinator.checkpoint(
+                        INDEX_DB_PATH, "thumbnail", thumb_lease["owner"], thumb_lease["token"],
+                        thumb_checkpoint_cursor, min(total, media_total), media_total, state="running"):
+                        raise RuntimeError("thumbnail_work_lease_lost")
 
                 # Skip formats the NAS cannot decode — never retry, never placeholder.
                 if ext in THUMB_UNSUPPORTED_EXTS:
@@ -14347,7 +14445,7 @@ def _thumbnail_generator():
                 if _thumb_neg_cached(real_path):
                     continue
 
-                if not _needs_thumb(real_path):
+                if not _needs_thumb(real_path, base_dir):
                     generated_count += 1
                     continue
 
@@ -14369,19 +14467,31 @@ def _thumbnail_generator():
                     error_count += 1
                     with _thumb_stats_lock:
                         _thumb_stats["errors"] = error_count
-                # Yield to API server between items —1s keeps NAS responsive
-                time.sleep(1)
+                time.sleep(0.1)
 
             # Walk finished — set final total
             with _thumb_stats_lock:
                 _thumb_stats["total_media"] = total
                 _thumb_stats["running"] = False
+            nas_work_coordinator.checkpoint(
+                INDEX_DB_PATH, "thumbnail", thumb_lease["owner"], thumb_lease["token"], thumb_checkpoint_cursor,
+                min(total, media_total), media_total, state="paused" if interrupted else "complete",
+                error="nas_busy" if interrupted else "")
+            thumb_lease = None
             log.info("[Thumbnail] Scan pass done: generated=%d errors=%d total=%d",
                      generated_count, error_count, total)
         except KeyboardInterrupt:
             log.info("[Thumbnail] Daemon interrupted, restarting loop.")
             time.sleep(2)
         except Exception as e:
+            if thumb_lease:
+                try:
+                    nas_work_coordinator.checkpoint(
+                        INDEX_DB_PATH, "thumbnail", thumb_lease["owner"], thumb_lease["token"],
+                        thumb_checkpoint_cursor, min(thumb_completed, thumb_total), thumb_total,
+                        state="retry", error=str(e))
+                except Exception:
+                    pass
             log.error("[Thumbnail] Daemon loop error: %s — restarting in 10s", e)
             time.sleep(10)
 
@@ -14411,7 +14521,12 @@ def api_thumb():
     
     thumb_path = _get_thumb_path(base_dir, real_path)
     
-    if not os.path.exists(thumb_path) or os.path.getsize(thumb_path) == 0:
+    if not _thumb_current(real_path, thumb_path):
+        ext = os.path.splitext(real_path)[1].lower()
+        if ext in THUMB_UNSUPPORTED_EXTS:
+            return jsonify({"error": "NAS không hỗ trợ giải mã HEIC/HEIF"}), 415
+        if ext not in MEDIA_IMAGE_EXTS and ext not in MEDIA_VIDEO_EXTS:
+            return jsonify({"error": "Không hỗ trợ"}), 415
         if not _thumb_paused.is_set() or not _background_heavy_work_allowed(ignore_user_idle=True):
             with _thumb_stats_lock:
                 _thumb_stats["paused"] = True
@@ -14423,19 +14538,30 @@ def api_thumb():
                 "block_reasons": sorted(_thumb_auto_block_reasons),
                 "heavy_processes": _heavy_background_processes()[:5],
             }), 503
+        root = _get_webdav_public_dir()
+        if not root:
+            return jsonify({"error": "Thư mục WebDAV chưa sẵn sàng"}), 503
+        nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail_on_demand", os.path.realpath(root), priority=50)
+        lease = nas_work_coordinator.claim_next(
+            INDEX_DB_PATH, "nas:thumb-on-demand", True, lease_seconds=300,
+            job_name="thumbnail_on_demand")
+        if not lease:
+            return jsonify({"error": "NAS đang xử lý tác vụ nền khác", "retry_later": True}), 503
         thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
         os.makedirs(thumb_dir, exist_ok=True)
-        ext = os.path.splitext(real_path)[1].lower()
-        if ext in THUMB_UNSUPPORTED_EXTS:
-            return jsonify({"error": "NAS không hỗ trợ giải mã HEIC/HEIF"}), 415
-        if ext in MEDIA_IMAGE_EXTS:
-            _generate_image_thumb(real_path, thumb_path)
-        elif ext in MEDIA_VIDEO_EXTS:
-            _generate_video_thumb(real_path, thumb_path)
-        else:
-            return jsonify({"error": "Không hỗ trợ"}), 415
+        try:
+            ready = _process_one_thumb((real_path, thumb_path, ext))
+            nas_work_coordinator.checkpoint(
+                INDEX_DB_PATH, "thumbnail_on_demand", lease["owner"], lease["token"],
+                "", 1 if ready else 0, 1,
+                state="complete" if ready else "failed", error="" if ready else "generation_failed")
+        except Exception as error:
+            nas_work_coordinator.checkpoint(
+                INDEX_DB_PATH, "thumbnail_on_demand", lease["owner"], lease["token"],
+                "", 0, 1, state="failed", error=str(error))
+            raise
     
-    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+    if _thumb_current(real_path, thumb_path):
         # CC-005 P1: send_file + ETag/304 + cap 5MB (truoc day .read() full -> OOM)
         try:
             _tst = os.stat(thumb_path)
@@ -14451,7 +14577,7 @@ def api_thumb():
             except TypeError:
                 _resp = _send_thumb(thumb_path, mimetype="image/jpeg")
             _resp.headers["ETag"] = _tetag
-            _resp.headers["Cache-Control"] = "public, max-age=86400"
+            _resp.headers["Cache-Control"] = "private, no-cache"
             return _resp
         except Exception as e:
             log.warning("[Thumbnail] Serve loi: %s", e)
@@ -14506,17 +14632,70 @@ def api_thumb_upload():
     except Exception:
         pass
     try:
-        with open(thumb_path, "wb") as out:
-            shutil.copyfileobj(thumb_file, out, length=4 * 1024 * 1024)
+        def write_upload(staged):
+            with open(staged, "wb") as out:
+                shutil.copyfileobj(thumb_file, out, length=4 * 1024 * 1024)
+            return os.path.getsize(staged) == _tu_size
+        if not _publish_thumb(real_path, thumb_path, write_upload, request.form.get("source_version")):
+            return jsonify({"error": "incomplete_thumbnail"}), 400
         return jsonify({"ok": True, "thumb_path": thumb_path})
+    except (ValueError, FileNotFoundError):
+        return jsonify({"error": "source_version_changed"}), 409
     except Exception as e:
         log.warning("[ThumbUpload] Lỗi ghi thumbnail: %s — %s", os.path.basename(real_path), e)
         return jsonify({"error": "Lỗi ghi file"}), 500
 
 
+@app.route("/api/thumb/exists", methods=["POST"])
+@requires_auth
+def api_thumb_exists():
+    """Check cached thumbnail outputs for indexed files without generating them."""
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Expected an object"}), 400
+    paths = body.get("paths", [])
+    if not isinstance(paths, list) or len(paths) > 512:
+        return jsonify({"error": "paths must be a list of at most 512 items"}), 400
+    root = _get_webdav_public_dir()
+    if not root:
+        return jsonify({"error": "Configured WebDAV root is unavailable"}), 503
+    rel_paths = []
+    for path in paths:
+        if not isinstance(path, str) or not path.startswith("/webdav/"):
+            return jsonify({"error": "Invalid WebDAV path"}), 400
+        rel = path[8:]
+        if not rel or "\\" in rel or any(part in ("", ".", "..") for part in rel.split("/")):
+            return jsonify({"error": "Invalid WebDAV path"}), 400
+        rel_paths.append(rel)
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        indexed = set(row[0] for row in conn.execute(
+            "SELECT path FROM file_index WHERE is_dir=0 AND path IN (" +
+            ",".join("?" for _ in rel_paths) + ")", tuple(rel_paths))) if rel_paths else set()
+    finally:
+        conn.close()
+    missing = []
+    versions = {}
+    root = os.path.realpath(root)
+    for path, rel in zip(paths, rel_paths):
+        if rel not in indexed:
+            missing.append(path)
+            continue
+        full = os.path.join(root, *rel.split("/"))
+        thumb = _get_thumb_path(root, full)
+        if not _thumb_current(full, thumb, 1200):
+            missing.append(path)
+            try:
+                versions[path] = _duplicate_stat_version(os.stat(full))
+            except OSError:
+                pass
+    return jsonify({"missing": missing, "source_versions": versions})
+
+
 @app.route("/api/thumb/status")
 @requires_auth
 def api_thumb_status():
+    durable_jobs = nas_work_coordinator.get_status(INDEX_DB_PATH, "thumbnail")
     with _thumb_stats_lock:
         data = dict(_thumb_stats)
         st = data.get("start_time", 0)
@@ -14538,6 +14717,10 @@ def api_thumb_status():
             
         data.pop("start_time", None)
         data.pop("_base_done", None)
+        if durable_jobs:
+            job = durable_jobs[0]
+            data["work"] = {key: job[key] for key in (
+                "state", "completed", "total", "updated_at", "error", "owner", "lease_expires_at")}
         
         # Format thoi gian thảnh "hh:mm"
         el = data.get("elapsed_seconds", 0)
@@ -14546,6 +14729,176 @@ def api_thumb_status():
         data["eta_fmt"] = "%02d:%02d" % (et // 3600, (et % 3600) // 60) if et > 0 else "--:--"
         
         return jsonify(data)
+
+
+@app.route("/api/work/status")
+@requires_auth
+def api_nas_work_status():
+    """Durable NAS maintenance state stored beside the canonical file index."""
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
+    finally:
+        conn.close()
+    root = _get_webdav_public_dir()
+    index_ready = bool(state and root and state[0] == os.path.realpath(root) and state[2] and not _index_scan_lock.locked())
+    jobs = []
+    for job in nas_work_coordinator.get_status(INDEX_DB_PATH):
+        jobs.append({key: job[key] for key in (
+            "name", "state", "completed", "total", "revision", "attempt", "updated_at",
+            "error", "owner", "lease_expires_at")})
+    return jsonify({"source": "file_index", "index_ready": index_ready,
+                    "index_generation": state[1] if state else 0,
+                    "catalogue_revision": state[3] if state else 0,
+                    "catalogue_updated_at": state[4] if state else 0, "jobs": jobs})
+
+
+@app.route("/api/work/request", methods=["POST"])
+@requires_auth
+def api_nas_work_request():
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Expected an object"}), 400
+    name = str(body.get("name", "")).strip().lower()
+    if name not in ("thumbnail", "duplicates", "fingerprint", "hash"):
+        return jsonify({"error": "Unsupported NAS maintenance job"}), 400
+    root = _get_webdav_public_dir()
+    if not root:
+        return jsonify({"error": "Configured WebDAV root is unavailable"}), 503
+    priority = {"thumbnail": 20, "duplicates": 10, "fingerprint": 5, "hash": 5}[name]
+    try:
+        status = nas_work_coordinator.request_job(
+            INDEX_DB_PATH, name, os.path.realpath(root), priority=priority)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 409
+    return jsonify({"source": "file_index", "job": status[0] if status else None})
+
+
+@app.route("/api/work/claim", methods=["POST"])
+@requires_auth
+def api_nas_work_claim():
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Expected an object"}), 400
+    name = str(body.get("name", "")).strip().lower()
+    owner = str(body.get("owner", "")).strip()
+    if name not in ("thumbnail", "duplicates", "fingerprint", "hash"):
+        return jsonify({"error": "Unsupported NAS maintenance job"}), 400
+    if not owner or len(owner) > 112 or _re_module.search(r"[^A-Za-z0-9_.:-]", owner):
+        return jsonify({"error": "Invalid worker identity"}), 400
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        state = conn.execute("SELECT root,ready,scanned_at,catalogue_revision FROM index_state WHERE id=1").fetchone()
+    finally:
+        conn.close()
+    root = _get_webdav_public_dir()
+    stale = bool(state and state[1] and time.time() - float(state[2] or 0) > FILE_INDEX_FRESHNESS_SECONDS)
+    if not state or not root or state[0] != os.path.realpath(root) or not state[1] or stale or _index_scan_lock.locked():
+        _refresh_file_index_for_search()
+        reason = "catalogue_stale" if stale else "catalogue_not_ready"
+        return jsonify({"claimed": False, "retry_after": 30, "reason": reason}), 423
+    lease = nas_work_coordinator.claim_next(
+        INDEX_DB_PATH, "client:" + owner, _background_heavy_work_allowed(),
+        lease_seconds=300, job_name=name)
+    if not lease:
+        return jsonify({"claimed": False, "retry_after": 30, "reason": "nas_busy_or_job_unavailable"}), 423
+    return jsonify({key: lease[key] for key in ("name", "cursor", "completed", "total", "revision", "catalogue_revision", "attempt", "owner", "token", "expires_at")})
+
+
+@app.route("/api/work/checkpoint", methods=["POST"])
+@requires_auth
+def api_nas_work_checkpoint():
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Expected an object"}), 400
+    name = str(body.get("name", "")).strip().lower()
+    owner = str(body.get("owner", "")).strip()
+    token = str(body.get("token", "")).strip()
+    if name not in ("thumbnail", "duplicates", "fingerprint", "hash"):
+        return jsonify({"error": "Unsupported NAS maintenance job"}), 400
+    if not owner or len(owner) > 128 or _re_module.search(r"[^A-Za-z0-9_.:-]", owner) or not token or len(token) > 128:
+        return jsonify({"error": "Invalid worker lease"}), 400
+    if not nas_work_coordinator.owns_lease(INDEX_DB_PATH, name, owner, token):
+        return jsonify({"error": "Worker lease expired or is no longer owned"}), 409
+    progress_state = body.get("state", "running")
+    if progress_state == "running" and not _background_heavy_work_allowed():
+        try:
+            accepted = nas_work_coordinator.checkpoint(
+                INDEX_DB_PATH, name, owner, token, body.get("cursor", ""),
+                body.get("completed", -1), body.get("total", -1),
+                state="paused", error="nas_busy")
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        if not accepted:
+            return jsonify({"error": "Worker lease expired or is no longer owned"}), 409
+        return jsonify({"error": "NAS maintenance paused because NAS is busy", "reason": "nas_busy"}), 423
+    try:
+        accepted = nas_work_coordinator.checkpoint(
+            INDEX_DB_PATH, name, owner, token, body.get("cursor", ""),
+            body.get("completed", -1), body.get("total", -1),
+            state=progress_state, error=str(body.get("error", "")))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    if not accepted:
+        return jsonify({"error": "Worker lease expired or is no longer owned"}), 409
+    return jsonify({"accepted": True})
+
+
+@app.route("/api/work/files", methods=["POST"])
+@requires_auth
+def api_nas_work_files():
+    """Return a bounded catalogue page only to the current maintenance lease owner."""
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Expected an object"}), 400
+    name = str(body.get("name", "")).strip().lower()
+    owner = str(body.get("owner", "")).strip()
+    token = str(body.get("token", "")).strip()
+    cursor = body.get("cursor", "")
+    limit = body.get("limit", 256)
+    if name not in ("thumbnail", "duplicates", "fingerprint", "hash"):
+        return jsonify({"error": "Unsupported NAS maintenance job"}), 400
+    if not nas_work_coordinator.owns_lease(INDEX_DB_PATH, name, owner, token):
+        return jsonify({"error": "Worker lease expired or is no longer owned"}), 409
+    if not isinstance(cursor, str) or len(cursor) > 2048 or type(limit) is not int or limit < 1 or limit > 512:
+        return jsonify({"error": "Invalid page cursor or limit"}), 400
+    if cursor and (os.path.isabs(cursor) or "\\" in cursor or
+                   any(part in ("", ".", "..") for part in cursor.split("/"))):
+        return jsonify({"error": "Invalid page cursor"}), 400
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        conn.execute("BEGIN")
+        state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
+        root = _get_webdav_public_dir()
+        if (not state or not root or state[0] != os.path.realpath(root) or not state[2] or
+                time.time() - float(state[4] or 0) > FILE_INDEX_FRESHNESS_SECONDS or _index_scan_lock.locked()):
+            _refresh_file_index_for_search()
+            return jsonify({"error": "catalogue_not_ready", "retry_after": 30}), 409
+        expected_revision = body.get("catalogue_revision")
+        if expected_revision is not None and expected_revision != state[3]:
+            return jsonify({"error": "catalogue_changed", "catalogue_revision": state[3]}), 409
+        predicate = ""
+        params = []
+        if name == "thumbnail":
+            predicate = " AND (" + " OR ".join(["lower(name) LIKE ?"] * len(MEDIA_ALL_EXTS)) + ")"
+            params.extend("%%%s" % ext for ext in sorted(MEDIA_ALL_EXTS))
+        elif name == "duplicates":
+            predicate = (" AND EXISTS (SELECT 1 FROM file_index AS other WHERE other.is_dir=0"
+                         " AND other.size=file_index.size AND other.path<>file_index.path)")
+        total = None
+        if body.get("include_total") is not False:
+            total = conn.execute("SELECT COUNT(*) FROM file_index WHERE is_dir=0" + predicate, tuple(params)).fetchone()[0]
+        rows = conn.execute(
+            "SELECT path,name,size,mtime,mime FROM file_index WHERE is_dir=0 AND path>?" + predicate +
+            " ORDER BY path LIMIT ?", tuple([cursor] + params + [limit])).fetchall()
+        files = [{"path": "/webdav/" + row[0], "name": row[1], "size": row[2],
+                  "mtime": row[3], "mime": row[4]} for row in rows]
+        return jsonify({"source": "file_index", "catalogue_revision": state[3],
+                        "index_generation": state[1], "total": total, "files": files,
+                        "next_cursor": rows[-1][0] if rows else cursor,
+                        "eof": len(rows) < limit})
+    finally:
+        conn.close()
 
 @app.route("/api/process_state", methods=["GET"])
 @requires_auth
@@ -14582,6 +14935,10 @@ def api_thumb_control():
             paused = not _thumb_paused.is_set()
         return jsonify({"result": "ok", "paused": paused, "block_reasons": sorted(_thumb_auto_block_reasons)})
     elif action == "scan":
+        root = _get_webdav_public_dir()
+        if not root:
+            return jsonify({"error": "Không tìm thấy thư mục WebDAV đã cấu hình"}), 503
+        nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail", os.path.realpath(root), priority=20)
         with _thumb_gate_lock:
             _thumb_scan_requested = True
         return jsonify({"result": "ok", "scan_requested": True})
@@ -15704,6 +16061,7 @@ def _quarantine_broken_livestream_file(file_path):
         if os.path.exists(broken_path):
             broken_path = broken_path + "." + str(int(time.time()))
         os.rename(file_path, broken_path)
+        _index_mutated_directories((os.path.dirname(file_path),))
         return broken_path
     except Exception:
         return ""
@@ -15733,6 +16091,7 @@ def _remux_flv_to_mp4(flv_path):
                 os.remove(flv_path)
             except Exception:
                 pass
+            _index_mutated_directories((os.path.dirname(mp4_path),))
             return mp4_path
         if not os.path.exists(flv_path):
             log.warning("[Livestream] File nguon bien mat trong luc remux, bo qua quarantine: %s",
@@ -15752,6 +16111,7 @@ def _remux_flv_to_mp4(flv_path):
                 os.remove(flv_path)
             except Exception:
                 pass
+            _index_mutated_directories((os.path.dirname(mp4_path),))
             return mp4_path
         if not os.path.exists(flv_path):
             log.warning("[Livestream] File nguon bien mat trong luc remux fallback, bo qua quarantine: %s",
@@ -15773,6 +16133,7 @@ def _remux_flv_to_mp4(flv_path):
                 os.remove(flv_path)
             except Exception:
                 pass
+            _index_mutated_directories((os.path.dirname(mp4_path),))
             return mp4_path
         if proc.returncode in (-15, -9) or proc2.returncode in (-15, -9) or proc3.returncode in (-15, -9):
             log.warning("[Livestream] Remux bị dừng do restart/cancel (rc=%d|%d|%d), giữ nguyên file gốc: %s",
@@ -15917,6 +16278,7 @@ def _livestream_watchdog():
             # FIX-AUDIT-L5: danh sach remux thu thap trong vong lock, xu ly NGOAI
             # lock o duoi (ffmpeg 600s khong giu lock).
             pending_remux = []
+            finished_directories = set()
             with _livestream_lock:
                 for jid, info in list(_livestream_jobs.items()):
                     # FIX-SIGKILL: job dang trong qua trinh ket thuc (timeout/
@@ -16043,6 +16405,8 @@ def _livestream_watchdog():
                             continue
                         else:
                             info["status"] = "finished"
+                            if final_path:
+                                finished_directories.add(os.path.dirname(final_path))
                             log.info("[Livestream] Job %s (PID %d) đã kết thúc tự nhiên.", jid, pid)
                             log_msg = "Đã lưu thành công (%s)." % format_bytes(int(info.get("file_size", 0) or 0))
                             _log_livestream_event(
@@ -16167,6 +16531,7 @@ def _livestream_watchdog():
                                 pass
 
                 active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
+            _index_mutated_directories(finished_directories)
             # FIX-AUDIT-L5: remux NGOAI lock (ffmpeg toi 600s). Commit co kiem
             # tra generation: job bi stop/restart giua chung thi bo qua, khong
             # ghi de trang thai cua the he moi.
@@ -16292,14 +16657,14 @@ def _livestream_watchdog():
             log.error("[Livestream] Lỗi watchdog: %s", e)
             _add_system_log_once("livestream_watchdog_exception", "ERROR", "Livestream", "Watchdog livestream loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
 
-def _fan_controller_watchdog():
-    """Tien trinh ngam dieu khien quat theo CPU & HDD temp (Hysteresis & Stable 30s).
+def _fan_change_delay(target, applied):
+    if target == 0 and applied:
+        return 600
+    return 1
 
-    Khi fan đang bật, không tắt ngay khi nhiệt chạm off_temp — phải đợi 30 giây
-    ổn định để tránh tắt/bật liên tục (fan fluttering) khi nhiệt dao động
-    quanh vùng ngưỡng.
-    """
-    stable_seconds = 1.0
+
+def _fan_controller_watchdog():
+    """Delay stopping the fan until the drive stays cool for ten minutes."""
     last_mode = None
     last_target_percent = None
     target_since_ts = 0.0
@@ -16314,7 +16679,7 @@ def _fan_controller_watchdog():
         try:
             settings = _load_fan_settings()
             mode = str(settings.get("mode", "auto") or "auto").strip().lower()
-            now_ts = time.time()
+            now_ts = time.monotonic()
 
             if mode == "off":
                 if last_mode != mode or last_applied_percent != 0:
@@ -16363,7 +16728,7 @@ def _fan_controller_watchdog():
             else:
                 control_temp = cpu_temp
 
-            force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
+            force_hot = hdd_temp <= 0 or cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
             if force_hot:
                 target_percent = 100
             elif mode == "custom":
@@ -16403,17 +16768,16 @@ def _fan_controller_watchdog():
             if mode != last_mode:
                 last_target_percent = None
                 target_since_ts = 0.0
-                last_applied_percent = None
                 last_mode = mode
 
-            if target_percent != last_target_percent and not force_hot:
+            if target_percent != last_target_percent:
                 last_target_percent = target_percent
                 target_since_ts = now_ts
                 log.info("[FanWatchdog] Đổi quạt sang %s%% (mode=%s, MaxTemp=%.1fC [CPU %.1fC, HDD %.1fC], on=%.1f, off=%.1f)",
                          target_percent, mode, control_temp, cpu_temp, hdd_temp, on_temp, off_temp)
 
             if last_applied_percent is not None and target_percent != last_applied_percent and not force_hot:
-                if now_ts - target_since_ts < stable_seconds:
+                if now_ts - target_since_ts < _fan_change_delay(target_percent, last_applied_percent):
                     time.sleep(1)
                     continue
 
@@ -19739,6 +20103,7 @@ if __name__ == "__main__":
         log.info("LAN Whitelist: (trống - chỉ truy cập qua Tailscale hoặc đăng nhập)")
     log.info("=" * 50)
     _ensure_trash_directories()
+    _init_index_db()
 
     threading.Thread(target=monitor_scanners, daemon=True).start()
     threading.Thread(target=monitor_journalctl, daemon=True).start()

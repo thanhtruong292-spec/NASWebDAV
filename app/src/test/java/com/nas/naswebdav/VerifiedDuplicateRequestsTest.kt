@@ -8,6 +8,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.RecordedRequest
 import org.json.JSONObject
 import org.junit.*
 import org.junit.Assert.*
@@ -116,5 +118,47 @@ class VerifiedDuplicateRequestsTest {
     @Test fun cleanupUsesCoordinatorInsteadOfRawDelete() = runBlocking {withContext(Dispatchers.IO) {cleanupCase(200)}}
     @Test fun serverConflictPreservesCachedRecord() = runBlocking {withContext(Dispatchers.IO) {cleanupCase(409)}}
     @Test fun cleanupRefusesRedirect() = runBlocking {withContext(Dispatchers.IO) {cleanupCase(302)}}
+
+    private suspend fun leasedCleanupCase(accepted: Boolean) {
+        MockWebServer().use {server ->
+            var cleanups=0
+            server.dispatcher=object: Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val body=JSONObject(request.body.readUtf8())
+                    return when(request.path) {
+                        "/api/work/request" -> MockResponse().setBody("{}")
+                        "/api/work/claim" -> MockResponse().setBody(JSONObject().put("owner","client:"+body.getString("owner"))
+                            .put("token","lease-fixture").put("revision",2).put("catalogue_revision",11).toString())
+                        "/api/work/checkpoint" -> MockResponse().setResponseCode(if(accepted) 200 else 409).setBody("{\"accepted\":true}")
+                        "/api/duplicates/file" -> info(id=if(body.getString("path")=="keep") "1:1" else "1:2",hash=sha)
+                        "/api/duplicates/cleanup" -> {
+                            cleanups++
+                            assertEquals("lease-fixture",body.getJSONObject("work_lease").getString("token"))
+                            MockResponse().setBody("""{"deleted":true,"path":"copy","keeper":"keep"}""")
+                        }
+                        else -> MockResponse().setResponseCode(500)
+                    }
+                }
+            }
+            server.start()
+            val base=server.url("/dav/").toString()
+            WebDavManager.connect(base,"u","p")
+            val lease=NasDuplicateLease.acquire(WebDavManager.AuthState(base,"u","p"))
+            assertEquals(11L,lease.revision)
+            val keeper=CachedFile(base+"keep","keep",false,null,base,3,1,fullHash=sha)
+            val victim=keeper.copy(path=base+"copy",name="copy")
+            try {
+                assertTrue(WebDavManager.deleteVerifiedDuplicate(victim,keeper,sha,lease))
+                assertTrue(accepted)
+            } catch(error: java.io.IOException) {assertFalse(accepted)}
+            assertEquals(if(accepted) 1 else 0,cleanups)
+            if(!accepted) {
+                try {lease.ensureValid();fail("Lost lease accepted")} catch(_: java.io.IOException) {}
+            }
+        }
+    }
+
+    @Test fun lostLeaseAfterProofsNeverSubmitsCleanup()=runBlocking {withContext(Dispatchers.IO) {leasedCleanupCase(false)}}
+    @Test fun cleanupCarriesMaintenanceTokenAfterFinalCheckpoint()=runBlocking {withContext(Dispatchers.IO) {leasedCleanupCase(true)}}
 }
 

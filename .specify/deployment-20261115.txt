@@ -1,0 +1,3 @@
+authenticated API health passed
+70c851db90691faa3571675dd460b2687015af5008c666cea75e8d2d31b49aa5  /opt/nas_api_server.py
+active

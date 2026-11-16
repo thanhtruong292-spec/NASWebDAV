@@ -1,0 +1,12 @@
+test_cancel_and_copy_failure_preserve_old_destination (__main__.UsbOverwriteIntegrityTests) ... ok
+test_commit_syncs_file_before_publish_and_directory_after (__main__.UsbOverwriteIntegrityTests) ... ok
+test_complete_overwrite_replaces_contents_and_leaves_no_staging_file (__main__.UsbOverwriteIntegrityTests) ... ok
+test_resume_cannot_borrow_checkpoint_from_other_destination_or_mode (__main__.UsbOverwriteIntegrityTests) ... ok
+test_same_inode_and_new_only_never_truncate_existing_data (__main__.UsbOverwriteIntegrityTests) ... ok
+test_tree_consumes_overwrite_setting (__main__.UsbOverwriteIntegrityTests) ... ok
+test_tree_new_only_keeps_destination_and_reports_conflict (__main__.UsbOverwriteIntegrityTests) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 12.810s
+
+OK

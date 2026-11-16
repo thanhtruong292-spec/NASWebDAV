@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicLong
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import androidx.core.content.edit
+import com.nas.naswebdav.utils.SystemLogger
 
 /**
  * DeviceManagementViewModel — Primary owner of device-management state.
@@ -156,7 +157,7 @@ class DeviceManagementViewModel(
                         partial = it.optBoolean("partial", false)
                     )
                 }
-            } catch (_: Exception) { emptyList() }
+            } catch (e: Exception) { SystemLogger.log("WARNING", "DeviceManagementViewModel", "readCachedStorageUsage failed: ${e.message}"); emptyList() }
         }
 
         private fun readCachedStorageUsageAt(): Long {

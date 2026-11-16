@@ -219,4 +219,7 @@
     <string name="crash_dsn_label">Sentry DSN (self-hosted)</string>
     <string name="crash_dsn_saved">Đã lưu cấu hình báo cáo</string>
     <string name="crash_dsn_need">Nhập DSN trước khi bật</string>
+    <string name="search_partial_title">Kết quả chưa đầy đủ</string>
+    <string name="search_partial_description">Danh mục NAS chưa đầy đủ. Tệp phù hợp có thể xuất hiện sau lượt quét tiếp theo.</string>
+    <string name="search_partial_retry">Kết quả chưa đầy đủ · Tìm lại</string>
 </resources>

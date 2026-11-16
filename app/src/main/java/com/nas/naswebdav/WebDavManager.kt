@@ -17,6 +17,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 import org.xmlpull.v1.XmlPullParser
 
+import com.nas.naswebdav.utils.SystemLogger
+
 import java.io.InputStream
 
 import java.net.URL
@@ -398,6 +400,9 @@ object WebDavManager {
 
 
 
+    // Each immutable auth instance identifies one session, including logout/relogin.
+    internal fun captureAuthSession(): AuthState = authState
+
     @Synchronized
     fun connect(url: String, user: String, pass: String) {
 
@@ -429,9 +434,9 @@ object WebDavManager {
     @Synchronized
     fun disconnect() {
         authState = AuthState("", "", "")
-        try { threadLocalAuth.remove() } catch (_: Exception) { }
-        try { QueryCache.clear() } catch (_: Exception) { }
-        try { pendingCacheClear.set(false) } catch (_: Exception) { }
+        try { threadLocalAuth.remove() } catch (e: Exception) { SystemLogger.log("WARNING", "WebDavManager", "threadLocalAuth.remove failed: ${e.message}") }
+        try { QueryCache.clear() } catch (e: Exception) { SystemLogger.log("WARNING", "WebDavManager", "QueryCache.clear failed: ${e.message}") }
+        try { pendingCacheClear.set(false) } catch (e: Exception) { SystemLogger.log("WARNING", "WebDavManager", "pendingCacheClear.set failed: ${e.message}") }
     }
 
     /**

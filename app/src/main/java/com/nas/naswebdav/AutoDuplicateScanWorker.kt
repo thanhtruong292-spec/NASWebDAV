@@ -38,7 +38,21 @@ import java.util.concurrent.atomic.AtomicReference
 
 
 class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result {
+        val auth = withContext(Dispatchers.IO) {
+            val user = SecurePrefsHelper.getUser(applicationContext)
+            val pass = SecurePrefsHelper.getPass(applicationContext)
+            val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+                .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+            if (user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) null
+            else WebDavManager.AuthState(url,user,pass)
+        } ?: return Result.retry()
+        if (auth.baseUrl.isBlank() || auth.user.isBlank()) return Result.failure()
+        return runAutoScan(auth)
+    }
+
+    private suspend fun runAutoScan(auth: WebDavManager.AuthState): Result =
+        withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(auth)) {
         SystemLogger.log("INFO", "AutoClean", "Bắt đầu dọn dẹp trùng lặp tự động (Worker khởi động).")
         // AUDIT-20261104: worker quet lau (>10s) phai setForeground truoc —
         // neu khong Android 12+ kill worker giua chung. Loi foreground thi tiep tuc chay.
@@ -48,11 +62,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             android.util.Log.w("AutoDuplicateScanWorker", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
         }
         val db = NasApplication.instance.database
-        val user = SecurePrefsHelper.getUser(applicationContext)
-        val pass = SecurePrefsHelper.getPass(applicationContext)
-        // FIX D2c: Đã trong withContext(IO) → gọi suspend fun trực tiếp
-        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
-            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val user = auth.user
+        val pass = auth.pass
+        val url = auth.baseUrl
 
         // ── GATE 1: KHUNG GIO ──
         // Chi cho phep auto-scan trong khung 2h-5h sang (sat 3 AM). Ngoai khung
@@ -96,7 +108,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             return@withContext Result.retry()
         }
 
-        val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
+        val webDavManager = WebDavManager
         val startTime = System.currentTimeMillis()
 
         // ── LIVE THROTTLE ──
@@ -134,8 +146,12 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             }
         }
 
+        var lease: NasDuplicateLease? = null
         try {
             SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_launch_cleanup))
+            val activeLease=NasDuplicateLease.acquire(auth)
+            lease=activeLease
+            activeLease.start(this)
             db.logDao().insertLog(
                 SystemLog(
                     type = "INFO",
@@ -147,47 +163,34 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             // avoids DB churn (hàng triệu row xóa + chèn lại mỗi lần auto-scan).
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
-            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader).build()
+            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").tag(WebDavManager.AuthState::class.java,auth).header("Authorization",auth.authHeader).build()
             val client = NasApplication.instance.sharedHttpClient
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful && response.body != null) {
-                    android.util.JsonReader(response.body?.charStream()).use { reader ->
-                        reader.beginObject()
-                        while (reader.hasNext()) {
-                            val key = reader.nextName()
-                            if (key == "total") { reader.nextInt() }
-                            else if (key == "files") {
-                                reader.beginArray(); val batch = mutableListOf<CachedFile>()
-                                // P2-8: drain flag doi-phien 1 lan truoc batch dau
-                                // (worker co the chay lech phien voi UI).
-                                var drainedOnce = false
-                                while (reader.hasNext()) {
-                                    reader.beginObject(); var name = ""; var path = ""; var size = 0L; var mtime = 0L
-                                    while (reader.hasNext()) { when (reader.nextName()) { "name" -> name = reader.nextString(); "path" -> path = reader.nextString(); "size" -> size = reader.nextLong(); "mtime" -> mtime = reader.nextLong(); else -> reader.skipValue() } }
-                                    reader.endObject()
-                                    // BACKEND "path" co dang "/webdav/subdir/file.jpg" — da chua "/webdav",
-                                    // nen khong them lai rootUrl (co chua "/webdav") de tranh duong bi lap "/webdav/webdav/...".
-                                    val webdavRelPath = if (path.startsWith("/webdav/")) path.substring("/webdav".length) else path
-                                    val absolutePath = url.trimEnd('/') + (if (webdavRelPath.startsWith("/")) webdavRelPath else "/$webdavRelPath")
-                                    val parentUrl = absolutePath.substringBeforeLast("/") + "/"
-                                    batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime, accountKey = currentAccountKey()))
-                                    totalFiles++
-                                    if (!drainedOnce) { drainedOnce = true; WebDavManager.drainPendingCacheClear() }
-                                    if (batch.size >= 2000) { db.withTransaction { db.fileDao().insertFiles(batch) }; batch.clear() }
-                                }
-                                reader.endArray()
-                                if (batch.isNotEmpty()) db.withTransaction { db.fileDao().insertFiles(batch) }
-                            } else reader.skipValue()
-                        }
-                        reader.endObject()
+            val mirrorStarted = System.currentTimeMillis()
+            val scanAccount = currentAccountKey()
+            val snapshot = client.newCall(request).execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful || body == null) {
+                    throw IncompleteNasCatalogueException("Danh mục NAS chưa sẵn sàng; chưa dọn file")
+                }
+                readNasCatalogue(body.charStream(),url,scanAccount) { batch, received, expected ->
+                    if (isStopped || user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
+                        throw CancellationException("NAS account changed or scan stopped")
                     }
-                } else throw Exception(applicationContext.getString(R.string.autodup_no_fastpath))
+                    activeLease.progress("catalogue:$received",received,expected)
+                    WebDavManager.drainPendingCacheClear()
+                    db.withTransaction { db.fileDao().insertFiles(batch) }
+                }
             }
+            require(snapshot.revision == activeLease.revision) {"Danh mục NAS đã thay đổi; chưa dọn file"}
+            activeLease.progress("catalogue-complete",snapshot.total,snapshot.total)
+            finishNasCatalogueMirror(db,url,scanAccount,mirrorStarted,snapshot)
+            totalFiles = snapshot.total
             val key = currentAccountKey()
             val duplicateSizes = db.fileDao().getDuplicateSizes(key)
             var movedCount = 0
             var savedBytes = 0L
             var totalDuplicatesFound = 0
+            var checked = 0
             for (size in duplicateSizes) {
                 var after = ""
                 while (isActive) {
@@ -195,17 +198,26 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     if (page.isEmpty()) break
                     for (file in page) {
                         currentCoroutineContext().ensureActive()
-                        while (DuplicateProgressState.isPaused.value) delay(500)
+                        if (user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
+                            throw CancellationException("NAS account changed")
+                        }
+                        while (DuplicateProgressState.isPaused.value) {activeLease.ensureValid();delay(500)}
+                        activeLease.ensureValid()
                         val proof = try { webDavManager.getCachedVerifiedSha256(file.path, size) }
                         catch (error: CancellationException) { throw error }
                         catch (_: Exception) { null }
+                        activeLease.ensureValid()
+                        checked++
+                        if(checked%25==0) activeLease.checkpoint("hash:$checked")
                         if (proof != null) {
                             val keeper = db.fileDao().getVerifiedKeeper(proof.first, size, key)
                             if (keeper != null && canonicalDuplicatePath(keeper.path) != canonicalDuplicatePath(file.path)) {
                                 totalDuplicatesFound++
-                                val deleted = try { webDavManager.deleteVerifiedDuplicate(file, keeper, proof.first) }
+                                activeLease.checkpoint("cleanup:$checked")
+                                val deleted = try { webDavManager.deleteVerifiedDuplicate(file, keeper, proof.first,activeLease) }
                                 catch (error: CancellationException) { throw error }
                                 catch (_: Exception) { false }
+                                activeLease.ensureValid()
                                 if (deleted) { movedCount++; savedBytes += size }
                             }
                         }
@@ -226,6 +238,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 )
             )
             throttleJob.cancel()
+            activeLease.complete()
             SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất dọn dẹp trùng lặp tự động")
             Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -239,6 +252,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 SystemLogger.log("ERROR", "AutoClean", "Dọn dẹp thất bại sau 3 lần thử: ${e.message}")
                 return@withContext Result.failure()
             }
+        } finally {
+            throttleJob.cancel()
+            lease?.retryAndRelease()
         }
     }
 }

@@ -1,0 +1,67 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_____________ test_warm_search_never_waits_for_directory_refresh ______________
+
+engine = ({'INDEX_DB_PATH': 'C:\\Users\\Truong\\AppData\\Local\\Temp\\pytest-of-Truong\\pytest-8\\test_warm_search_never_waits_...of-Truong/pytest-8/test_warm_search_never_waits_f0/public'), <FlaskClient <Flask 'tests.test_incremental_file_index'>>)
+
+    def test_warm_search_never_waits_for_directory_refresh(engine):
+        ns, root, client = engine
+        (root / 'kept.txt').write_text('cached')
+        ns['_scan_file_index'](str(root))
+        with sqlite3.connect(ns['INDEX_DB_PATH']) as conn:
+            conn.execute('UPDATE index_state SET scanned_at=0')
+        jobs = []
+        class DeferredThread:
+            def __init__(self, target, args, daemon):
+                jobs.append((target,args))
+            def start(self):
+                pass
+        ns['threading'] = types.SimpleNamespace(Thread=DeferredThread)
+        ns['_scan_file_index'] = lambda *args: pytest.fail('API request performed directory scanning inline')
+>       response = client.get('/api/search?q=kept').get_json()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_incremental_file_index.py:544: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\test.py:1162: in get
+    return self.open(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\testing.py:235: in open
+    response = super().open(
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\test.py:1116: in open
+    response_parts = self.run_wsgi_app(request.environ, buffered=buffered)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\test.py:988: in run_wsgi_app
+    rv = run_wsgi_app(self.application, environ, buffered=buffered)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\test.py:1264: in run_wsgi_app
+    app_rv = app(environ, start_response)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py:1536: in __call__
+    return self.wsgi_app(environ, start_response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py:1511: in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py:917: in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py:902: in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend\nas_api_server.py:854: in api_fast_search
+    _refresh_file_index_for_search()
+backend\nas_api_server.py:643: in _refresh_file_index_for_search
+    _scan_file_index(current_root)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ('C:\\Users\\Truong\\AppData\\Local\\Temp\\pytest-of-Truong\\pytest-8\\test_warm_search_never_waits_f0\\public',)
+
+>   ns['_scan_file_index'] = lambda *args: pytest.fail('API request performed directory scanning inline')
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: API request performed directory scanning inline
+
+tests\test_incremental_file_index.py:543: Failed
+=========================== short test summary info ===========================
+FAILED tests/test_incremental_file_index.py::test_warm_search_never_waits_for_directory_refresh
+1 failed in 2.76s

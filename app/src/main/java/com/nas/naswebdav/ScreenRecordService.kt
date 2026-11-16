@@ -305,15 +305,15 @@ class ScreenRecordService : Service() {
     }
 
     private fun stopCurrentRecorder() {
-        try { recorder?.stop() } catch (_: Exception) {}
-        try { recorder?.reset() } catch (_: Exception) {}
-        try { recorder?.release() } catch (_: Exception) {}
+        try { recorder?.stop() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "recorder.stop(): ${e.message}") }
+        try { recorder?.reset() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "recorder.reset(): ${e.message}") }
+        try { recorder?.release() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "recorder.release(): ${e.message}") }
         recorder = null
     }
 
     private fun stopSegment() {
         stopCurrentRecorder()
-        try { virtualDisplay?.release() } catch (_: Exception) {}
+        try { virtualDisplay?.release() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "virtualDisplay.release(): ${e.message}") }
         virtualDisplay = null
     }
 
@@ -485,7 +485,7 @@ class ScreenRecordService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "stopSegment failed in failRecording", e)
             } finally {
-                try { projection?.stop() } catch (_: Exception) {}
+                try { projection?.stop() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "projection.stop() failRecording: ${e.message}") }
                 projection = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -579,7 +579,7 @@ class ScreenRecordService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Lỗi khi dừng quay màn hình", e)
             } finally {
-                try { projection?.stop() } catch (_: Exception) {}
+                try { projection?.stop() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "projection.stop() stopRecording: ${e.message}") }
                 projection = null
                 // CC-005 P1: cancel per-session scope (không chạm serviceScope) +
                 // stopForeground khi xong — giữ segmentJob/uploadJob không leak.
@@ -589,7 +589,7 @@ class ScreenRecordService : Service() {
                 sessionScope = null
                 try {
                     stopForeground(STOP_FOREGROUND_REMOVE)
-                } catch (_: Exception) {}
+                } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "stopForeground stopRecording: ${e.message}") }
                 stopSelf()
             }
         }
@@ -598,19 +598,19 @@ class ScreenRecordService : Service() {
     override fun onDestroy() {
         isRecordingState.value = false
         hideRecordingOverlay()
-        try { stopSegment() } catch (_: Exception) {}
-        try { projection?.stop() } catch (_: Exception) {}
+        try { stopSegment() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "stopSegment onDestroy: ${e.message}") }
+        try { projection?.stop() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "projection.stop() onDestroy: ${e.message}") }
         // CC-005 P1: chỉ cancel session scope, giữ serviceScope sống cho lần sau.
         sessionScope?.cancel()
         sessionScope = null
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
-        } catch (_: Exception) {}
+        } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "stopForeground onDestroy: ${e.message}") }
         // F1: mac dinh GIU spool + marker .ready (de lan sau thu lai). Chi xoa
         // khi finish OK hoac discardSession (user chu dong bo). Moi nhanh loi
         // (failRecording, catch ngoai, timeout, finish fail) deu giu.
         if (spoolDeleteAllowed.get()) {
-            try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
+            try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "spoolDir.deleteRecursively onDestroy: ${e.message}") }
         } else {
             try {
                 if (::spoolDir.isInitialized) Log.w(TAG, "GIU spool session=$sessionId de thu lai (khong xoa trong onDestroy)")
@@ -625,7 +625,7 @@ class ScreenRecordService : Service() {
      */
     fun discardSession() {
         spoolDeleteAllowed.set(true)
-        try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
+        try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "spoolDir.deleteRecursively discardSession: ${e.message}") }
         scope.launch {
             try { cancelNasSession() } catch (e: Exception) {
                 Log.w(TAG, "Cancel NAS session (user discard) failed session=$sessionId", e)
@@ -733,8 +733,7 @@ class ScreenRecordService : Service() {
         try {
             val manager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             manager.removeView(container)
-        } catch (_: Exception) {
-        } finally {
+        } catch (e: Exception) { SystemLogger.log("WARNING", "ScreenRecord", "manager.removeView hideRecordingOverlay: ${e.message}") } finally {
             overlayAdded = false
             overlayContainer = null
             overlayView = null

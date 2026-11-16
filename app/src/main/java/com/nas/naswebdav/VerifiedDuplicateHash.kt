@@ -5,7 +5,6 @@ import kotlinx.coroutines.ensureActive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.nio.charset.Charsets
 
 private val fullDigestPattern = Regex("[0-9a-f]{64}")
 
@@ -38,7 +37,7 @@ internal fun relativeDuplicatePath(base: String, url: String): String? = runCatc
     }
 }.getOrNull()
 
-private suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject, auth: WebDavManager.AuthState): JSONObject? {
+internal suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject, auth: WebDavManager.AuthState): JSONObject? {
     currentCoroutineContext().ensureActive()
     val base = auth.baseUrl.toApiBaseUrl()
     if (base.isBlank()) return null
@@ -138,7 +137,7 @@ internal fun planVerifiedDuplicateCleanup(files: List<CachedFile>, selected: Set
             group.filter { it.path in selected && it.path != keeper.path }.map { it to keeper }
         }
 
-internal suspend fun WebDavManager.deleteVerifiedDuplicate(victim: CachedFile, keeper: CachedFile, expectedHash: String): Boolean {
+internal suspend fun WebDavManager.deleteVerifiedDuplicate(victim: CachedFile, keeper: CachedFile, expectedHash: String, maintenance: NasDuplicateLease? = null): Boolean {
     if (!fullDigestPattern.matches(expectedHash) || victim.contentLength != keeper.contentLength ||
         canonicalDuplicatePath(victim.path) == canonicalDuplicatePath(keeper.path)) return false
     val auth = currentAuthState()
@@ -146,11 +145,16 @@ internal suspend fun WebDavManager.deleteVerifiedDuplicate(victim: CachedFile, k
     val victimPath = relativeDuplicatePath(base,victim.path) ?: return false
     val keeperPath = relativeDuplicatePath(base,keeper.path) ?: return false
     val account = currentAccountKey()
+    maintenance?.ensureValid()
     val keeperVersion = getCachedVerifiedSha256(keeper.path,keeper.contentLength) ?: return false
+    maintenance?.ensureValid()
     val victimVersion = getCachedVerifiedSha256(victim.path,victim.contentLength) ?: return false
+    maintenance?.ensureValid()
     if (keeperVersion.first != expectedHash || victimVersion.first != expectedHash || currentAccountKey() != account) return false
-    val result = duplicateRpc("cleanup", JSONObject().put("victim",victimPath).put("keeper",keeperPath)
-        .put("victim_version",victimVersion.second).put("keeper_version",keeperVersion.second).put("sha256",expectedHash), auth) ?: return false
+    val body = JSONObject().put("victim",victimPath).put("keeper",keeperPath)
+        .put("victim_version",victimVersion.second).put("keeper_version",keeperVersion.second).put("sha256",expectedHash)
+    maintenance?.let {body.put("work_lease",it.cleanupPermit())}
+    val result = duplicateRpc("cleanup",body, auth) ?: return false
     if (!result.optBoolean("deleted") || result.optString("path") != victimPath || result.optString("keeper") != keeperPath) return false
     NasApplication.instance.database.fileDao().deleteFileForAccount(victim.path,account)
     NasApplication.instance.database.verifiedHashDao().remove(account,victim.path)

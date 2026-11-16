@@ -1,0 +1,9 @@
+test_count_and_rows_share_one_snapshot (__main__.FastIndexCatalogueTests) ... ok
+test_incomplete_root_change_or_busy_catalogue_is_not_success (__main__.FastIndexCatalogueTests) ... ok
+test_more_than_one_hundred_thousand_files_are_not_truncated (__main__.FastIndexCatalogueTests) ... ok
+test_stream_uses_shared_database_without_walk_or_legacy_cache (__main__.FastIndexCatalogueTests) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 12.101s
+
+OK

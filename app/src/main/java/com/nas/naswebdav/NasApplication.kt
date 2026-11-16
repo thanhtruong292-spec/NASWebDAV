@@ -36,6 +36,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import com.nas.naswebdav.utils.SystemLogger
 
 /**
  * Application class cung cấp singleton Database và OkHttpClient cho toàn bộ ứng dụng.
@@ -65,9 +66,9 @@ open class NasApplication : Application(), ImageLoaderFactory {
                             database.logDao().insertLog(
                                 SystemLog(type = type, module = tag ?: "Timber", message = fullMsg)
                             )
-                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "insertLog failed: ${e.message}") }
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "async log launch failed: ${e.message}") }
             }
         }
     }
@@ -119,7 +120,9 @@ open class NasApplication : Application(), ImageLoaderFactory {
                 MIGRATION_16_17,
                 MIGRATION_17_18, // P2-8: files_cache.accountKey
                 MIGRATION_18_19, // P2-muc3+muc4: file_fingerprints accountKey/sourceKey/contentHash
-                MIGRATION_19_20
+                MIGRATION_19_20,
+                MIGRATION_20_21,
+                MIGRATION_21_22
             )
             // FIX F1 CRITICAL: Không dùng fallbackToDestructiveMigration() nữa.
             // Migration v13→v14→v15 là no-op (cùng identityHash) — explicit migrations
@@ -364,11 +367,11 @@ open class NasApplication : Application(), ImageLoaderFactory {
                         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
                     }
                     // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
-                    try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+                    try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "crash log get timeout failed: ${e.message}") }
                 } finally {
                     executor.shutdown()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "CrashHandler executor failed: ${e.message}") }
             defaultHandler?.uncaughtException(thread, exception)
         }
 
@@ -389,7 +392,7 @@ open class NasApplication : Application(), ImageLoaderFactory {
                 coilCacheDir.listFiles()?.forEach { file ->
                     if (now - file.lastModified() > maxAge) file.delete()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "thumbnail cleanup failed: ${e.message}") }
         }
 
         // Đăng ký Discovery Worker định kỳ để bắt các job livestream do NAS tự
@@ -634,7 +637,7 @@ object SecurePrefsHelper {
                 putString(KEY_USER, user)
                 putString(KEY_PASS, pass)
             }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "saveCredentials failed: ${e.message}") }
     }
 
     fun saveCredentialsAsync(context: Context, urlList: List<String>, user: String, pass: String, onComplete: () -> Unit = {}) {
@@ -668,7 +671,7 @@ object SecurePrefsHelper {
                 val result = mutableListOf<String>()
                 for (i in 0 until array.length()) result.add(array.getString(i))
                 return result
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasApplication", "getUrlList JSON parse failed: ${e.message}") }
         }
         val result = mutableListOf<String>()
         val lan = prefs.getString(KEY_URL, "") ?: ""
@@ -698,13 +701,18 @@ object SecurePrefsHelper {
     fun getSettingsPrefs(context: Context): SharedPreferences =
         context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
 
-    fun getLastVerifiedUrl(context: Context): String? =
+    fun getLastVerifiedUrl(context: Context): String? = try {
         getSecurePrefs(context).getString(KEY_VERIFIED_URL, null)
+    } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+      catch (_: Exception) { null }
 
     fun rememberVerifiedUrl(context: Context, url: String) {
-        if (url !in getUrlList(context)) return
-        val prefs = getSecurePrefs(context)
-        if (prefs.getString(KEY_VERIFIED_URL, null) != url) prefs.edit { putString(KEY_VERIFIED_URL, url) }
+        try {
+            if (url !in getUrlList(context)) return
+            val prefs = getSecurePrefs(context)
+            if (prefs.getString(KEY_VERIFIED_URL, null) != url) prefs.edit { putString(KEY_VERIFIED_URL, url) }
+        } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+          catch (_: Exception) { /* A route hint must not invalidate a working connection. */ }
     }
 
     fun getTailscaleBaseUrl(context: Context): String {

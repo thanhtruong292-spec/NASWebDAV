@@ -1,0 +1,32 @@
+test_archive_is_private_before_any_bytes_are_written_and_never_overwrites (__main__.PrivateConfigBackupTests) ... ERROR
+test_existing_directory_and_archives_become_private (__main__.PrivateConfigBackupTests) ... FAIL
+test_symlink_directory_and_archive_are_rejected (__main__.PrivateConfigBackupTests) ... FAIL
+
+======================================================================
+ERROR: test_archive_is_private_before_any_bytes_are_written_and_never_overwrites (__main__.PrivateConfigBackupTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/test_private_config_backup.py", line 36, in test_archive_is_private_before_any_bytes_are_written_and_never_overwrites
+    with self.ns['_open_private_backup_tar'](path) as archive:
+KeyError: '_open_private_backup_tar'
+
+======================================================================
+FAIL: test_existing_directory_and_archives_become_private (__main__.PrivateConfigBackupTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/test_private_config_backup.py", line 31, in test_existing_directory_and_archives_become_private
+    self.assertEqual(0o700, stat.S_IMODE(os.stat(self.root).st_mode))
+AssertionError: 448 != 493
+
+======================================================================
+FAIL: test_symlink_directory_and_archive_are_rejected (__main__.PrivateConfigBackupTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/test_private_config_backup.py", line 47, in test_symlink_directory_and_archive_are_rejected
+    self.assertFalse(self.ns['_ensure_backup_dir']())
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 3 tests in 4.183s
+
+FAILED (failures=2, errors=1)

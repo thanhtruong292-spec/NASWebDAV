@@ -68,6 +68,9 @@ interface FileDao {
     @Query("DELETE FROM files_cache")
     fun clearAllFiles()
 
+    @Query("DELETE FROM files_cache WHERE isDirectory=0 AND ((accountKey=:key AND (path<:root OR path>=:upper)) OR ((accountKey=:key OR accountKey='') AND timestamp<:startedAt AND path>=:root AND path<:upper))")
+    fun pruneCompletedCatalogue(root: String, upper: String, startedAt: Long, key: String): Int
+
     @Query("SELECT path FROM files_cache WHERE isDirectory = 0 AND (accountKey = :key OR accountKey = '') LIMIT 5000")
     fun getAllCachedFilePaths(key: String = ""): List<String>
 
@@ -83,7 +86,7 @@ interface FileDao {
     @Query("""
     SELECT * FROM files_cache
     WHERE isDirectory = 0
-    AND (accountKey = :key OR accountKey = '')
+    AND accountKey = :key
     AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%'
     AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic')
     ORDER BY lastModified DESC LIMIT 100
@@ -93,7 +96,7 @@ interface FileDao {
     @Query("""
     SELECT * FROM files_cache
     WHERE isDirectory = 0
-    AND (accountKey = :key OR accountKey = '')
+    AND accountKey = :key
     AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%'
     AND (name LIKE '%.mp4' OR name LIKE '%.mkv' OR name LIKE '%.mov' OR name LIKE '%.avi' OR name LIKE '%.mpg' OR name LIKE '%.mpeg' OR name LIKE '%.wmv' OR name LIKE '%.flv')
     ORDER BY lastModified DESC LIMIT 100
@@ -307,7 +310,8 @@ interface ThumbnailDao {
         Index(value = ["hash"]),       // Tìm trùng lặp chính xác siêu nhanh
         Index(value = ["fileName"]),   // Tìm theo tên file
         Index(value = ["accountKey"]), // P2-muc3: tach NAS/tai khoan
-        Index(value = ["sourceKey"])   // P2-muc4: tim theo nguon (ke ca khi khong aHash)
+        Index(value = ["sourceKey"]),
+        Index(value = ["accountKey", "contentHash", "fileSize"]) // P2-muc4: tim theo nguon (ke ca khi khong aHash)
     ]
 )
 data class FileFingerprint(
@@ -654,7 +658,7 @@ val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
     }
 }
 
-@Entity(tableName = "verified_hash_cache", primaryKeys = ["accountKey", "path"], indices = [Index(value = ["accountKey", "fileId"])])
+@Entity(tableName = "verified_hash_cache", primaryKeys = ["accountKey", "path"], indices = [Index(value = ["accountKey", "fileId"]), Index(value = ["accountKey", "sha256", "contentLength"])])
 data class VerifiedHashCache(
     val accountKey: String,
     val path: String,
@@ -668,10 +672,34 @@ data class VerifiedHashCache(
 interface VerifiedHashDao {
     @Query("SELECT * FROM verified_hash_cache WHERE accountKey=:account AND path=:path LIMIT 1")
     fun get(account: String, path: String): VerifiedHashCache?
+    @Query("SELECT path FROM verified_hash_cache WHERE accountKey=:account AND contentLength=:size AND sha256=:digest AND path>:after UNION SELECT filePath AS path FROM file_fingerprints WHERE accountKey=:account AND fileSize=:size AND contentHash=:digest AND filePath>:after ORDER BY path LIMIT :limit")
+    fun findBackupCandidates(account: String, size: Long, digest: String, after: String, limit: Int): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun put(value: VerifiedHashCache)
     @Query("DELETE FROM verified_hash_cache WHERE accountKey=:account AND path=:path")
     fun remove(account: String, path: String)
+}
+
+/** Last successfully committed snapshot receipt, not current-cache authority. */
+@Entity(tableName = "catalogue_receipts")
+data class CatalogueReceipt(
+    @PrimaryKey val accountKey: String,
+    val baseUrl: String,
+    val generation: Long,
+    val fileCount: Int,
+    val snapshotAt: Long,
+    val completedAt: Long,
+    val revision: Long? = null
+)
+
+@Dao
+interface CatalogueReceiptDao {
+    @Query("SELECT * FROM catalogue_receipts WHERE accountKey=:account LIMIT 1")
+    fun get(account: String): CatalogueReceipt?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun save(receipt: CatalogueReceipt)
 }
 
 val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
@@ -682,9 +710,22 @@ val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
     }
 }
 
+val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_verified_hash_cache_accountKey_sha256_contentLength ON verified_hash_cache(accountKey,sha256,contentLength)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_file_fingerprints_accountKey_contentHash_fileSize ON file_fingerprints(accountKey,contentHash,fileSize)")
+    }
+}
+
+val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS catalogue_receipts (accountKey TEXT NOT NULL PRIMARY KEY,baseUrl TEXT NOT NULL,generation INTEGER NOT NULL,fileCount INTEGER NOT NULL,snapshotAt INTEGER NOT NULL,completedAt INTEGER NOT NULL,revision INTEGER)")
+    }
+}
+
 @Database(
-    entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class, VerifiedHashCache::class],
-    version = 20,
+    entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class, VerifiedHashCache::class, CatalogueReceipt::class],
+    version = 22,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -697,4 +738,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun hashCacheDao(): HashCacheDao
     abstract fun trashMetaDao(): TrashMetaDao
     abstract fun verifiedHashDao(): VerifiedHashDao
+    abstract fun catalogueReceiptDao(): CatalogueReceiptDao
 }

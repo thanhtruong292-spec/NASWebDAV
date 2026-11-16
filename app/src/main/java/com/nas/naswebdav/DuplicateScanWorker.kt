@@ -109,7 +109,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         val uiScope = kotlinx.coroutines.CoroutineScope(
             kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob()
         )
+        var lease: NasDuplicateLease? = null
         try {
+            val activeLease=NasDuplicateLease.acquire(WebDavManager.currentAuthState())
+            lease=activeLease
+            activeLease.start(this)
             // ═══════════════════════════════════════════════════
             // BIẾN THEO DÕI TIẾN TRÌNH CHÍNH XÁC
             // ═══════════════════════════════════════════════════
@@ -211,7 +215,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 // ═══════════════════════════════════════════════════
                 currentStage.set("Thu thập danh sách file")
                 stageNumber.set(1)
-                stageDescription.set("Quét toàn bộ cây thư mục trên NAS để lập danh sách file")
+                stageDescription.set("Nhận danh mục file dùng chung từ NAS")
                 var isFastPathSuccess = false
                 val apiBaseUrl = currentUrl.toApiBaseUrl()
 
@@ -219,6 +223,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     val forceParam = if (forceRestart) "1" else "0"
                     val request = okhttp3.Request.Builder()
                         .url("$apiBaseUrl/api/disk/fast_index?force=$forceParam")
+                        .tag(WebDavManager.AuthState::class.java, WebDavManager.currentAuthState())
                         .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                         .build()
                     val client = NasApplication.instance.sharedHttpClient
@@ -231,279 +236,47 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     }
                     try {
                         call.execute().use { response ->
-                        if (response.isSuccessful && response.body != null) {
-                            try {
-                                val batchBuffer = mutableListOf<CachedFile>()
-                                android.util.JsonReader(java.io.InputStreamReader(response.body?.byteStream() ?: return@use, "UTF-8")).use { reader ->
-
-                                // Chỉ xóa checkpoint — file index cập nhật tăng dần qua INSERT OR REPLACE,
-                                // KHÔNG xóa toàn bộ để tránh churn DB lớn mỗi lần scan (hàng triệu row).
-                                db.withTransaction {
-                                    db.checkpointDao().clearCheckpoint("DuplicateScan")
-                                }
-
-                                currentStage.set("Đang nhận dữ liệu từ NAS")
-                                stageDescription.set("Nhận danh sách file nhanh qua API nội bộ NAS")
-                                currentFolder.set("Fast-Path API (ổ cứng NAS)")
-
-                                reader.beginObject()
-                                var totalExpectedFiles = 0f
-                                while (reader.hasNext()) {
-                                    val nextKey = reader.nextName()
-                                    if (nextKey == "total") {
-                                        // FIX BUG #8: Type-safe parsing — handle non-int values
-                                        try {
-                                            totalExpectedFiles = reader.nextInt().toFloat().coerceAtLeast(1f)
-                                        } catch (e: Exception) {
-                                            reader.skipValue()
-                                        }
-                                    } else if (nextKey == "files") {
-                                        reader.beginArray()
-                                        while (reader.hasNext()) {
-                                            if (!isActive) break // Thoát ngay nếu bị huỷ
-                                            reader.beginObject()
-                                            var name = ""
-                                            var path = ""
-                                            var size = 0L
-                                            var mtime = 0L
-                                            while (reader.hasNext()) {
-                                                when (reader.nextName()) {
-                                                    "name" -> name = reader.nextString()
-                                                    "path" -> path = reader.nextString()
-                                                    "size" -> size = reader.nextLong()
-                                                    "mtime" -> mtime = reader.nextLong()
-                                                    else -> reader.skipValue()
-                                                }
-                                            }
-                                            reader.endObject()
-
-                                            val parsedCurrentUrl = java.net.URL(currentUrl)
-                                            val webDavBaseUrl = "${parsedCurrentUrl.protocol}://${parsedCurrentUrl.authority}"
-                                            // BACKEND "path" co dang "/webdav/subdir/file.jpg" — da chua "/webdav",
-                                            // nen khong them lai de tranh duong bi lap "/webdav/webdav/...".
-                                            val webdavRelPath = if (path.startsWith("/webdav/")) path.substring("/webdav".length) else path
-                                            val encodedPath = webdavRelPath.split("/").joinToString("/") { segment ->
-                                                if (segment.isEmpty()) "" else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
-                                            }
-                                            val fullUrl = webDavBaseUrl + (if (encodedPath.startsWith("/")) encodedPath else "/$encodedPath")
-                                            val parentUrl = fullUrl.substringBeforeLast("/") + "/"
-                                            val parentFolderName = parentUrl.trimEnd('/').substringAfterLast("/")
-
-                                            // FIX: Single lock acquisition — add + flush check in one critical section
-                                            // to avoid per-iteration lock churn that defeated the 2000-entry batching goal.
-                                            val flushBatch = mutableListOf<CachedFile>()
-                                            bufferMutex.withLock {
-                                                batchBuffer.add(
-                                                    CachedFile(
-                                                        path = fullUrl, name = name, isDirectory = false,
-                                                        contentType = "application/octet-stream", parentPath = parentUrl,
-                                                        contentLength = size, lastModified = mtime,
-                                                        accountKey = currentAccountKey()
-                                                    )
-                                                )
-                                                if (batchBuffer.size >= 2000) {
-                                                    flushBatch.addAll(batchBuffer)
-                                                    batchBuffer.clear()
-                                                }
-                                            }
-
-                                            val count = totalFilesIndexed.incrementAndGet()
-                                            // Cập nhật tên file và thư mục đang xử lý
-                                            currentFileName.set(name)
-                                            currentFolder.set(parentFolderName)
-
-                                            // Progress Stage 1: Nếu Server gửi "total", chia tỷ lệ thật xác 100%. Nếu không, dùng công thức dự phòng
-                                            val stage1Progress = if (totalExpectedFiles > 0f) {
-                                                (count / totalExpectedFiles).coerceIn(0f, 1f)
-                                            } else {
-                                                (1f - 1f / (1f + count / 500f)).coerceAtMost(0.99f) // Logarithmic fallback
-                                            }
-                                            currentStagePercent.set(stage1Progress)
-                                            progressPercent.set(stage1Progress * 0.5f)
-
-                                            if (flushBatch.isNotEmpty()) {
-                                                // P2-8: drain flag doi-phien truoc khi ghi
-                                                // (worker co the chay lech phien voi UI).
-                                                WebDavManager.drainPendingCacheClear()
-                                                db.withTransaction { db.fileDao().insertFiles(flushBatch) }
-                                            }
-                                        }
-                                        reader.endArray()
-                                    } else {
-                                        reader.skipValue()
+                            if (response.code in listOf(401,403,409,503)) {
+                                throw IncompleteNasCatalogueException("Danh mục NAS chưa sẵn sàng; chờ thử lại")
+                            }
+                            val body = response.body
+                            if (response.isSuccessful && body != null) {
+                                val mirrorStarted = System.currentTimeMillis()
+                                val scanAccount = currentAccountKey()
+                                val snapshot = readNasCatalogue(body.charStream(),currentUrl,scanAccount) { batch, received, expected ->
+                                    if (isStopped || user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
+                                        throw CancellationException("NAS account changed or scan stopped")
                                     }
+                                    activeLease.progress("catalogue:$received",received,expected)
+                                    WebDavManager.drainPendingCacheClear()
+                                    db.withTransaction { db.fileDao().insertFiles(batch) }
+                                    totalFilesIndexed.set(received)
+                                    currentStage.set("Nhận danh mục NAS dùng chung")
+                                    currentFolder.set("Danh mục file NAS")
+                                    stageDescription.set("Đã nhận $received/$expected tệp đã lập chỉ mục")
+                                    currentStagePercent.set(received.toFloat()/expected.coerceAtLeast(1))
+                                    progressPercent.set(currentStagePercent.get()*0.5f)
                                 }
-                                reader.endObject()
-                                }
-
-                                val finalFlush = mutableListOf<CachedFile>()
-                                bufferMutex.withLock {
-                                    if (batchBuffer.isNotEmpty()) {
-                                        finalFlush.addAll(batchBuffer)
-                                        batchBuffer.clear()
-                                    }
-                                }
-                                if (finalFlush.isNotEmpty()) {
-                                    db.withTransaction { db.fileDao().insertFiles(finalFlush) }
-                                }
-
+                                require(snapshot.revision == activeLease.revision) {"Danh mục NAS đã thay đổi; thử lại"}
+                                activeLease.progress("catalogue-complete",snapshot.total,snapshot.total)
+                                finishNasCatalogueMirror(db,currentUrl,scanAccount,mirrorStarted,snapshot)
+                                db.checkpointDao().clearCheckpoint("DuplicateScan")
+                                totalFilesIndexed.set(snapshot.total)
                                 isFastPathSuccess = true
-                                progressPercent.set(0.5f) // Stage 1 hoàn tất: 50%
-                                SystemLogger.log("SUCCESS", "IndexEngine", "Hoàn tất phân tích ${totalFilesIndexed.get()} tập tin thông qua Local API.")
-                            } catch (e: java.io.EOFException) {
-                                SystemLogger.log("WARNING", "IndexEngine", "Luồng dữ liệu API bị ngắt kết nối: ${e.message}")
-                                if (totalFilesIndexed.get() > 100) isFastPathSuccess = true // Vẫn dùng data đã nhận
-                            } catch (e: Exception) {
-                                if (e is kotlinx.coroutines.CancellationException) throw e
-                                if (e is java.net.SocketException) {
-                                    SystemLogger.log("WARNING", "IndexEngine", "Luồng dữ liệu API bị ngắt (SocketException): ${e.message}")
-                                } else {
-                                    SystemLogger.log("WARNING", "IndexEngine", "Lỗi giải mã luồng JSON: ${e.message}")
-                                }
+                                progressPercent.set(0.5f)
+                                SystemLogger.log("SUCCESS","IndexEngine","Đã nhận đủ ${snapshot.total} tệp từ catalogue NAS")
                             }
                         }
-                    }
                     } finally {
                         cancelJob.cancel()
                     }
                 } catch (e: Exception) {
-                    SystemLogger.log("WARNING", "IndexEngine", "Phương thức Fast-Path không khả dụng, chuyển sang dự phòng WebDAV: ${e.message}")
+                    if (e is CancellationException || e is IncompleteNasCatalogueException) throw e
+                    throw IncompleteNasCatalogueException("Không kết nối được catalogue NAS; chưa quét lại filesystem",e)
                 }
 
-                // ═══════════════════════════════════════════════════
-                // FALLBACK: WEBDAV CRAWLER (Nếu API nội bộ chết)
-                // ═══════════════════════════════════════════════════
                 if (!isFastPathSuccess) {
-                    currentStage.set("Quét qua WebDAV")
-                    stageDescription.set("API nội bộ không khả dụng, quét từng thư mục bằng giao thức Webdav")
-                    // CC-005 P1: bound queue 2000 — tránh OOM khi NAS có hàng trăm
-                    // nghìn folder (unbounded LinkedBlockingQueue cũ nuốt RAM).
-                    val folderQueue = java.util.concurrent.LinkedBlockingQueue<String>(2000)
-                    val checkpoint = db.checkpointDao().getCheckpoint("DuplicateScan")
-
-                    if (checkpoint != null && !forceRestart) {
-                        folderQueue.put(checkpoint.lastProcessedFolder)
-                        totalFilesIndexed.set(checkpoint.scannedCount)
-                        SystemLogger.log("INFO", "DuplicateScan", "Khôi phục phiên quét dữ liệu từ đường dẫn: ${checkpoint.lastProcessedFolder}")
-                    } else {
-                        folderQueue.put(currentUrl)
-                        db.checkpointDao().clearCheckpoint("DuplicateScan")
-                    }
-
-                    val batchBuffer = mutableListOf<CachedFile>()
-                    val foldersScanned = AtomicInteger(0)
-                    val totalFoldersDiscovered = AtomicInteger(1) // Bắt đầu = 1 (thư mục gốc)
-
-                    // FIX C2 + FIX #20: Biến đếm checkpoint — chỉ ghi DB mỗi 10 thư mục hoặc mỗi 30 giây
-                    // Dùng Atomic để tránh Data Race từ 3 luồng BFS chạy song song
-                    val foldersSinceLastCheckpoint = java.util.concurrent.atomic.AtomicInteger(0)
-                    val lastCheckpointTime = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
-                    val CHECKPOINT_FOLDER_INTERVAL = 10
-                    val CHECKPOINT_TIME_INTERVAL_MS = 30_000L
-
-                    val semaphore = kotlinx.coroutines.sync.Semaphore(3)  // 3 luồng BFS song song (cân bằng NAS ARM)
-
-                    // Thuật toán duyệt BFS Đa Luồng (PHASE 8.C)
-                    while (isActive) {
-                        while (DuplicateProgressState.isPaused.value && !isStopped) { delay(500) }
-                        
-                        val currentFolders = mutableListOf<String>()
-                        while (folderQueue.isNotEmpty()) {
-                            if (!isActive) break
-                            folderQueue.poll()?.let { currentFolders.add(it) }
-                        }
-                        
-                        if (currentFolders.isEmpty()) break
-                        
-                        kotlinx.coroutines.coroutineScope {
-                            val deferreds = currentFolders.map { folder ->
-                                async(Dispatchers.IO) {
-                                    semaphore.withPermit {
-                                        val scanned = foldersScanned.incrementAndGet()
-                                        val folderDisplayName = java.net.URLDecoder.decode(folder.trimEnd('/').substringAfterLast("/"), "UTF-8")
-                                        currentFolder.set(folderDisplayName)
-                                        
-                                        try {
-                                            val files = webDavManager.listFiles(folder)
-                                            val localBatch = mutableListOf<CachedFile>()
-                                            
-                                            for (file in files) {
-                                                if (!isActive) break
-                                                totalFilesIndexed.incrementAndGet()
-                                                currentFileName.set(file.name)
-        
-                                                if (file.isDirectory) {
-                                                    // CC-005 P1: case normalize — dedup folder trùng chỉ khác
-                                                    // hoa/thường; queue đầy (bound) thì bỏ qua + log, không block.
-                                                    if (file.path.trimEnd('/').lowercase() != folder.trimEnd('/').lowercase()) {
-                                                        if (!folderQueue.offer(file.path)) {
-                                                            SystemLogger.log("WARNING", "IndexEngine",
-                                                                "Folder queue đầy (2000) — bỏ qua: ${file.path}")
-                                                        } else {
-                                                            totalFoldersDiscovered.incrementAndGet()
-                                                        }
-                                                    }
-                                                } else {
-                                                    val ext = file.name.lowercase().substringAfterLast('.', "")
-                                                    if (!file.name.startsWith(".")) {
-                                                        localBatch.add(
-                                                            CachedFile(
-                                                                path = file.path, name = file.name, isDirectory = false,
-                                                                contentType = file.contentType, parentPath = folder,
-                                                                contentLength = file.contentLength, lastModified = file.lastModified,
-                                                                accountKey = currentAccountKey()
-                                                            )
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            
-                                            bufferMutex.withLock {
-                                                batchBuffer.addAll(localBatch)
-                                            }
-
-                                            // Cập nhật progress per-folder (mượt hơn per-BFS-level)
-                                            val total = totalFoldersDiscovered.get()
-                                            val stage1Prog = if (total > 0) (scanned.toFloat() / total).coerceAtMost(0.99f) else 0f
-                                            currentStagePercent.set(stage1Prog)
-                                            progressPercent.set(stage1Prog * 0.5f)
-
-                                            // FIX C2 + FIX #20: Checkpoint thông minh — thread-safe
-                                            val currentFoldersSince = foldersSinceLastCheckpoint.incrementAndGet()
-                                            val now = System.currentTimeMillis()
-                                            val lastTime = lastCheckpointTime.get()
-                                            if (currentFoldersSince >= CHECKPOINT_FOLDER_INTERVAL
-                                                || now - lastTime >= CHECKPOINT_TIME_INTERVAL_MS
-                                            ) {
-                                                db.checkpointDao().saveCheckpoint(
-                                                    ScanCheckpoint("DuplicateScan", folder, totalFilesIndexed.get(), 0)
-                                                )
-                                                foldersSinceLastCheckpoint.set(0)
-                                                lastCheckpointTime.set(now)
-                                            }
-
-                                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                                            android.util.Log.w("DuplicateScan", "checkpoint save failed: ${e.message}")
-                                        }
-                                    }
-                                }
-                            }
-                            deferreds.awaitAll()
-                        }
-                        
-                        // Xả Batch vào DB sau mỗi lớp BFS Level
-                        val flushBatch: List<CachedFile>
-                        bufferMutex.withLock {
-                            flushBatch = batchBuffer.toList()
-                            batchBuffer.clear()
-                        }
-                        if (flushBatch.isNotEmpty()) {
-                            db.withTransaction { db.fileDao().insertFiles(flushBatch) }
-                        }
-                    }
-                    
-                    progressPercent.set(0.5f) // Stage 1 hoàn tất
-                    currentStagePercent.set(1f)
+                    throw IncompleteNasCatalogueException("Không nhận được catalogue NAS đầy đủ; chờ thử lại")
                 }
 
                 // ═══════════════════════════════════════════════════
@@ -545,17 +318,20 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     for ((groupIndex, size) in duplicateSizes.withIndex()) {
                         var after = ""
                         while (isActive) {
-                            while (DuplicateProgressState.isPaused.value) delay(500)
+                            while (DuplicateProgressState.isPaused.value) {activeLease.ensureValid();delay(500)}
                             val page = db.fileDao().getFilesBySizePage(size, currentAccountKey(), after, 128)
                             if (page.isEmpty()) break
                             coroutineScope {
                                 page.map { file -> async(Dispatchers.IO) {
                                     hashSemaphore.withPermit {
+                                        activeLease.ensureValid()
                                         if (verifyDuplicateFile(webDavManager, file)) hashesComputed.incrementAndGet()
+                                        activeLease.ensureValid()
                                     }
                                 } }.awaitAll()
                             }
                             after = page.last().path
+                            activeLease.checkpoint("hash:${hashesComputed.get()}")
                             currentStage.set("Xác minh nội dung đầy đủ")
                             stageNumber.set(3)
                             stageDescription.set("Đã xác minh ${hashesComputed.get()}/${totalHashesNeeded.get()} tệp ứng viên")
@@ -624,6 +400,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
             db.checkpointDao().clearCheckpoint("DuplicateScan")
             SystemLogger.log("SUCCESS", "DuplicateScan", "Hoàn tất quét tệp trùng lặp")
+            activeLease.complete()
             return@withContext Result.success()
 
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -634,6 +411,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             SystemLogger.log("WARNING", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
             return@withContext Result.retry()
         } finally {
+            lease?.retryAndRelease()
             isUiUpdating.set(false)
             // Chờ UI updater tự thoát sau khi isUiUpdating = false (vòng lặp kiểm tra flag này)
             uiUpdaterJob?.join()

@@ -139,7 +139,15 @@ def _duplicate_sync_directory(directory):
 
 def _duplicate_db():
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
-    conn.execute('CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL)')
+    conn.execute("CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL, path TEXT NOT NULL DEFAULT '')")
+    if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
+        try:
+            conn.execute("ALTER TABLE verified_file_hashes ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
+                conn.close()
+                raise
+    conn.execute('CREATE INDEX IF NOT EXISTS verified_sha_size_path ON verified_file_hashes(sha256,size,path)')
     conn.commit()
     return conn
 
@@ -147,8 +155,19 @@ def _duplicate_db():
 def _duplicate_lookup(info):
     conn = _duplicate_db()
     try:
-        row = conn.execute('SELECT sha256 FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
+        row = conn.execute('SELECT sha256,path FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
                            (info['file_id'], info['version'], info['size'])).fetchone()
+        if row and row[1] != info['path']:
+            valid_path = False
+            if row[1]:
+                try:
+                    previous = _duplicate_file_info(row[1])
+                    valid_path = previous['file_id'] == info['file_id'] and previous['version'] == info['version']
+                except (OSError, ValueError):
+                    pass
+            if not valid_path:
+                conn.execute('UPDATE verified_file_hashes SET path=? WHERE file_id=?', (info['path'],info['file_id']))
+                conn.commit()
         return row[0] if row else ''
     finally:
         conn.close()
@@ -162,8 +181,8 @@ def _duplicate_save_hash(relative, version, sha256):
         raise ValueError('File changed during verification')
     conn = _duplicate_db()
     try:
-        conn.execute('INSERT OR REPLACE INTO verified_file_hashes VALUES(?,?,?,?,?)',
-                     (info['file_id'], info['version'], info['size'], sha256, time.time()))
+        conn.execute('INSERT OR REPLACE INTO verified_file_hashes(file_id,version,size,sha256,verified_at,path) VALUES(?,?,?,?,?,?)',
+                     (info['file_id'], info['version'], info['size'], sha256, time.time(), info['path']))
         conn.commit()
     finally:
         conn.close()
@@ -183,12 +202,21 @@ def _duplicate_work_dir():
     return directory
 
 
-def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256):
+def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256, work_lease=None):
     import fcntl
     import uuid
     _duplicate_validate_namespace()
     directory = _duplicate_work_dir()
+    def require_work_lease():
+        if work_lease is not None:
+            if (not isinstance(work_lease, dict) or work_lease.get('name') != 'duplicates' or
+                    not isinstance(work_lease.get('owner'), str) or len(work_lease.get('owner')) > 128 or
+                    not isinstance(work_lease.get('token'), str) or len(work_lease.get('token')) > 128 or
+                    not nas_work_coordinator.owns_lease(INDEX_DB_PATH, 'duplicates',
+                                                        work_lease.get('owner'), work_lease.get('token'))):
+                raise ValueError('NAS duplicate maintenance lease expired or is not owned')
     with os.fdopen(_duplicate_open_namespace_lock(True), 'r') as lock:
+        require_work_lease()
         keeper = _duplicate_file_info(keeper_path)
         victim = _duplicate_file_info(victim_path)
         if keeper['file_id'] == victim['file_id']:
@@ -211,6 +239,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 os.fsync(recovery.fileno())
             _duplicate_sync_directory(directory)
             try:
+                require_work_lease()
                 os.rename(victim['physical'], quarantine)
                 _duplicate_sync_directory(os.path.dirname(victim['physical']))
                 _duplicate_sync_directory(directory)
@@ -224,6 +253,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
                     raise ValueError('File was requested for writing; cleanup cancelled')
                 # shortcut: external root/SSH mutations are outside the managed namespace lock.
+                require_work_lease()
                 os.unlink(quarantine)
             except Exception:
                 if os.path.lexists(quarantine) and not os.path.lexists(victim['physical']):
@@ -251,6 +281,56 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 conn.close()
         return {'deleted': True, 'path': victim_path, 'keeper': keeper_path,
                 'logical_bytes_removed': victim['size']}
+
+
+def _duplicate_find_matches(sha256, size, after=''):
+    if not isinstance(sha256, str) or len(sha256) != 64 or any(c not in '0123456789abcdef' for c in sha256):
+        raise ValueError('Complete SHA256 required')
+    if not isinstance(size, int) or size < 0 or size > 9223372036854775807 or not isinstance(after, str) or len(after) > 4096:
+        raise ValueError('Invalid size or cursor')
+    _refresh_file_index_for_search()
+    conn = _duplicate_db()
+    try:
+        state = conn.execute('SELECT root,ready FROM index_state WHERE id=1').fetchone()
+        public = _get_webdav_public_dir()
+        ready = bool(state and public and state[0] == os.path.realpath(public) and state[1] and not _index_scan_lock.locked())
+        rows = conn.execute('SELECT path FROM file_index WHERE is_dir=0 AND size=? AND path>? UNION SELECT path FROM verified_file_hashes WHERE sha256=? AND size=? AND path>? ORDER BY path LIMIT 64', (size,after,sha256,size,after)).fetchall()
+    finally:
+        conn.close()
+    matches, unverified = [], []
+    for row in rows:
+        path = row[0]
+        try:
+            info = _duplicate_file_info(path)
+            if info['size'] != size:
+                continue
+            known = _duplicate_lookup(info)
+            if known == sha256:
+                matches.append(path)
+            elif not known:
+                unverified.append(path)
+        except (OSError, ValueError):
+            pass
+    return {'matches': matches, 'unverified': unverified, 'index_ready': ready,
+            'next_cursor': rows[-1][0] if len(rows) == 64 else ''}
+
+
+@app.route('/api/duplicates/capabilities', methods=['GET', 'POST'])
+@requires_admin
+def api_duplicate_capabilities():
+    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True})
+
+
+@app.route('/api/duplicates/find', methods=['POST'])
+@requires_admin
+def api_duplicate_find():
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        return jsonify(_duplicate_find_matches(body.get('sha256'), body.get('size'), body.get('after', '')))
+    except (OSError, ValueError) as error:
+        return jsonify({'error': str(error)}), 409
 
 
 @app.route('/api/duplicates/file', methods=['POST'])
@@ -289,7 +369,7 @@ def api_duplicate_cleanup():
         if not isinstance(body, dict):
             raise ValueError('JSON object required')
         result = _duplicate_cleanup(body.get('victim'), body.get('keeper'), body.get('victim_version'),
-                                    body.get('keeper_version'), body.get('sha256'))
+                                    body.get('keeper_version'), body.get('sha256'), body.get('work_lease'))
         return jsonify(result)
     except (OSError, ValueError) as error:
         return jsonify({'deleted': False, 'error': str(error)}), 409

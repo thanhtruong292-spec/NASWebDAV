@@ -1,0 +1,4 @@
+{"milliseconds": 3070.9, "index_ready": false, "results": 300}
+{"milliseconds": 174.81, "index_ready": false, "results": 300}
+{"milliseconds": 148.54, "index_ready": false, "results": 300}
+{"entries": 468577, "index_state": [1, 1, "", 1], "directory_states": [[1, 828]]}

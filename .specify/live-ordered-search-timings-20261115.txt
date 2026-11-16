@@ -1,0 +1,7 @@
+{"index_ready": false, "milliseconds": 3219.28, "results": 300}
+{"index_ready": false, "milliseconds": 173.95, "results": 300}
+{"index_ready": false, "milliseconds": 160.89, "results": 300}
+{"plan": [[0, 0, 0, "SCAN TABLE file_index USING INDEX idx_file_search_order"]]}
+{"sql_milliseconds": 15.54, "rows": 300}
+{"sql_milliseconds": 5.94, "rows": 300}
+{"sql_milliseconds": 5.52, "rows": 300}

@@ -1,0 +1,6 @@
+{"index_ready": false, "results": 300, "milliseconds": 10919.21}
+{"index_ready": false, "results": 300, "milliseconds": 11201.57}
+{"index_ready": false, "results": 300, "milliseconds": 1096.6}
+{"total_dirs": 827, "total_files": 467750, "summary_updated_at": 1794695967, "milliseconds": 26.61, "partial": false}
+{"total_dirs": 827, "total_files": 467750, "summary_updated_at": 1794695967, "milliseconds": 12.37, "partial": false}
+{"total_dirs": 827, "total_files": 467750, "summary_updated_at": 1794695967, "milliseconds": 11.47, "partial": false}

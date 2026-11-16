@@ -1,0 +1,10 @@
+test_archive_is_private_before_any_bytes_are_written_and_never_overwrites (__main__.PrivateConfigBackupTests) ... ok
+test_existing_directory_and_archives_become_private (__main__.PrivateConfigBackupTests) ... ok
+test_symlink_directory_and_archive_are_rejected (__main__.PrivateConfigBackupTests) ... [Backup] Private backup directory unavailable: Backup directory must not use symlinks
+[Backup] Private backup directory unavailable: [Errno 40] Too many levels of symbolic links: 'Backup_NAS link.tar.gz'
+ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 4.534s
+
+OK

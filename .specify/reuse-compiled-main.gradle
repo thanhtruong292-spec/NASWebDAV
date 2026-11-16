@@ -1,0 +1,6 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    ['generateDebugBuildConfig', 'kspDebugKotlin', 'compileDebugKotlin'].each { name ->
+        app.tasks.named(name).configure { onlyIf { false } }
+    }
+}

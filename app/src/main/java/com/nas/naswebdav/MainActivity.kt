@@ -523,13 +523,13 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
     androidx.compose.runtime.DisposableEffect(lifecycleOwner, navController) {
-
+        var foregroundRefreshJob: kotlinx.coroutines.Job? = null
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
 
             when (event) {
 
                 androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
-
+                    foregroundRefreshJob?.cancel()
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = false
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
@@ -545,8 +545,8 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = true
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
-                    if (!isLoginScreen) {
-                        lifecycleOwner.lifecycleScope.launch {
+                    if (!isLoginScreen && foregroundRefreshJob?.isActive != true) {
+                        foregroundRefreshJob = lifecycleOwner.lifecycleScope.launch {
                             try {
                                 refreshNasStateOnForeground(
                                     domainProvider,
@@ -583,7 +583,7 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
         lifecycleOwner.lifecycle.addObserver(observer)
 
         onDispose {
-
+            foregroundRefreshJob?.cancel()
             lifecycleOwner.lifecycle.removeObserver(observer)
 
         }

@@ -1,0 +1,18 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_________ test_global_search_avoids_sorting_the_entire_file_catalogue _________
+
+engine = ({'INDEX_DB_PATH': 'C:\\Users\\Truong\\AppData\\Local\\Temp\\pytest-of-Truong\\pytest-11\\test_global_search_avoids_so...f-Truong/pytest-11/test_global_search_avoids_sort0/public'), <FlaskClient <Flask 'tests.test_incremental_file_index'>>)
+
+    def test_global_search_avoids_sorting_the_entire_file_catalogue(engine):
+        ns, root, client = engine
+        with sqlite3.connect(ns['INDEX_DB_PATH']) as conn:
+            plan = conn.execute('EXPLAIN QUERY PLAN SELECT path,name,is_dir,size,mtime,mime FROM file_index WHERE norm_name LIKE ? ORDER BY is_dir DESC,name ASC LIMIT 300', ('%mp4%',)).fetchall()
+>       assert not any('TEMP B-TREE' in row[3] for row in plan)
+E       assert not True
+E        +  where True = any(<generator object test_global_search_avoids_sorting_the_entire_file_catalogue.<locals>.<genexpr> at 0x000002482B823220>)
+
+tests\test_incremental_file_index.py:563: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_incremental_file_index.py::test_global_search_avoids_sorting_the_entire_file_catalogue
+1 failed in 5.02s

@@ -1,5 +1,6 @@
 """Exercise the production index/search functions with real directories and SQLite."""
 import ast
+import datetime
 import builtins
 import logging
 import mimetypes
@@ -11,10 +12,12 @@ import sqlite3
 import threading
 import time
 import urllib.parse
+import uuid
 import types
 
 from flask import Flask, jsonify, request
 import pytest
+from backend import nas_work_coordinator
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "backend" / "nas_api_server.py"
@@ -83,18 +86,21 @@ def engine(tmp_path):
     app = Flask(__name__)
     names = {
         "_remove_diacritics_py", "_init_index_db", "_scan_file_index",
-        "_scan_file_index_pass", "_refresh_file_index_for_search",
-        "_background_file_index_refresh",
+        "_scan_file_index_pass", "_run_file_index_job", "_refresh_file_index_for_search", "_index_mutated_directories",
+        "_background_file_index_refresh", "_mark_file_index_unready",
         "_index_storage_boundary", "_index_resolve_directory",
-        "_index_directory_stamp", "_index_readiness", "api_fast_search",
+        "_index_directory_stamp", "_index_readiness", "api_fast_search", "api_photos_timeline", "api_recent_media", "api_disk_trash_batch",
     }
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     namespace = dict(
-        sqlite3=sqlite3, os=os, time=time, mimetypes=mimetypes,
-        threading=threading,
+        sqlite3=sqlite3, os=os, time=time, mimetypes=mimetypes, datetime=datetime,
+        _IMAGE_EXTS={".jpg", ".heif"}, _VIDEO_EXTS={".mp4"}, FILE_INDEX_FRESHNESS_SECONDS=60, requires_auth=lambda func: func,
+        threading=threading, uuid=uuid, _index_mutation_wake=threading.Event(),
         _index_lock=threading.Lock(), INDEX_DB_PATH=str(tmp_path / "index.sqlite"),
         _index_scan_lock=threading.Lock(),
+        nas_work_coordinator=nas_work_coordinator,
+        _background_heavy_work_allowed=lambda ignore_user_idle=False: True,
         _cfg_sqlite_timeout=lambda name, default: default,
         log=logging.getLogger("index-test"), app=app, request=request, jsonify=jsonify,
         urllib=urllib, _get_webdav_port=lambda: 8822,
@@ -106,6 +112,41 @@ def engine(tmp_path):
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), namespace)
     namespace["_init_index_db"]()
     return namespace, root, app.test_client()
+
+
+def test_mutation_batch_reindexes_in_place_overwrite_and_move_into_new_directory(engine):
+    ns, root, _ = engine
+    (root / "a").mkdir()
+    (root / "a" / "keep.jpg").write_bytes(b"old")
+    (root / "a" / "move.jpg").write_bytes(b"move")
+    scan = ns["_scan_file_index"]
+    assert scan(str(root))["index_ready"]
+    (root / "a" / "keep.jpg").write_bytes(b"replacement")
+    (root / "b" / "new").mkdir(parents=True)
+    (root / "a" / "move.jpg").rename(root / "b" / "new" / "moved.jpg")
+    ns["_index_mutated_directories"]([str(root / "a"), str(root / "b" / "new")])
+    assert ns["_index_mutation_wake"].is_set()
+    with sqlite3.connect(ns["INDEX_DB_PATH"]) as conn:
+        assert conn.execute("SELECT ready FROM index_state").fetchone() == (0,)
+        assert scan(str(root))["index_ready"]
+        assert dict(conn.execute("SELECT path,size FROM file_index WHERE is_dir=0")) == {
+            "a/keep.jpg": 11, "b/new/moved.jpg": 4,
+        }
+        (root / "a" / "keep.jpg").write_bytes(b"x")
+        ns["_index_mutated_directories"]([str(root / "a")])
+        assert scan(str(root))["index_ready"]
+        assert conn.execute("SELECT size FROM file_index WHERE path='a/keep.jpg'").fetchone() == (1,)
+
+
+def test_unchanged_scan_preserves_catalogue_revision(engine):
+    ns, root, _ = engine
+    (root / 'first.jpg').write_bytes(b'image')
+    with sqlite3.connect(ns['INDEX_DB_PATH']) as conn:
+        ns['_scan_file_index'](str(root))
+        revision = nas_work_coordinator.catalogue_revision(conn)
+        assert revision > 0
+        ns['_scan_file_index'](str(root))
+        assert nas_work_coordinator.catalogue_revision(conn) == revision
 
 
 def test_second_pass_and_restart_reuse_existing_directory_listings(engine, monkeypatch):
@@ -454,11 +495,17 @@ def test_search_refreshes_additions_and_deletions_after_five_seconds(engine, mon
     assert fresh["results"] == []
     assert fresh["index_ready"] is True
     clock[0] += 2
+    client.get("/api/search?q=new")
+    with ns['_index_scan_lock']:
+        pass
     updated = client.get("/api/search?q=new").get_json()
     assert updated["index_ready"] is True
     assert [item["name"] for item in updated["results"]] == ["new.txt"]
     added.unlink()
     clock[0] += 6
+    client.get("/api/search?q=new")
+    with ns['_index_scan_lock']:
+        pass
     deleted = client.get("/api/search?q=new").get_json()
     assert deleted["results"] == []
     assert deleted["index_ready"] is True
@@ -498,8 +545,8 @@ def test_concurrent_search_uses_one_refresh_and_restores_readiness(engine, monke
         try:
             # Synchronize on enumeration; filesystem/scheduler latency is not
             # the behavior this regression test measures.
-            stage, detail = signals.get(timeout=30)
-            assert stage == "enumerating", "refresh finished before enumeration: %r" % (detail,)
+            stages = {signals.get(timeout=30)[0], signals.get(timeout=30)[0]}
+            assert stages == {'enumerating', 'finished'}
             concurrent = client.get("/api/search?q=new").get_json()
             assert concurrent["index_ready"] is False
             assert concurrent["index_incomplete_reason"] == "scan_in_progress"
@@ -507,9 +554,11 @@ def test_concurrent_search_uses_one_refresh_and_restores_readiness(engine, monke
         finally:
             release.set()
             owner.join(30)
+            with ns['_index_scan_lock']:
+                pass
     assert not owner.is_alive()
-    assert responses[0]["index_ready"] is True
-    assert [item["name"] for item in responses[0]["results"]] == ["new.txt"]
+    assert responses[0]["index_ready"] is False
+    assert [item["name"] for item in client.get('/api/search?q=new').get_json()['results']] == ['new.txt']
     assert client.get("/api/search?q=absent").get_json()["index_ready"] is True
 
 
@@ -525,3 +574,127 @@ def test_cold_index_search_schedules_background_build_instead_of_blocking(engine
     response = client.get("/api/search?q=missing").get_json()
     assert response["index_ready"] is False
     assert scheduled == [(ns["_background_file_index_refresh"], (str(root),), True)]
+
+
+def test_search_refresh_ignores_only_its_own_interactive_idle_gate(engine):
+    ns, root, _ = engine
+    seen = []
+    ns["_run_file_index_job"] = lambda search_root, ignore_user_idle=False: seen.append((search_root, ignore_user_idle))
+    ns["_index_scan_lock"].acquire()
+    ns["_background_file_index_refresh"](str(root))
+    assert seen == [(str(root), True)]
+    assert not ns["_index_scan_lock"].locked()
+
+
+def test_nas_busy_refresh_marks_previous_catalogue_unready(engine):
+    ns, root, _ = engine
+    assert ns["_scan_file_index"](str(root))["index_ready"] is True
+    ns["_background_heavy_work_allowed"] = lambda ignore_user_idle=False: False
+    result = ns["_run_file_index_job"](str(root), ignore_user_idle=True)
+    assert result["index_incomplete_reason"] == "nas_busy"
+    with sqlite3.connect(ns["INDEX_DB_PATH"]) as conn:
+        ready, reason = conn.execute("SELECT ready,incomplete_reason FROM index_state WHERE id=1").fetchone()
+    assert ready == 0
+    assert reason == "nas_busy"
+
+
+def test_index_pass_pauses_and_releases_lease_when_nas_becomes_busy(engine):
+    ns, root, _ = engine
+    for number in range(24):
+        (root / ("d%02d" % number)).mkdir()
+    gates = []
+    def gate(ignore_user_idle=False):
+        gates.append(ignore_user_idle)
+        return len(gates) == 1
+    ns["_background_heavy_work_allowed"] = gate
+    result = ns["_run_file_index_job"](str(root))
+    assert result["work_state"] == "paused"
+    assert result["index_incomplete_reason"] == "nas_busy"
+    assert gates == [False, False]
+    jobs = nas_work_coordinator.get_status(ns["INDEX_DB_PATH"], "index")
+    assert jobs[0]["state"] == "paused"
+
+
+def test_warm_search_never_waits_for_directory_refresh(engine):
+    ns, root, client = engine
+    (root / 'kept.txt').write_text('cached')
+    ns['_scan_file_index'](str(root))
+    with sqlite3.connect(ns['INDEX_DB_PATH']) as conn:
+        conn.execute('UPDATE index_state SET scanned_at=0')
+    jobs = []
+    class DeferredThread:
+        def __init__(self, target, args, daemon):
+            jobs.append((target,args))
+        def start(self):
+            pass
+    ns['threading'] = types.SimpleNamespace(Thread=DeferredThread)
+    ns['_scan_file_index'] = lambda *args: pytest.fail('API request performed directory scanning inline')
+    response = client.get('/api/search?q=kept').get_json()
+    assert [item['name'] for item in response['results']] == ['kept.txt']
+    assert response['index_ready'] is False
+    assert len(jobs) == 1
+    assert ns['_index_scan_lock'].locked()
+
+
+def test_global_search_avoids_sorting_the_entire_file_catalogue(engine):
+    ns, root, client = engine
+    with sqlite3.connect(ns['INDEX_DB_PATH']) as conn:
+        plan = conn.execute('EXPLAIN QUERY PLAN SELECT path,name,is_dir,size,mtime,mime FROM file_index WHERE norm_name LIKE ? ORDER BY is_dir DESC,name ASC LIMIT 300', ('%mp4%',)).fetchall()
+    assert not any('TEMP B-TREE' in row[3] for row in plan)
+
+
+def test_timeline_uses_shared_catalogue_for_month_pages_and_root_changes(engine):
+    ns, root, client = engine
+    stamp = datetime.datetime(2024, 2, 10).timestamp()
+    for name in ("a.JPG", "b.heif", "c.mp4"):
+        (root / name).write_bytes(b"photo")
+        os.utime(str(root / name), (stamp, stamp))
+    ns["_scan_file_index"](str(root))
+    response = client.get("/api/photos/timeline?month=2024-02&limit=1&offset=1")
+    assert response.status_code == 200
+    assert response.json["total"] == 2
+    assert response.json["items"] == [{"path": "b.heif", "size": 5, "mtime": int(stamp)}]
+    assert client.get("/api/photos/timeline?month=2024-03").json["items"] == []
+    ns["_get_webdav_public_dir"] = lambda: str(root / "other")
+    ns["_refresh_file_index_for_search"] = lambda: None
+    pending = client.get("/api/photos/timeline").json
+    assert pending["scanning"] and pending["items"] == []
+
+
+def test_trash_directory_removes_nested_hashes_in_both_path_formats(engine):
+    ns, root, client = engine
+    (root / "album").mkdir()
+    (root / "album" / "photo.jpg").write_bytes(b"photo")
+    ns["_scan_file_index"](str(root))
+    ns["_trash_dir_for_relative_path"] = lambda *_: str(root / ".trash")
+    with sqlite3.connect(ns["INDEX_DB_PATH"]) as conn:
+        for table in ("file_hashes", "verified_file_hashes"):
+            conn.execute("CREATE TABLE IF NOT EXISTS " + table + "(path TEXT)")
+            conn.executemany("INSERT INTO " + table + "(path) VALUES (?)",
+                             [(p,) for p in ("album/photo.jpg", "/webdav/album/photo.jpg", "album2/photo.jpg")])
+        conn.commit()
+        response = client.post("/api/disk/trash_batch", json={"files": ["/webdav/album"]})
+        assert response.json["success_count"] == 1
+        for table in ("file_hashes", "verified_file_hashes"):
+            assert conn.execute("SELECT path FROM " + table).fetchall() == [("album2/photo.jpg",)]
+
+
+def test_recent_media_includes_nested_items_scopes_and_orders_in_milliseconds(engine):
+    ns, root, client = engine
+    album = root / "album"
+    album.mkdir()
+    (root / "album2").mkdir()
+    for path in (album / "older.jpg", album / "new.JPG", album / "clip.mp4", root / "album2" / "outside.jpg"):
+        path.write_bytes(b"media")
+        os.utime(str(path), (100 if path.name == "older.jpg" else 200,) * 2)
+    ns["_scan_file_index"](str(root))
+    def recent(kind):
+        return client.get("/api/media/recent", query_string={"kind": kind, "root": "album"}).json
+    images = recent("image")
+    assert images["index_ready"] and images["source"] == "file_index"
+    assert [row["path"] for row in images["items"]] == ["/webdav/album/new.JPG", "/webdav/album/older.jpg"]
+    assert images["items"][0]["mtime"] == 200000
+    assert [row["name"] for row in recent("video")["items"]] == ["clip.mp4"]
+    ns["_get_webdav_public_dir"] = lambda: str(root / "another")
+    ns["_refresh_file_index_for_search"] = lambda: None
+    assert recent("image") == {"source": "file_index", "index_ready": False, "items": []}

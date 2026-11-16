@@ -130,7 +130,9 @@ class LongRunningApiWorker(
                     try {
                         androidx.core.app.NotificationManagerCompat.from(applicationContext)
                             .notify(NOTIFICATION_ID, notificationBuilder.build())
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        SystemLogger.log("WARNING", "LongRunningApi", "notify background restriction: ${e.message}")
+                    }
                 }
                 isMissingType -> {
                     android.util.Log.e(TAG, "setForeground failed: missing foregroundServiceType", e)
@@ -141,7 +143,9 @@ class LongRunningApiWorker(
                     try {
                         androidx.core.app.NotificationManagerCompat.from(applicationContext)
                             .notify(NOTIFICATION_ID, notificationBuilder.build())
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        SystemLogger.log("WARNING", "LongRunningApi", "notify else branch: ${e.message}")
+                    }
                 }
             }
         }
@@ -227,7 +231,9 @@ class LongRunningApiWorker(
                         module = "NAS API",
                         message = resultMessage
                     ))
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                    SystemLogger.log("WARNING", "LongRunningApi", "insertLog success path: ${e.message}")
+                }
 
                 // Notification hoàn tất
                 val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
@@ -242,7 +248,9 @@ class LongRunningApiWorker(
                 try {
                     NotificationManagerCompat.from(applicationContext)
                         .notify(NOTIFICATION_ID, doneNotification.build())
-                } catch (_: SecurityException) {}
+                } catch (e: SecurityException) {
+                    SystemLogger.log("WARNING", "LongRunningApi", "doneNotification.notify SecurityException: ${e.message}")
+                }
 
                 // CC-005 P0: retry transient HTTP (5xx/429/408), bound 3 lan
                 if (!isSuccess && (response.code in 500..599 || response.code == 429 || response.code == 408) && runAttemptCount < 3) { SystemLogger.log("WARNING", "LongRunningApi", "Tác vụ API $taskLabel gặp lỗi tạm thời — retry"); return@withContext Result.retry() }
@@ -283,7 +291,9 @@ class LongRunningApiWorker(
             try {
                 NotificationManagerCompat.from(applicationContext)
                     .notify(NOTIFICATION_ID, errorNotification.build())
-            } catch (_: SecurityException) {}
+            } catch (e: SecurityException) {
+                SystemLogger.log("WARNING", "LongRunningApi", "errorNotification.notify SecurityException: ${e.message}")
+            }
 
             // Ghi log
             try {
@@ -295,7 +305,9 @@ class LongRunningApiWorker(
                         e.message?.take(100).orEmpty()
                     )
                 ))
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                SystemLogger.log("WARNING", "LongRunningApi", "insertLog error path: ${e.message}")
+            }
 
             if (shouldRetry(e, runAttemptCount)) {
                 android.util.Log.w(TAG, "Transient error in LongRunningApiWorker (attempt $runAttemptCount), retrying: ${e.message}")

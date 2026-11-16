@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -224,35 +225,45 @@ class AuthSessionViewModel(
      * lam cung logic nhung AWAIT duoc: caller (cold-open / pull-refresh) doi
      * xong moi fetch, dam bao dung URL moi. Tra ve safeActive (co dau "/").
      */
-    suspend fun ensureSmartNetwork(context: android.content.Context): String = smartNetworkCheckMutex.withLock {
-        ensureSmartNetworkLocked(context)
+    suspend fun ensureSmartNetwork(context: android.content.Context): String {
+        val session=WebDavManager.captureAuthSession()
+        return smartNetworkCheckMutex.withLock {ensureSmartNetworkLocked(context,session)}
     }
 
-    private suspend fun ensureSmartNetworkLocked(context: android.content.Context): String {
-        SharedStateHolder.updateConnectionStatus(ConnectionStatus.CheckingLan)
-        val activeUrl = try {
-            withContext(Dispatchers.IO) {
+    private suspend fun publishIfSessionCurrent(session: WebDavManager.AuthState, update: () -> Unit): Boolean =
+        withContext(Dispatchers.Main.immediate) {
+            synchronized(WebDavManager) {
+                coroutineContext.ensureActive()
+                if(WebDavManager.captureAuthSession() !== session) false else {update();true}
+            }
+        }
+
+    private suspend fun ensureSmartNetworkLocked(context: android.content.Context, initialSession: WebDavManager.AuthState): String {
+        var session=initialSession
+        if(WebDavManager.captureAuthSession() !== session) return WebDavManager.currentBaseUrl
+        val previousStatus=SharedStateHolder.connectionStatus.value
+        val previousUrl=SharedStateHolder.currentUrl.value
+        val previousOnLan=SharedStateHolder.isOnLan.value
+        try {
+            if(session.baseUrl.isBlank()) publishIfSessionCurrent(session) {
+                SharedStateHolder.updateConnectionStatus(ConnectionStatus.CheckingLan)
+            }
+            val activeUrl = withContext(Dispatchers.IO) {
                 SmartNetworkManager.getVerifiedBaseUrl(context)
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            SharedStateHolder.updateConnectionStatus(ConnectionStatus.NetworkError)
-            throw e
-        }
+            if(WebDavManager.captureAuthSession() !== session) return WebDavManager.currentBaseUrl
         if (activeUrl.isEmpty()) {
-            SharedStateHolder.updateConnectionStatus(ConnectionStatus.NetworkError)
+            publishIfSessionCurrent(session) {SharedStateHolder.updateConnectionStatus(ConnectionStatus.NetworkError)}
             return WebDavManager.currentBaseUrl
         }
 
         val onLan = !isTailscaleUrl(activeUrl)
-        SharedStateHolder.updateIsOnLan(onLan)
 
-        val currentBase = WebDavManager.currentBaseUrl
+        val currentBase = session.baseUrl
         val safeActive = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
 
-        var user = WebDavManager.currentUser
-        var pass = WebDavManager.currentPass
+        var user = session.user
+        var pass = session.pass
         if (user.isEmpty() || pass.isEmpty()) {
             val appCtx = context.applicationContext
             user = runCatching { SecurePrefsHelper.getUser(appCtx) }.getOrDefault("")
@@ -261,24 +272,30 @@ class AuthSessionViewModel(
 
         val needsConnect = currentBase.isEmpty() || safeActive != currentBase
         if (needsConnect && (user.isEmpty() || pass.isEmpty())) {
-            SharedStateHolder.updateConnectionStatus(ConnectionStatus.AuthFailed)
+            publishIfSessionCurrent(session) {SharedStateHolder.updateConnectionStatus(ConnectionStatus.AuthFailed)}
             return currentBase
         }
         if (needsConnect) {
-            SharedStateHolder.updateConnectionStatus(
-                if (onLan) ConnectionStatus.SwitchedToLan(safeActive)
-                else ConnectionStatus.SwitchedToTailscale(safeActive)
-            )
+            val switched=publishIfSessionCurrent(session) {
+                WebDavManager.connect(safeActive,user,pass)
+                session=WebDavManager.captureAuthSession()
+                SharedStateHolder.updateCurrentUrl(safeActive)
+                SharedStateHolder.updateIsOnLan(onLan)
+                SharedStateHolder.updateConnectionStatus(
+                    if (onLan) ConnectionStatus.SwitchedToLan(safeActive)
+                    else ConnectionStatus.SwitchedToTailscale(safeActive)
+                )
+            }
+            if(!switched) return WebDavManager.currentBaseUrl
             withContext(Dispatchers.IO) {
+                if(WebDavManager.captureAuthSession() !== session) return@withContext
                 try {
-                    WebDavManager.connect(safeActive, user, pass)
-
                     val host = safeUrlHost(safeActive)
                     if (host.isNotEmpty()) {
-                        val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
                         val authRequest = okhttp3.Request.Builder()
-                            .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
-                            .header("Authorization", authHeader)
+                            .url("${session.baseUrl.toApiBaseUrl()}/api/auth/authorize")
+                            .tag(WebDavManager.AuthState::class.java,session)
+                            .header("Authorization", session.authHeader)
                             .post(ByteArray(0).toRequestBody(null, 0, 0))
                             .build()
                         try {
@@ -293,12 +310,36 @@ class AuthSessionViewModel(
                 "Chuyển mạng: ${if (onLan) "LAN" else "Tailscale"} ($safeHostLabel)"
             )
         }
-        SharedStateHolder.updateCurrentUrl(safeActive)
-        SharedStateHolder.updateConnectionStatus(
+        val published=publishIfSessionCurrent(session) {
+            SharedStateHolder.updateIsOnLan(onLan)
+            SharedStateHolder.updateCurrentUrl(safeActive)
+            SharedStateHolder.updateConnectionStatus(
             if (onLan) ConnectionStatus.OnLan(safeActive)
             else ConnectionStatus.OnTailscale(safeActive)
-        )
-        return safeActive
+            )
+        }
+        return if(published) safeActive else WebDavManager.currentBaseUrl
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                publishIfSessionCurrent(session) {
+                    val status=SharedStateHolder.connectionStatus.value
+                    if(status == ConnectionStatus.CheckingLan || status is ConnectionStatus.SwitchedToLan || status is ConnectionStatus.SwitchedToTailscale) {
+                        SharedStateHolder.updateCurrentUrl(session.baseUrl.ifBlank {previousUrl})
+                        SharedStateHolder.updateIsOnLan(if(session.baseUrl.isNotBlank()) !isTailscaleUrl(session.baseUrl) else previousOnLan)
+                        SharedStateHolder.updateConnectionStatus(
+                            if(session.baseUrl.isNotBlank()) {
+                                if(isTailscaleUrl(session.baseUrl)) ConnectionStatus.OnTailscale(session.baseUrl)
+                                else ConnectionStatus.OnLan(session.baseUrl)
+                            } else if(previousStatus == ConnectionStatus.CheckingLan) ConnectionStatus.Idle else previousStatus
+                        )
+                    }
+                }
+            }
+            throw error
+        } catch(error: Exception) {
+            publishIfSessionCurrent(session) {SharedStateHolder.updateConnectionStatus(ConnectionStatus.NetworkError)}
+            throw error
+        }
     }
 
     // ─── OFFLINE QUEUE ──────────────────────────────────────────────────────

@@ -55,7 +55,7 @@ internal fun relativeWebDavSearchRoot(baseUrl: String, folderUrl: String): Strin
     if (!path.startsWith(prefix)) null else path.removePrefix(prefix).trim('/')
 }.getOrNull()
 
-private suspend fun okhttp3.Call.awaitSearchBody(): String? = suspendCancellableCoroutine { continuation ->
+private suspend fun okhttp3.Call.awaitSearchBody(rejectAuthFailure: Boolean = false): String? = suspendCancellableCoroutine { continuation ->
     continuation.invokeOnCancellation { cancel() }
     enqueue(object : okhttp3.Callback {
         override fun onFailure(call: okhttp3.Call, error: java.io.IOException) {
@@ -64,7 +64,10 @@ private suspend fun okhttp3.Call.awaitSearchBody(): String? = suspendCancellable
 
         override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
             try {
-                val body = response.use { if (it.isSuccessful) it.body?.string() else null }
+                val body = response.use {
+                    if (rejectAuthFailure && it.code in listOf(401, 403)) throw SecurityException("NAS từ chối truy cập.")
+                    if (it.isSuccessful) it.body?.string() else null
+                }
                 if (continuation.isActive) continuation.resume(body)
             } catch (error: Exception) {
                 if (continuation.isActive) continuation.resumeWithException(error)
@@ -273,6 +276,7 @@ class FileBrowserViewModel(
             clearSearch()
             return
         }
+        searchCatalogueIncomplete = false
         _isSearchActive.value = true
         _searchResults.value = emptyList()
         // Token chong job cu (bi cancel cham) de ket qua cu len sau khi job
@@ -320,10 +324,18 @@ class FileBrowserViewModel(
                         .build()
                     val jsonStr = NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody()
                     if (!jsonStr.isNullOrEmpty()) {
-                        val jsonObj = org.json.JSONObject(jsonStr)
+                        var jsonObj = org.json.JSONObject(jsonStr)
+                        repeat(4) {
+                            if (!jsonObj.optBoolean("index_ready") && jsonObj.optString("index_incomplete_reason") == "scan_in_progress") {
+                                delay(250)
+                                val updated = NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody()
+                                if (!updated.isNullOrEmpty()) jsonObj = org.json.JSONObject(updated)
+                            }
+                        }
                         if (jsonObj.optBoolean("success", false)) {
                             val arr = jsonObj.optJSONArray("results")
-                            if (arr != null && (arr.length() > 0 || jsonObj.optBoolean("index_ready", false))) {
+                            val indexed = jsonObj.has("index_ready")
+                            if (arr != null && (arr.length() > 0 || indexed)) {
                                 val authoritative = if (jsonObj.has("index_ready")) {
                                     jsonObj.optBoolean("index_ready", false)
                                 } else arr.length() > 0
@@ -362,9 +374,10 @@ class FileBrowserViewModel(
                                 withContext(Dispatchers.Main) {
                                     if (searchToken != searchGeneration) return@withContext
                                     _searchResults.value = apiList
-                                    if (authoritative) _isSearchActive.value = false
+                                    searchCatalogueIncomplete = indexed && !authoritative
+                                    _isSearchActive.value = false
                                 }
-                                if (authoritative) return@launch
+                                return@launch
                             }
                         }
                     }
@@ -562,6 +575,9 @@ class FileBrowserViewModel(
     private val _searchResults = MutableStateFlow<List<NasFile>>(emptyList())
     val searchResults: StateFlow<List<NasFile>> = _searchResults.asStateFlow()
 
+    var searchCatalogueIncomplete by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
     private val _isSearchActive = MutableStateFlow(false)
     val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
 
@@ -578,25 +594,67 @@ class FileBrowserViewModel(
         searchJob?.cancel()
         searchCallGroup?.let(WebDavManager::cancelActiveCalls)
         searchCallGroup = null
+        searchCatalogueIncomplete = false
         _isSearchActive.value = false
         _searchResults.value = emptyList()
     }
 
-    fun showLatestPhotos() {
-        viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Ảnh mới nhất" }
-            try { repository.getRemoteFilesAndCache(WebDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty()) } }
-            val photos = repository.getLatestPhotos()
-            withContext(Dispatchers.Main) { fileList = photos; isLoading = false }
-        }
-    }
+    fun showLatestPhotos() = showRecentMedia("image", "Ảnh mới nhất")
 
-    fun showRecentVideos() {
-        viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Video gần đây" }
-            try { repository.getRemoteFilesAndCache(WebDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty()) } }
-            val videos = repository.getRecentVideos()
-            withContext(Dispatchers.Main) { fileList = videos; isLoading = false }
+    fun showRecentVideos() = showRecentMedia("video", "Video gần đây")
+
+    private fun showRecentMedia(kind: String, title: String) {
+        viewModelScope.launch {
+            val generation = incrementLoadGeneration()
+            val auth = WebDavManager.currentAuthState()
+            isLoading = true
+            isSpecialMode = true
+            specialTitle = title
+            fileList = emptyList()
+            errorMessage = null
+            try {
+                val base = auth.baseUrl
+                val basePath = java.net.URI(base).path.trimEnd('/')
+                val root = basePath.removePrefix("/webdav").trim('/')
+                val queryRoot = java.net.URLEncoder.encode(root, "UTF-8")
+                val request = okhttp3.Request.Builder()
+                    .url("${base.toApiBaseUrl()}/api/media/recent?kind=$kind&root=$queryRoot")
+                    .tag(WebDavManager.AuthState::class.java, auth)
+                    .header("Authorization", auth.authHeader)
+                    .build()
+                val body = try {
+                    NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody(rejectAuthFailure = true)
+                } catch (_: java.io.IOException) {
+                    null
+                }
+                val response = body?.let { org.json.JSONObject(it) }
+                val files = if (response?.optString("source") == "file_index") {
+                    val rows = response.getJSONArray("items")
+                    List(rows.length()) { index ->
+                        val row = rows.getJSONObject(index)
+                        NasFile(row.getString("name"), com.nas.naswebdav.catalogueFileUrl(base, row.getString("path")),
+                            false, row.optString("mime"), row.getLong("size"), row.getLong("mtime"))
+                    }
+                } else {
+                    if (kind == "image") repository.getLatestPhotos() else repository.getRecentVideos()
+                }
+                if (generation == loadGeneration && auth == WebDavManager.currentAuthState()) {
+                    fileList = files
+                    errorMessage = when {
+                        response?.optString("source") != "file_index" -> "Chỉ hiển thị dữ liệu đã lưu trên điện thoại."
+                        !response.optBoolean("index_ready") -> "Danh mục NAS đang cập nhật. Danh sách có thể chưa đầy đủ."
+                        else -> null
+                    }
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (generation == loadGeneration && auth == WebDavManager.currentAuthState()) {
+                    errorMessage = appContext.getString(R.string.browser_error_prefix, error.message.orEmpty())
+                }
+            } finally {
+                if (generation == loadGeneration) isLoading = false
+            }
         }
     }
 

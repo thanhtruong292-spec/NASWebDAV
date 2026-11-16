@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.asContextElement
+import com.nas.naswebdav.utils.SystemLogger
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.concurrent.TimeUnit
@@ -100,7 +101,7 @@ class NasDocumentProvider : DocumentsProvider() {
         row.add(
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             if (displayName.isEmpty()) "NAS Drive"
-            else try { java.net.URLDecoder.decode(displayName, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { displayName }
+            else try { java.net.URLDecoder.decode(displayName, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasDocumentProvider", "URL decode displayName failed: ${e.message}"); displayName }
         )
 
         var flags = 0
@@ -354,17 +355,17 @@ class NasDocumentProvider : DocumentsProvider() {
                                     syncRequest
                                 )
                             } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
-                            catch (_: Exception) {}
+                            catch (e3: Exception) { SystemLogger.log("WARNING", "NasDocumentProvider", "Enqueue sync work failed: ${e3.message}") }
                             // Ghi vào SystemLog để dev thấy trong UI + ADB log
                             try { com.nas.naswebdav.utils.SystemLogger.log("ERROR", "NasDocProvider",
                                 "Upload thất bại: ${targetId.substringAfterLast('/')} → ${e.message} (file=${tempFile.absolutePath})") }
                             catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
-                            catch (_: Exception) {}
+                            catch (e: Exception) { SystemLogger.log("WARNING", "NasDocumentProvider", "SystemLogger.log upload failure failed: ${e.message}") }
                             // Notification chỉ gửi nếu permission đã cấp (API 33+);
                             // thiếu permission thì skip silently — user vẫn thấy trong System Logs.
                             try { notifyUploadFailure(tempFile.name) }
                             catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
-                            catch (_: Exception) {}
+                            catch (e: Exception) { SystemLogger.log("WARNING", "NasDocumentProvider", "notifyUploadFailure failed: ${e.message}") }
                             false
                         }
                         if (uploadSuccess) {
@@ -396,12 +397,12 @@ class NasDocumentProvider : DocumentsProvider() {
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {
-                            try { writeFd.closeWithError("Lỗi kết nối NAS: ${response.code}") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                            try { writeFd.closeWithError("Lỗi kết nối NAS: ${response.code}") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasDocumentProvider", "closeWithError connection failed: ${e.message}") }
                             return@launch
                         }
                         val body = response.body
                         if (body == null) {
-                            try { writeFd.closeWithError("Phản hồi từ NAS bị rỗng") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                            try { writeFd.closeWithError("Phản hồi từ NAS bị rỗng") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "NasDocumentProvider", "closeWithError empty body failed: ${e.message}") }
                             return@launch
                         }
                         ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { fos ->

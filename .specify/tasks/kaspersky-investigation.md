@@ -60,6 +60,45 @@ or source/database replacement is authorized at this point.
 
 ## Remaining
 
+## 2026-11-15 current verification
+
+Latest exact-source scan after deployment/performance fixes:
+SHA256 f80f5beae1ad0c44be3a794eecefd4138b882558f145e625f05e7541f3460319,
+processed 1, detected 1, OK 0, same HEUR:Trojan-Spy.Python.Stealer.gen verdict.
+Report: security-review/kaspersky-deployed-f80-20261115.txt. CLI exit code 0
+does not mean a clean verdict. The user subsequently directed proceeding after
+the warning was disclosed; live backend now has this hash. No AV-clean claim.
+
+- NAS current candidate before the new security fix was
+  `392fbf4923ff93688e027f8420f124e846213928be4f704bdaa86b64b68175bd`.
+- Confirmed unsafe configuration-backup permissions with 3 red tests on NAS:
+  existing directory stayed 0755, archive symlinks were accepted, no exclusive
+  private archive helper existed. These archives include credentials/cookies.
+- Fixed the candidate using `.specify/patches/private-config-backups.py` and
+  `scripts/prepare_private_backup_hardening.py`: owner-only 0700 directory,
+  0600 archives from creation, tighten existing owned regular archives, reject
+  symlinks/hardlinks/foreign owners, exclusive no-follow creation and fsync.
+- All 3 direct NAS Python 3.5 tests passed. Independent source review confirmed
+  the fix; this is a real hardening issue, not a proven cause of the AV label.
+- New source SHA256:
+  `70c851db90691faa3571675dd460b2687015af5008c666cea75e8d2d31b49aa5`.
+  Same original PC path was used for a single exact-source verification scan.
+- Actual installed Kaspersky bases `2026-11-14 20:24:00`, exact-source scan:
+  processed 1, detected 1, OK 0, `HEUR:Trojan-Spy.Python.Stealer.gen`.
+  See `security-review/kaspersky-fixed-backend-20261115.txt`. An earlier scan
+  processed 0 because the source was missing; it is not evidence of cleanliness.
+- Exported report history contains detections against older backend/worktree
+  copies from 2026-10-22. Their hashes were not supplied, so historical equality
+  with current source and the exact heuristic trigger remain unestablished.
+- Inspected current flows: supplied Netscape cookie jars; localhost qBittorrent
+  SID; explicit configured rclone backup export. No confirmed browser-profile,
+  DPAPI or password harvesting found in these inspected paths. This limited
+  review does not certify absence of malware or establish a false positive.
+- Live NAS source remains unchanged at
+  `d5719f5d20aa2a1294a8d3bd4422c891627a159feed0acb84e451fdc5424f71d`.
+  No restart, actual user duplicate deletion, AV exclusion, protection change,
+  source obfuscation or external upload occurred.
+
 - Do not send proprietary backend source outside the user's machines.
 - Verify Kaspersky verdict on the exact source revision before declaring the
   detection resolved. Never rename/encode/exclude the file to suppress detection.

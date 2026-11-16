@@ -1,0 +1,1 @@
+{"verified_duplicate_cleanup": "passed", "overwrite_cache_invalidation": "passed", "shared_catalogue": "passed", "authenticated_api": "passed", "user_files_modified": false, "namespace_exclusion": "passed", "webdav_upload_download": "passed", "native_hash_cache": "passed"}

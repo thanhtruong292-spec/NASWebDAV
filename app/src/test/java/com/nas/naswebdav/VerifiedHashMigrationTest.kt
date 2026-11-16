@@ -70,4 +70,62 @@ class VerifiedHashMigrationTest {
         }
     }
 
+    @Test fun `digest lookup indexes migrate without losing existing proofs`() {
+        val context=RuntimeEnvironment.getApplication()
+        val name="backup-hash-index-upgrade"
+        fun helper(version:Int)=FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context).name(name)
+                .callback(object:SupportSQLiteOpenHelper.Callback(version) {
+                    override fun onCreate(db:SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE verified_hash_cache(accountKey TEXT,path TEXT,contentLength INTEGER,version TEXT,sha256 TEXT,fileId TEXT)")
+                        db.execSQL("CREATE TABLE file_fingerprints(accountKey TEXT,contentHash TEXT,fileSize INTEGER)")
+                        db.execSQL("INSERT INTO verified_hash_cache VALUES('account','/keep',3,'version','digest','1:1')")
+                    }
+                    override fun onUpgrade(db:SupportSQLiteDatabase,oldVersion:Int,newVersion:Int) { MIGRATION_20_21.migrate(db) }
+                }).build())
+        helper(20).use {it.writableDatabase}
+        helper(21).use { upgraded ->
+            val db=upgraded.writableDatabase
+            db.query("SELECT path,sha256 FROM verified_hash_cache").use { cursor ->
+                assertEquals(1,cursor.count);cursor.moveToFirst();assertEquals("/keep",cursor.getString(0));assertEquals("digest",cursor.getString(1))
+            }
+            db.query("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('index_verified_hash_cache_accountKey_sha256_contentLength','index_file_fingerprints_accountKey_contentHash_fileSize')").use { cursor ->
+                cursor.moveToFirst();assertEquals(2,cursor.getInt(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test fun `catalogue receipt migration preserves existing metadata and hash proofs`() {
+        val context=RuntimeEnvironment.getApplication()
+        val name="catalogue-receipt-migration-test"
+        fun helper(version: Int)=FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context).name(name)
+                .callback(object: SupportSQLiteOpenHelper.Callback(version) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE existing_metadata(name TEXT)")
+                        db.execSQL("INSERT INTO existing_metadata VALUES('preserved')")
+                        db.execSQL("CREATE TABLE verified_hash_cache(accountKey TEXT,path TEXT,sha256 TEXT)")
+                        db.execSQL("INSERT INTO verified_hash_cache VALUES('owner','/keep','verified-digest')")
+                    }
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                        MIGRATION_21_22.migrate(db)
+                    }
+                }).build())
+        try {
+            helper(21).use {it.writableDatabase}
+            helper(22).use {
+                val db=it.writableDatabase
+                db.query("SELECT sha256 FROM verified_hash_cache WHERE path='/keep'").use { row ->
+                    row.moveToFirst();assertEquals("verified-digest",row.getString(0))
+                }
+                db.query("SELECT name FROM existing_metadata").use { row ->
+                    row.moveToFirst();assertEquals("preserved",row.getString(0))
+                }
+                db.query("SELECT COUNT(*) FROM catalogue_receipts").use { row ->
+                    row.moveToFirst();assertEquals(0,row.getInt(0))
+                }
+            }
+        } finally {context.deleteDatabase(name)}
+    }
 }

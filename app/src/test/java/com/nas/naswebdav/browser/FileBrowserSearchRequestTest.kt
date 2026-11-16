@@ -78,6 +78,31 @@ class FileBrowserSearchRequestTest {
     }
 
     @Test
+    fun `routine index refresh retries without recursive WebDAV discovery`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"success":true,"index_ready":false,"index_incomplete_reason":"scan_in_progress","results":[]}"""))
+        server.enqueue(MockResponse().setBody("""{"success":true,"index_ready":true,"results":[]}"""))
+        viewModel.searchGlobal("missing")
+        assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        awaitCondition { !viewModel.isSearchActive.value }
+        assertTrue(viewModel.searchResults.value.isEmpty())
+        assertEquals(2, server.requestCount)
+        coVerify(exactly = 0) { WebDavManager.listFiles(any(), any()) }
+    }
+
+    @Test
+    fun `empty unfinished first build stays partial without another crawl`() = runBlocking {
+        repeat(5) { server.enqueue(MockResponse().setBody("""{"success":true,"index_ready":false,"index_incomplete_reason":"scan_in_progress","results":[]}""")) }
+        val found = NasFile("needle.txt", base + "needle.txt", false, "text/plain", 3)
+        coEvery { WebDavManager.listFiles(any(), any()) } returns listOf(found)
+        viewModel.searchGlobal("needle")
+        assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        awaitCondition { !viewModel.isSearchActive.value }
+        assertTrue(viewModel.searchResults.value.isEmpty())
+        assertTrue(viewModel.searchCatalogueIncomplete)
+        coVerify(exactly = 0) { WebDavManager.listFiles(any(), any()) }
+    }
+
+    @Test
     fun `old server empty reply still uses the discovery fallback`() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"success":true,"results":[]}"""))
         val found = NasFile("needle.txt", base + "needle.txt", false, "text/plain", 3)
@@ -90,7 +115,7 @@ class FileBrowserSearchRequestTest {
     }
 
     @Test
-    fun `partial index matches stay visible and discovery adds missing matches`() = runBlocking {
+    fun `partial index matches stay visible without discovery`() = runBlocking {
         server.enqueue(MockResponse().setBody(
             """{"success":true,"index_ready":false,"results":[{"name":"needle-indexed.txt","path":"${base}needle-indexed.txt","isDirectory":false}]}"""))
         val discovered = NasFile("needle-new.txt", base + "needle-new.txt", false, "text/plain", 3)
@@ -98,9 +123,10 @@ class FileBrowserSearchRequestTest {
         viewModel.searchGlobal("needle")
         assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
         awaitCondition { !viewModel.isSearchActive.value }
-        assertEquals(setOf("needle-indexed.txt", "needle-new.txt"),
+        assertTrue(viewModel.searchCatalogueIncomplete)
+        assertEquals(setOf("needle-indexed.txt"),
             viewModel.searchResults.value.map { it.name }.toSet())
-        coVerify(exactly = 1) { WebDavManager.listFiles(base, any()) }
+        coVerify(exactly = 0) { WebDavManager.listFiles(any(), any()) }
     }
 
     @Test

@@ -1,0 +1,7 @@
+Python 3.5.3
+Traceback (most recent call last):
+  File "verify_nas_thermal_snapshot.py", line 61, in <module>
+    main()
+  File "verify_nas_thermal_snapshot.py", line 19, in main
+    assert digest == sys.argv[1].lower(), "Unexpected source snapshot"
+AssertionError: Unexpected source snapshot

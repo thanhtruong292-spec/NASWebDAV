@@ -21,8 +21,8 @@ class SharedStorageSummaryTests(unittest.TestCase):
                          _get_webdav_public_dir=lambda: root,
                          _index_scan_lock=threading.Lock())
             with sqlite3.connect(database) as conn:
-                conn.execute('CREATE TABLE index_state(id INTEGER,root TEXT,scanned_at REAL,ready INTEGER)')
-                conn.execute('INSERT INTO index_state VALUES(1,?,100,1)', (os.path.realpath(root),))
+                conn.execute('CREATE TABLE index_state(id INTEGER,root TEXT,scanned_at REAL,ready INTEGER,catalogue_revision INTEGER)')
+                conn.execute('INSERT INTO index_state VALUES(1,?,100,1,0)', (os.path.realpath(root),))
                 conn.execute('CREATE TABLE file_index(path TEXT PRIMARY KEY,name TEXT,is_dir INTEGER,size INTEGER)')
                 conn.executemany('INSERT INTO file_index VALUES(?,?,?,?)',
                                  [('a.JPG','a.JPG',0,10), ('sub/b.mp4','b.mp4',0,100), ('sub/','sub',1,0)])
@@ -35,9 +35,9 @@ class SharedStorageSummaryTests(unittest.TestCase):
             self.assertEqual(function(), first)  # reopened connection reuses durable snapshot
             with sqlite3.connect(database) as conn:
                 conn.execute('ALTER TABLE file_index ADD COLUMN mtime INTEGER DEFAULT 0')
-                revision = conn.execute('SELECT revision FROM storage_summary_revision').fetchone()[0]
                 conn.execute("INSERT OR REPLACE INTO file_index(path,name,is_dir,size,mtime) VALUES('a.JPG','a.JPG',0,10,99)")
-                self.assertEqual(revision,conn.execute('SELECT revision FROM storage_summary_revision').fetchone()[0])
+                conn.execute('UPDATE index_state SET catalogue_revision=1')
+                self.assertIsNone(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='storage_summary_revision'").fetchone())
             conn.close()
             with sqlite3.connect(database) as conn:
                 conn.execute("DELETE FROM file_index WHERE path='a.JPG'")
@@ -62,12 +62,14 @@ class SharedStorageSummaryTests(unittest.TestCase):
             self.assertEqual(len(jobs), 0)  # unchanged index never repeats aggregates merely due to age
             with sqlite3.connect(database) as conn:
                 conn.execute("INSERT INTO file_index(path,name,is_dir,size) VALUES('new.txt','new.txt',0,7)")
+                conn.execute('UPDATE index_state SET catalogue_revision=2')
             conn.close()
             self.assertEqual(function()['total_files'], 1)
             self.assertEqual(function()['total_files'], 1)
             self.assertEqual(len(jobs), 1)  # stale reads coalesce one background rebuild
             jobs[0]()
             self.assertEqual(function()['summary_updated_at'], 1000)
+            self.assertEqual(function()['total_files'], 2)
             self.assertEqual(len(jobs), 1)
 
 

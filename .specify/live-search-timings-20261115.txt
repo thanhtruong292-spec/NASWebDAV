@@ -1,0 +1,3 @@
+{"results": 295, "index_ready": false, "milliseconds": 12483.07}
+{"results": 295, "index_ready": false, "milliseconds": 2243.31}
+{"results": 295, "index_ready": false, "milliseconds": 1335.6}

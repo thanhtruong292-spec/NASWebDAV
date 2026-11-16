@@ -1,0 +1,6 @@
+2026-11-15T18:28:46+07:00
+THERMAL_SEQUENCE [False, True, True, False, False, False, False, True]
+serial_matches_config=True
+Device Model=TOSHIBA MG04ACA400N
+Model Family=Toshiba MG04ACA... Enterprise HDD
+temperature=40°C
