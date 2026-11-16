@@ -111,8 +111,9 @@ fun isTailscaleUrl(url: String): Boolean {
 }
 
 /** Stable LAN-first order for connection probes; preserve order within each route type. */
-internal fun prioritizeConnectionUrls(urls: List<String>): List<String> =
-    urls.filter { it.isNotBlank() }.distinct().sortedBy { isTailscaleUrl(it) }
+internal fun prioritizeConnectionUrls(urls: List<String>, preferredUrl: String? = null): List<String> =
+    urls.filter { it.isNotBlank() }.distinct()
+        .sortedWith(compareBy<String>({ isTailscaleUrl(it) }, { it != preferredUrl }))
 
 private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
 

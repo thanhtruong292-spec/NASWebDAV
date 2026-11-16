@@ -103,7 +103,7 @@ class AuthSessionViewModel(
                 var successUrl = ""
                 // Do not race candidate probes: their completion order is not route
                 // priority and used to let Tailscale overwrite a healthy LAN route.
-                val candidates = prioritizeConnectionUrls(urlList)
+                val candidates = prioritizeConnectionUrls(urlList, SecurePrefsHelper.getLastVerifiedUrl(NasApplication.instance))
                 for (activeUrl in candidates) {
                     val safeUrl = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
                     withContext(Dispatchers.Main) {
@@ -147,6 +147,7 @@ class AuthSessionViewModel(
 
                     WebDavManager.connect(successUrl, user, pass)
                     SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
+                    SecurePrefsHelper.rememberVerifiedUrl(NasApplication.instance, successUrl)
                     val safeHostLabel = safeUrlHost(successUrl).ifEmpty { "NAS" }
                     repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại $safeHostLabel")
 

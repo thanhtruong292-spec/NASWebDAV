@@ -39,7 +39,7 @@ class LanPerformanceProbeTest {
                     "${parsed.protocol}://${parsed.host}:${AppConfig.API_PORT}/api/ping", url,
                     WebDavManager.AuthState(user=user,pass=pass).authHeader)
                 emit("route_candidate", index, JSONObject().put("host",parsed.host)
-                    .put("port",parsed.port).put("reachable",reachable)
+                    .put("port",parsed.port).put("scheme",parsed.protocol).put("path",parsed.path).put("reachable",reachable)
                     .put("milliseconds",(SystemClock.elapsedRealtimeNanos()-start)/1_000_000.0))
             }
         }
@@ -54,6 +54,12 @@ class LanPerformanceProbeTest {
             assertTrue("No authenticated NAS route", baseUrl.isNotBlank())
             assertFalse("This probe measures LAN, not Tailscale", isTailscaleUrl(baseUrl))
             emit("connect", run, JSONObject().put("milliseconds", ms))
+        }
+        val transferPort=arguments.getString("transferPort")?.toIntOrNull()
+        if (transferPort != null) {
+            require(transferPort in 1024..65535)
+            val parsed=java.net.URL(baseUrl)
+            baseUrl=java.net.URL(parsed.protocol,parsed.host,transferPort,parsed.file).toString()
         }
         WebDavManager.connect(baseUrl, user, pass)
 
@@ -82,7 +88,7 @@ class LanPerformanceProbeTest {
                     assertEquals(source.length(), downloaded.length())
                     assertTrue("Downloaded bytes differ", expectedHash.contentEquals(digest(downloaded)))
                     emit("transfer", run, JSONObject()
-                        .put("bytes", source.length())
+                        .put("bytes", source.length()).put("webdav_port",java.net.URL(baseUrl).port)
                         .put("upload_mib_s", source.length() / 1_048_576.0 / uploadSeconds)
                         .put("download_mib_s", source.length() / 1_048_576.0 / downloadSeconds)
                         .put("configured_upload_limit_bytes_s", AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC))

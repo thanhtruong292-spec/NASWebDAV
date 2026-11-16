@@ -5,8 +5,22 @@ import kotlinx.coroutines.ensureActive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.nio.charset.Charsets
 
 private val fullDigestPattern = Regex("[0-9a-f]{64}")
+
+// Chỉ encode các byte non-ASCII (>= 0x80, ví dụ chữ tiếng Việt) sang %XX để
+// java.net.URI (chỉ chấp nhận ASCII) không ném IllegalArgumentException. ASCII
+// (bao gồm cả chuỗi đã %-encode sẵn) giữ nguyên -> không bị mã hóa kép.
+private fun encodeNonAscii(s: String): String {
+    val sb = StringBuilder()
+    for (byte in s.toByteArray(Charsets.UTF_8)) {
+        val b = byte.toInt() and 0xFF
+        if (b < 0x80) sb.append(byte.toChar())
+        else sb.append("%${b.toString(16).uppercase().padStart(2, '0')}")
+    }
+    return sb.toString()
+}
 
 internal fun reusableVerifiedHash(value: VerifiedHashCache?, account: String, path: String, size: Long, version: String, fileId: String): Boolean =
     value != null && account.isNotBlank() && version.isNotBlank() && fileId.isNotBlank() &&
@@ -14,8 +28,8 @@ internal fun reusableVerifiedHash(value: VerifiedHashCache?, account: String, pa
         value.version == version && value.fileId == fileId && fullDigestPattern.matches(value.sha256)
 
 internal fun relativeDuplicatePath(base: String, url: String): String? = runCatching {
-    val root = java.net.URI(base).normalize()
-    val target = java.net.URI(url).normalize()
+    val root = java.net.URI(encodeNonAscii(base)).normalize()
+    val target = java.net.URI(encodeNonAscii(url)).normalize()
     val prefix = root.path.trimEnd('/') + "/"
     if (root.scheme != target.scheme || root.host != target.host || root.port != target.port ||
         target.userInfo != null || target.query != null || target.fragment != null || !target.path.startsWith(prefix)) return null

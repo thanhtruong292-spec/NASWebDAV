@@ -145,4 +145,23 @@ class SmartNetworkReachabilityTest {
         assertNull(selected)
         assertEquals(listOf(lanUrl, tailscaleUrl), visited)
     }
+    @Test fun `verified LAN route is reprobed ahead of a stale saved alias`() = runBlocking {
+        val stale="https://nas.lan:8822/webdav/"
+        val good="http://nas.lan:8822/webdav/"
+        val visited=mutableListOf<String>()
+        val selected=selectFirstReachableConnectionUrl(listOf(stale,good),good) {
+            visited += it
+            it == good
+        }
+        assertEquals(good,selected)
+        assertEquals(listOf(good),visited)
+    }
+
+    @Test fun `preferred Tailscale never precedes LAN and unsaved preference is ignored`() {
+        val lan="http://nas.lan/webdav/"
+        val tail="http://100.90.135.102/webdav/"
+        assertEquals(listOf(lan,tail),prioritizeConnectionUrls(listOf(tail,lan),tail))
+        assertEquals(listOf(lan,tail),prioritizeConnectionUrls(listOf(tail,lan),"http://unsaved/"))
+    }
+
 }

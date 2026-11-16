@@ -241,10 +241,4 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             }
         }
     }
-
-    // FIX-AUDIT-D3: chuẩn hóa URL NAS về canonical path để khử alias endpoint
-    // (LAN vs Tailscale cùng trỏ 1 file vật lý). Chỉ dùng cho nội bộ worker này.
-    private fun canonicalNasPath(urlOrPath: String): String {
-        return canonicalDuplicatePath(urlOrPath).trimStart('/')
-    }
 }

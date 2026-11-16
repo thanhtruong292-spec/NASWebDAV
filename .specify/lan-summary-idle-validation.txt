@@ -1,4 +1,6 @@
-{"files": 454143, "initial_sql_ms": 21574.377059936523, "index_revision": 0}
-{"ms": 5.809545516967773, "aggregate_repeated": false, "idle_one_hour_run": 1}
-{"ms": 5.310297012329102, "aggregate_repeated": false, "idle_one_hour_run": 2}
-{"ms": 5.2661895751953125, "aggregate_repeated": false, "idle_one_hour_run": 3}
+{"files": 454143, "index_revision": 0, "first_cached_read_ms": 26.079177856445312}
+{"metadata_only_replace_avoids_recount": true}
+{"idle_one_hour_run": 1, "ms": 4.528522491455078, "aggregate_repeated": false}
+{"idle_one_hour_run": 2, "ms": 4.466772079467773, "aggregate_repeated": false}
+{"idle_one_hour_run": 3, "ms": 4.487752914428711, "aggregate_repeated": false}
+No syntax errors detected in /tmp/nas_namespace_guard.php

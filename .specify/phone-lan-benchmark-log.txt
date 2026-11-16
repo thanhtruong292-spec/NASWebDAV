@@ -5,3 +5,12 @@ I/NasLanBench(10732): {"milliseconds":2269.57453,"phase":"connect","run":3,"app_
 I/NasLanBench(10732): {"bytes":16777216,"upload_mib_s":20.698431923149123,"download_mib_s":18.76001664707597,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":1,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
 I/NasLanBench(10732): {"bytes":16777216,"upload_mib_s":20.656316820844943,"download_mib_s":29.411928093468195,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":2,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
 I/NasLanBench(10732): {"bytes":16777216,"upload_mib_s":23.44252398013431,"download_mib_s":30.937992221643476,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":3,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
+I/NasLanBench(17770): {"host":"192.168.100.254","port":8822,"reachable":false,"milliseconds":2045.54125,"phase":"route_candidate","run":1,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"host":"192.168.100.254","port":8822,"reachable":true,"milliseconds":154.44776,"phase":"route_candidate","run":2,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"host":"100.90.135.102","port":8822,"reachable":false,"milliseconds":4019.059946,"phase":"route_candidate","run":3,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"milliseconds":2379.255103,"phase":"connect","run":1,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"milliseconds":2296.140468,"phase":"connect","run":2,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"milliseconds":2423.482291,"phase":"connect","run":3,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"bytes":67108864,"upload_mib_s":9.402016526464477,"download_mib_s":15.220389272281139,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":1,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"bytes":67108864,"upload_mib_s":16.63421361912361,"download_mib_s":14.43567897260699,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":2,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}
+I/NasLanBench(17770): {"bytes":67108864,"upload_mib_s":12.355054716162877,"download_mib_s":14.174948611104758,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":3,"app_version":"1.0.129 (aa259d8 · 261114.1851)"}

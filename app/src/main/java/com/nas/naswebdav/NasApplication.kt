@@ -550,6 +550,7 @@ object SecurePrefsHelper {
     private const val KEY_URL = "nas_url"
     private const val KEY_URL_LIST = "nas_url_list"
     private const val KEY_TAILSCALE_URL = "tailscale_url"
+    private const val KEY_VERIFIED_URL = "last_verified_url"
     private const val KEY_USER = "nas_user"
     private const val KEY_PASS = "nas_pass"
     private const val SETTINGS_PREFS = "nas_prefs"
@@ -697,6 +698,15 @@ object SecurePrefsHelper {
     fun getSettingsPrefs(context: Context): SharedPreferences =
         context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
 
+    fun getLastVerifiedUrl(context: Context): String? =
+        getSecurePrefs(context).getString(KEY_VERIFIED_URL, null)
+
+    fun rememberVerifiedUrl(context: Context, url: String) {
+        if (url !in getUrlList(context)) return
+        val prefs = getSecurePrefs(context)
+        if (prefs.getString(KEY_VERIFIED_URL, null) != url) prefs.edit { putString(KEY_VERIFIED_URL, url) }
+    }
+
     fun getTailscaleBaseUrl(context: Context): String {
         return getSecurePrefs(context).getString(KEY_TAILSCALE_URL, "") ?: ""
     }
@@ -801,7 +811,9 @@ object SmartNetworkManager {
 
                     val user = SecurePrefsHelper.getUser(context)
                     val pass = SecurePrefsHelper.getPass(context)
-                    val bestResult = selectFirstReachableConnectionUrl(urlList) { url ->
+                    val preferredUrl = synchronized(this) { cachedActiveUrl.takeIf { lastPingResult } }
+                        ?: SecurePrefsHelper.getLastVerifiedUrl(context)
+                    val bestResult = selectFirstReachableConnectionUrl(urlList, preferredUrl) { url ->
                         checkNasReachabilityQuickly(url, user, pass)
                     }
                     if (probeGeneration != networkGeneration.get()) continue
@@ -816,6 +828,7 @@ object SmartNetworkManager {
                         }
                         if (!cacheUpdated) continue
 
+                        SecurePrefsHelper.rememberVerifiedUrl(context, bestResult)
                         android.util.Log.i(TAG, "✅ Chọn mạng tốt nhất: $bestResult")
                         result = bestResult
                         continue
@@ -903,9 +916,10 @@ object SmartNetworkManager {
 /** Probe LAN candidates in their saved order, then Tailscale only if LAN fails. */
 internal suspend fun selectFirstReachableConnectionUrl(
     urls: List<String>,
+    preferredUrl: String? = null,
     isReachable: suspend (String) -> Boolean
 ): String? {
-    for (url in prioritizeConnectionUrls(urls)) {
+    for (url in prioritizeConnectionUrls(urls, preferredUrl)) {
         if (isReachable(url)) return url
     }
     return null
