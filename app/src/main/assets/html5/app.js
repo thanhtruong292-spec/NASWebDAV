@@ -285,11 +285,13 @@
     });
     document.getElementById("filesCountBadge").textContent = fState.loading ? "..." : String(filtered.length);
     if (fState.loading && filtered.length === 0) {
-      container.innerHTML = '<div class="card"><div class="list-sub">Đang tải danh sách tệp từ NAS...</div></div>';
+      container.className = "files-center-state";
+      container.innerHTML = '<div class="ux-spinner"></div><div style="font-size:13px;color:var(--ux-text-2);font-weight:600;">Đang tải danh sách tệp từ NAS...</div>';
       return;
     }
     if (filtered.length === 0) {
-      container.innerHTML = '<div class="card"><div class="list-sub">Không có tệp nào phù hợp.</div></div>';
+      container.className = "files-center-state";
+      container.innerHTML = '<div style="font-size:13px;color:var(--ux-text-2);">Không có tệp nào phù hợp.</div>';
       return;
     }
 
