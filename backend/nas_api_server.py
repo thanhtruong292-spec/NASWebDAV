@@ -4296,7 +4296,6 @@ def _scan_photos_lightweight():
 
         conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         try:
-            conn.execute("BEGIN")
             state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
             if (not state or state[0] != root_real or not state[2] or
                     time.time() - float(state[4] or 0) > FILE_INDEX_FRESHNESS_SECONDS or _index_scan_lock.locked()):
@@ -4304,11 +4303,11 @@ def _scan_photos_lightweight():
                 # Lay lai state sau khi refresh
                 state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
                 if not state or state[0] != root_real or not state[2]:
-                    conn.rollback()
                     log.error("[AI Scan] Catalogue chua san sang (root=%s)", root)
                     with _alert_state_lock:
                         _alert_states["ai_scan_running"] = False
                     return False
+            conn.execute("BEGIN")
             catalogue_revision = state[3] or 0
 
             # Doc tat ca anh tu file_index (da duoc index boi file_index daemon).
@@ -14899,28 +14898,23 @@ def api_thumb_status():
         # --- actual_status: tieng viet ro rang, phan biet scan_cursor/scan_total ---
         # Luu luon so lieu gan nhat (khong tra total_media=0, generated=0 khi paused).
         conn = None
+        state_row = None
+        scan_total = int(data.get("total_media") or 0)
         try:
             conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
             state_row = conn.execute(
                 "SELECT root,ready,incomplete_reason,catalogue_revision,scanned_at,built FROM index_state WHERE id=1"
             ).fetchone()
+            cnt = conn.execute("SELECT count(*) FROM file_index WHERE is_dir=0").fetchone()
+            if cnt is not None:
+                scan_total = int(cnt[0] or 0)
         except sqlite3.Error:
-            state_row = None
+            pass
         finally:
             if conn is not None:
                 conn.close()
 
-        scan_total = 0
         scan_cursor = ""
-        try:
-            conn2 = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
-            try:
-                cnt = conn2.execute("SELECT count(*) FROM file_index WHERE is_dir=0").fetchone()
-                scan_total = int(cnt[0] if cnt else 0)
-            finally:
-                conn2.close()
-        except sqlite3.Error:
-            scan_total = int(data.get("total_media") or 0)
 
         if state_row:
             # state_row[5] = built (so nguyen), khong phai con trow file.
@@ -17392,6 +17386,7 @@ _TIKTOK_COOKIES_CHECK_INTERVAL = 600  # 10 phut moi lan goi mang den TikTok
 _TIKTOK_COOKIES_EXPIRY_WARN_SEC = 3 * 86400  # báo trước 3 ngày khi sắp hết hạn
 
 _COOKIE_ACCESS_AUDIT_LOG = os.path.join(SYSTEM_DB_DIR, "cookie_access.audit.log")
+_cookie_audit_lock = threading.Lock()
 
 _COOKIE_ALLOWED_DIRS = None  # duoc cap nhat lan dau trong _ensure_cookie_guard()
 
@@ -17457,16 +17452,17 @@ def _audit_cookie_access(action, path, ok, reason=""):
     """Ghi nhat ky tien trinh truy cap cookie file de phat hien tam can (stealer-like behavior)."""
     try:
         log_dir = os.path.dirname(_COOKIE_ACCESS_AUDIT_LOG)
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-        with open(_COOKIE_ACCESS_AUDIT_LOG, "a", encoding="utf-8") as f:
-            f.write("%s\t%s\t%s\t%s\t%s\n" % (
-                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                action,
-                path or "",
-                "OK" if ok else "DENY",
-                reason,
-            ))
+        with _cookie_audit_lock:
+            if log_dir and not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+            with open(_COOKIE_ACCESS_AUDIT_LOG, "a", encoding="utf-8") as f:
+                f.write("%s\t%s\t%s\t%s\t%s\n" % (
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                    action,
+                    path or "",
+                    "OK" if ok else "DENY",
+                    reason,
+                ))
     except Exception:
         pass
 

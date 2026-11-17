@@ -409,8 +409,9 @@ class SmartToolsViewModel(
                         val actualMissing = obj.optInt("actual_missing",
                             if (actualTotal > actualGenerated) actualTotal - actualGenerated else 0)
                         // tien trinh quet nen (con tro quet), duoc liet ke roi bo qua neu da co thumb
-                        val scanProgress = obj.optInt("scan_cursor", 0)
-                        val scanTotal = obj.optInt("scan_total", 0)
+                        val workObj = obj.optJSONObject("work")
+                        val scanProgress = workObj?.optInt("completed", 0) ?: obj.optInt("scan_cursor", 0)
+                        val scanTotal = obj.optInt("scan_total", workObj?.optInt("total", 0) ?: 0)
                         val actualStatus = obj.optString("actual_status", "")
                         _thumbnailAudit.value = ThumbnailAuditData(
                             total = actualTotal,
