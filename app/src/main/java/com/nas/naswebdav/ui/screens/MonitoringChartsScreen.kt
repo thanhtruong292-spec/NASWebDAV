@@ -61,13 +61,13 @@ private fun percentStatusColor(latest: Float): Color = when {
 private fun cpuTempStatusColor(v: Float): Color = when {
     v >= 80f -> _StatusRed
     v >= 60f -> _StatusYellow
-    else -> AccentRed
+    else -> _StatusGreen
 }
 
 private fun hddTempStatusColor(v: Float): Color = when {
     v >= 55f -> _StatusRed
     v >= 45f -> _StatusYellow
-    else -> AccentCyan
+    else -> _StatusGreen
 }
 
 private fun cpuPercentStatusColor(v: Float): Color = when {
@@ -406,13 +406,14 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 val displayIdx = if (touchedIndex in history.indices) touchedIndex else history.size - 1
                 series.forEach { s ->
                     val currentVal = if (displayIdx in s.values.indices) s.values[displayIdx] else 0f
+                    val displayColor = s.colorOf?.invoke(currentVal) ?: s.color
                     val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
                     val valStr = "${fmt.format(currentVal)}${s.unit}"
                     val styleLabel = if (s.isDashed) "- - - " else "━━ "
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(styleLabel, fontSize = 12.sp, color = s.color, fontWeight = FontWeight.Black)
-                        Icon(s.icon, null, tint = s.color, modifier = Modifier.size(13.dp))
-                        Text("${s.label}: $valStr", fontSize = 12.sp, color = s.color, fontWeight = FontWeight.Bold)
+                        Text(styleLabel, fontSize = 12.sp, color = displayColor, fontWeight = FontWeight.Black)
+                        Icon(s.icon, null, tint = displayColor, modifier = Modifier.size(13.dp))
+                        Text("${s.label}: $valStr", fontSize = 12.sp, color = displayColor, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -592,12 +593,20 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             path = segPath,
                             color = cMid,
                             style = androidx.compose.ui.graphics.drawscope.Stroke(
-                                width = 0.5f * density,
+                                width = 1.2f * density,
                                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
                                 join = androidx.compose.ui.graphics.StrokeJoin.Round,
                                 pathEffect = dashEffect
                             )
                         )
+                    }
+
+                    // Đánh dấu từng điểm màu theo nhiệt độ / trạng thái
+                    if (s.colorOf != null) {
+                        for (i in pts.indices) {
+                            val ptColor = colorFn(pts[i])
+                            drawCircle(ptColor, 2.0f * density, Offset(xOf(i), yOf(pts[i])))
+                        }
                     }
 
                     // Điểm mốc cuối cùng nếu ko chạm
@@ -648,9 +657,10 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             if (touchedIndex >= s.values.size) return@forEach
                             val v = s.values[touchedIndex]
                             val cy = (topPad + usableH) - ((v.coerceIn(minVal, maxVal) - minVal) / range) * usableH
+                            val ptColor = s.colorOf?.invoke(v) ?: s.color
 
-                            drawCircle(s.color.copy(alpha = 0.4f), 8f * density, Offset(cx, cy))
-                            drawCircle(s.color, 5f * density, Offset(cx, cy))
+                            drawCircle(ptColor.copy(alpha = 0.4f), 8f * density, Offset(cx, cy))
+                            drawCircle(ptColor, 5f * density, Offset(cx, cy))
                             drawCircle(TextPrimary, 2.5f * density, Offset(cx, cy))
 
                             val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
@@ -661,15 +671,14 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             val labelX = if (isLeft) cx - txtW/2 - 15f else cx + txtW/2 + 15f
                             val labelY = cy - 5f
 
-                            val bgC = s.color
-                            val bgColor = android.graphics.Color.argb(220, (bgC.red*255).toInt()/5, (bgC.green*255).toInt()/5, (bgC.blue*255).toInt()/5)
+                            val bgColor = android.graphics.Color.argb(220, (ptColor.red*255).toInt()/5, (ptColor.green*255).toInt()/5, (ptColor.blue*255).toInt()/5)
 
                             drawContext.canvas.nativeCanvas.drawRoundRect(
                                 android.graphics.RectF(labelX - txtW/2 - 12f, labelY - textPx - 8f, labelX + txtW/2 + 12f, labelY + 8f),
                                 12f, 12f, android.graphics.Paint().apply { color = bgColor }
                             )
 
-                            labelPaint.color = android.graphics.Color.argb(255, (s.color.red*255).toInt(), (s.color.green*255).toInt(), (s.color.blue*255).toInt())
+                            labelPaint.color = android.graphics.Color.argb(255, (ptColor.red*255).toInt(), (ptColor.green*255).toInt(), (ptColor.blue*255).toInt())
                             drawContext.canvas.nativeCanvas.drawText(label, labelX, labelY, labelPaint)
                         }
                     }
