@@ -56,6 +56,9 @@ fun NasHtmlDashboardScreen(
         sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
         deviceVM.fetchSmartData()
         smartToolsVM.fetchThumbnailAudit()
+        if (viewName == "dashboard" || viewName == "system") {
+            sysMonitorVM.fetchSystemProcesses(context)
+        }
     }
 
     // Periodic refresh while HTML5 UI is active
