@@ -12,6 +12,7 @@
   var COLOR_RED = "#ef5350";
   var COLOR_BLUE = "#38bdf8";
   var COLOR_ORANGE = "#fb923c";
+  var COLOR_PURPLE = "#a78bfa";
   var COLOR_PINK = "#f472b6";
 
   function bridge() {

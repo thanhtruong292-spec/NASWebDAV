@@ -36,6 +36,7 @@ fun NasHtmlDashboardScreen(
     val deviceVM = LocalDeviceManagementVM.current
     val smartToolsVM = LocalSmartToolsVM.current
     val autoBackupVM = LocalAutoBackupVM.current
+    val authVM = LocalAuthSessionVM.current
     val connStatus by SharedStateHolder.connectionStatus.collectAsState()
     val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
 
@@ -44,6 +45,7 @@ fun NasHtmlDashboardScreen(
 
     // Initial data fetch on screen mount
     LaunchedEffect(viewName) {
+        try { authVM.ensureSmartNetwork(context) } catch (_: Exception) {}
         sysMonitorVM.fetchStatusNow()
         sysMonitorVM.fetchStorageSummary()
         sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
@@ -55,7 +57,14 @@ fun NasHtmlDashboardScreen(
     LaunchedEffect(viewName, pageLoaded) {
         if (!pageLoaded) return@LaunchedEffect
         webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.setView('$viewName');", null)
+        var tick = 0
         while (isActive) {
+            if (tick % 2 == 0) {
+                sysMonitorVM.fetchStatusNow()
+            }
+            if (tick % 15 == 0) {
+                smartToolsVM.fetchThumbnailAudit()
+            }
             val payload = buildHtml5StateJson(
                 context = context,
                 sysMonitorVM = sysMonitorVM,
@@ -65,6 +74,7 @@ fun NasHtmlDashboardScreen(
                 connStatus = connStatus.message
             )
             webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.updateState($payload);", null)
+            tick++
             delay(2000L)
         }
     }
