@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>NASWebDAV Login</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body {
+      padding: 20px 16px 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .login-wrap { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
+    .login-hero { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
+    .login-brand { font-size: 11px; font-weight: 800; letter-spacing: 1.8px; color: var(--ux-cyan); }
+    .login-title { font-size: 24px; font-weight: 800; color: var(--ux-text); margin: 2px 0; }
+    .login-sub { font-size: 13px; color: var(--ux-text-2); }
+    .login-hero-ico {
+      width: 52px; height: 52px; border-radius: 50%; flex-shrink: 0;
+      background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.28);
+      display: flex; align-items: center; justify-content: center; color: var(--ux-cyan);
+    }
+    .field-label { display: block; font-size: 11.5px; font-weight: 700; color: var(--ux-text-2); margin-bottom: 5px; }
+    .input-wrap { position: relative; display: flex; align-items: center; }
+    .input-wrap .ux-input { margin: 0; padding-right: 40px; }
+    .input-action {
+      position: absolute; right: 6px; background: transparent; border: none; color: var(--ux-text-2);
+      width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    .ip-dropdown {
+      margin-top: 6px; background: #0b1222; border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 12px; overflow: hidden;
+    }
+    .ip-opt {
+      display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.08); cursor: pointer; font-size: 13px;
+    }
+    .ip-opt:last-child { border-bottom: none; }
+    .ping-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #64748b; }
+    .ping-dot.ok { background: var(--ux-green); }
+    .ping-dot.fail { background: var(--ux-red); }
+    .btn-connect {
+      width: 100%; height: 48px; border-radius: 14px; border: none; font-size: 15px; font-weight: 800;
+      color: #fff; background: linear-gradient(135deg, #0ea5e9, #2563eb); cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px;
+      transition: opacity 0.15s ease;
+    }
+    .btn-connect:disabled { opacity: 0.38; cursor: not-allowed; filter: grayscale(0.4); }
+    .btn-connect.loading { background: linear-gradient(135deg, #dc2626, #b91c1c); }
+    .btn-bio {
+      width: 100%; height: 46px; border-radius: 14px; background: rgba(167, 139, 250, 0.08);
+      border: 1.5px solid #a78bfa; color: #a78bfa; font-size: 13.5px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+    }
+    .emerg-row { display: flex; gap: 10px; }
+    .emerg-btn {
+      flex: 1; height: 44px; border-radius: 14px; background: rgba(15, 23, 42, 0.72);
+      font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
+    }
+    .emerg-btn.cyan { border: 1px solid var(--ux-cyan); color: var(--ux-cyan); }
+    .emerg-btn.orange { border: 1px solid var(--ux-orange); color: var(--ux-orange); }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-hero">
+      <div>
+        <div class="login-brand">NASWEB</div>
+        <div class="login-title">Kết nối máy chủ</div>
+        <div class="login-sub">Truy cập an toàn vào WebDAV của bạn</div>
+      </div>
+      <div class="login-hero-ico">
+        <svg class="svg-ico" style="width:28px;height:28px;" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><line x1="7" y1="7" x2="7.01" y2="7"/><line x1="7" y1="17" x2="7.01" y2="17"/></svg>
+      </div>
+    </div>
+
+    <div class="card" style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <div style="font-size:14px;font-weight:800;">Đường truyền & tài khoản</div>
+        <div style="font-size:11.5px;color:var(--ux-text-2);">Chọn máy chủ nhanh nhất</div>
+      </div>
+
+      <div>
+        <label class="field-label" for="ipInput">Địa chỉ IP / DDNS của NAS</label>
+        <div class="input-wrap">
+          <input class="ux-input" id="ipInput" type="text" placeholder="192.168.100.254" autocomplete="off" />
+          <button class="input-action" id="ipDropBtn" type="button" title="Danh sách máy chủ">▾</button>
+        </div>
+        <div class="ip-dropdown hidden" id="ipDropdown"></div>
+      </div>
+
+      <div>
+        <label class="field-label" for="userInput">Tên đăng nhập</label>
+        <input class="ux-input" style="margin:0;" id="userInput" type="text" placeholder="Nhập tên đăng nhập..." autocomplete="username" />
+      </div>
+
+      <div>
+        <label class="field-label" for="passInput">Mật khẩu</label>
+        <div class="input-wrap">
+          <input class="ux-input" id="passInput" type="password" placeholder="Nhập mật khẩu..." autocomplete="current-password" />
+          <button class="input-action" id="togglePassBtn" type="button" title="Hiện/ẩn mật khẩu">👁</button>
+        </div>
+      </div>
+
+      <button class="btn-connect" id="connectBtn" type="button" disabled>Kết nối NAS</button>
+    </div>
+
+    <button class="btn-bio hidden" id="bioBtn" type="button">Đăng nhập bằng vân tay</button>
+
+    <div style="text-align:center;font-size:11.5px;color:var(--ux-text-3);">Điều khiển từ xa (không cần đăng nhập)</div>
+    <div class="emerg-row">
+      <button class="emerg-btn cyan" id="wolBtn" type="button">⏻ Bật nguồn</button>
+      <button class="emerg-btn orange" id="rebootBtn" type="button">↻ Khởi động lại</button>
+    </div>
+    <div id="emergMsg" class="hidden" style="text-align:center;font-size:12px;font-weight:600;"></div>
+    <div id="versionLabel" style="text-align:center;font-size:11.5px;color:var(--ux-text-2);margin-top:4px;">Phiên bản --</div>
+  </div>
+
+  <!-- WoL Modal -->
+  <div class="ux-modal-backdrop hidden" id="wolModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:8px;">
+        <span class="card-title">BẬT NGUỒN NAS (WAKE-ON-LAN)</span>
+        <button class="zoom-btn" id="wolCloseBtn" type="button">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--ux-text-2);margin-bottom:8px;">Nhập địa chỉ MAC card mạng của NAS:</div>
+      <input class="ux-input" id="wolMacInput" type="text" placeholder="AA:BB:CC:DD:EE:FF" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn-pill" id="wolCancelBtn" type="button">Hủy</button>
+        <button class="btn-pill primary" id="wolSendBtn" type="button">Gửi gói WoL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reboot Confirm Modal -->
+  <div class="ux-modal-backdrop hidden" id="rebootModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:8px;">
+        <span class="card-title">KHỞI ĐỘNG LẠI NAS</span>
+        <button class="zoom-btn" id="rebootCloseBtn" type="button">✕</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--ux-text-2);margin-bottom:14px;">Bạn chắc chắn muốn gửi lệnh khởi động lại NAS ngay bây giờ?</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn-pill" id="rebootCancelBtn" type="button">Hủy</button>
+        <button class="btn-pill danger" id="rebootSendBtn" type="button">Khởi động lại</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    var st = { historyIps: [], pings: {}, isLoading: false, showBio: false, mac: "", emergMsg: "", emergErr: false, version: "" };
+    var initializedFields = false;
+    var ipEl = document.getElementById("ipInput");
+    var userEl = document.getElementById("userInput");
+    var passEl = document.getElementById("passInput");
+    var btnEl = document.getElementById("connectBtn");
+    var dropEl = document.getElementById("ipDropdown");
+
+    function bridge() { return window.NasLoginBridge || null; }
+
+    function syncConnectBtn() {
+      var loading = !!st.isLoading;
+      var ready = ipEl.value.trim().length > 0 && userEl.value.trim().length > 0 && passEl.value.trim().length > 0;
+      btnEl.disabled = !loading && !ready;
+      btnEl.classList.toggle("loading", loading);
+      btnEl.textContent = loading ? "Dừng đăng nhập" : "Kết nối NAS";
+    }
+
+    function renderDropdown() {
+      var ips = st.historyIps || [];
+      if (!ips.length) { dropEl.innerHTML = ""; return; }
+      var html = "";
+      ips.forEach(function (ip) {
+        var rtt = st.pings && st.pings[ip];
+        var dotCls = rtt > 0 ? "ok" : (rtt === -1 ? "fail" : "");
+        var rttTxt = rtt > 0 ? (rtt + "ms") : "";
+        html += '<div class="ip-opt" data-ip="' + ip.replace(/"/g, "&quot;") + '">' +
+          '<span class="ping-dot ' + dotCls + '"></span>' +
+          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ip.replace(/</g, "&lt;") + '</span>' +
+          (rttTxt ? '<span style="font-size:11px;color:var(--ux-text-3);">' + rttTxt + '</span>' : '') +
+          '<button type="button" data-delip="' + ip.replace(/"/g, "&quot;") + '" style="background:transparent;border:none;color:var(--ux-text-3);font-size:14px;padding:2px 6px;cursor:pointer;">✕</button>' +
+        '</div>';
+      });
+      dropEl.innerHTML = html;
+      dropEl.querySelectorAll("[data-ip]").forEach(function (row) {
+        row.addEventListener("click", function () {
+          ipEl.value = row.getAttribute("data-ip");
+          dropEl.classList.add("hidden");
+          syncConnectBtn();
+          if (bridge()) bridge().onFieldChange(ipEl.value, userEl.value, passEl.value);
+        });
+      });
+      dropEl.querySelectorAll("[data-delip]").forEach(function (del) {
+        del.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          if (bridge()) bridge().removeHistoryIp(del.getAttribute("data-delip"), userEl.value, passEl.value);
+        });
+      });
+    }
+
+    function onInputChanged() {
+      syncConnectBtn();
+      if (bridge()) bridge().onFieldChange(ipEl.value, userEl.value, passEl.value);
+    }
+    ipEl.addEventListener("input", onInputChanged);
+    userEl.addEventListener("input", onInputChanged);
+    passEl.addEventListener("input", onInputChanged);
+
+    document.getElementById("ipDropBtn").addEventListener("click", function () {
+      dropEl.classList.toggle("hidden");
+    });
+    document.getElementById("togglePassBtn").addEventListener("click", function () {
+      var isPwd = passEl.type === "password";
+      passEl.type = isPwd ? "text" : "password";
+    });
+    btnEl.addEventListener("click", function () {
+      if (!bridge()) return;
+      if (st.isLoading) bridge().cancelLogin();
+      else bridge().connect(ipEl.value.trim(), userEl.value.trim(), passEl.value.trim());
+    });
+    document.getElementById("bioBtn").addEventListener("click", function () {
+      if (bridge()) bridge().biometricLogin();
+    });
+    document.getElementById("wolBtn").addEventListener("click", function () {
+      document.getElementById("wolMacInput").value = st.mac || "";
+      document.getElementById("wolModal").classList.remove("hidden");
+    });
+    document.getElementById("wolCloseBtn").addEventListener("click", function () { document.getElementById("wolModal").classList.add("hidden"); });
+    document.getElementById("wolCancelBtn").addEventListener("click", function () { document.getElementById("wolModal").classList.add("hidden"); });
+    document.getElementById("wolSendBtn").addEventListener("click", function () {
+      var mac = document.getElementById("wolMacInput").value.trim();
+      if (!mac) return;
+      document.getElementById("wolModal").classList.add("hidden");
+      if (bridge()) bridge().sendWol(mac, ipEl.value.trim());
+    });
+    document.getElementById("rebootBtn").addEventListener("click", function () {
+      document.getElementById("rebootModal").classList.remove("hidden");
+    });
+    document.getElementById("rebootCloseBtn").addEventListener("click", function () { document.getElementById("rebootModal").classList.add("hidden"); });
+    document.getElementById("rebootCancelBtn").addEventListener("click", function () { document.getElementById("rebootModal").classList.add("hidden"); });
+    document.getElementById("rebootSendBtn").addEventListener("click", function () {
+      document.getElementById("rebootModal").classList.add("hidden");
+      if (bridge()) bridge().sendReboot(ipEl.value.trim(), userEl.value.trim(), passEl.value.trim());
+    });
+
+    window.NasLoginUI = {
+      updateState: function (newState) {
+        st = newState || st;
+        if (!initializedFields) {
+          initializedFields = true;
+          ipEl.value = st.ip || "";
+          userEl.value = st.user || "";
+          passEl.value = st.pass || "";
+        } else if (!ipEl.value && st.bestIp) {
+          ipEl.value = st.bestIp;
+        }
+        document.getElementById("bioBtn").classList.toggle("hidden", !st.showBio);
+        document.getElementById("versionLabel").textContent = "Phiên bản " + (st.version || "");
+        var emEl = document.getElementById("emergMsg");
+        if (st.emergMsg) {
+          emEl.textContent = st.emergMsg;
+          emEl.style.color = st.emergErr ? "var(--ux-red)" : "var(--ux-green)";
+          emEl.classList.remove("hidden");
+        } else {
+          emEl.classList.add("hidden");
+        }
+        renderDropdown();
+        syncConnectBtn();
+      }
+    };
+  })();
+  </script>
+</body>
+</html>

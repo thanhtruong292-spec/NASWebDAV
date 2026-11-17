@@ -155,7 +155,7 @@ fun NasNavHost(
         ) {
             // ── LOGIN ──────────────────────────────────────────────────
             composable(NasRoutes.LOGIN) {
-                LoginScreen {
+                com.nas.naswebdav.ui.html5.NasHtmlLoginScreen {
                     navController.navigate(NasRoutes.DASHBOARD) {
                         popUpTo(NasRoutes.LOGIN) { inclusive = true }
                     }
