@@ -328,11 +328,70 @@
     document.getElementById("smartModal").classList.remove("hidden");
   }
 
+  function parseSmartAttr(raw, attrName) {
+    if (!raw) return null;
+    var lines = String(raw).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].indexOf(attrName) >= 0) {
+        var parts = lines[i].trim().split(/\s+/);
+        var last = parts[parts.length - 1];
+        if (/^\d+$/.test(last)) return Number(last);
+      }
+    }
+    return null;
+  }
+
+  function parseSmartHeader(raw, key) {
+    if (!raw) return "";
+    var re = new RegExp(key + "\\s*:\\s*(.+)", "i");
+    var m = String(raw).match(re);
+    return m ? m[1].trim() : "";
+  }
+
   function renderSmartModal() {
     var sys = (state && state.system) || {};
-    document.getElementById("smartModalSummary").textContent =
-      (sys.smartStatus || "UNKNOWN") + " • " + (sys.hddTemp || "--") + " • " + (sys.diskCap || "--");
-    document.getElementById("smartModalLog").textContent = sys.smartRaw || "Đang tải nhật ký S.M.A.R.T...";
+    var raw = sys.smartRaw || "";
+    var status = String(sys.smartStatus || "UNKNOWN").toUpperCase();
+    var isOk = status.indexOf("PASSED") >= 0 || status === "OK";
+    var isFail = status.indexOf("FAILED") >= 0;
+    var statusBadgeColor = isFail ? COLOR_RED : (isOk ? COLOR_GREEN : COLOR_YELLOW);
+    var statusLabel = isOk ? "Khỏe mạnh (PASSED)" : (isFail ? "Cảnh báo lỗi (FAILED)" : status);
+
+    var model = parseSmartHeader(raw, "Device Model") || parseSmartHeader(raw, "Model Number") || "Ổ cứng NAS";
+    var hours = parseSmartAttr(raw, "Power_On_Hours");
+    var cycles = parseSmartAttr(raw, "Power_Cycle_Count");
+    var realloc = parseSmartAttr(raw, "Reallocated_Sector_Ct");
+    var pending = parseSmartAttr(raw, "Current_Pending_Sector");
+
+    var rows = [
+      ["Trạng thái", '<span style="color:' + statusBadgeColor + ';font-weight:800;">' + statusLabel + '</span>'],
+      ["Ổ đĩa", model],
+      ["Nhiệt độ hiện tại", sys.hddTemp || "--"],
+      ["Dung lượng đã dùng", (sys.diskCap || "--") + " (" + Number(sys.diskPercent || 0).toFixed(1) + "%)"]
+    ];
+    if (hours !== null) {
+      rows.push(["Thời gian hoạt động", hours.toLocaleString() + " giờ (~" + Math.floor(hours / 24) + " ngày)"]);
+    }
+    if (cycles !== null) {
+      rows.push(["Số lần khởi động", cycles.toLocaleString() + " lần"]);
+    }
+    if (realloc !== null || pending !== null) {
+      var bad = Number(realloc || 0) + Number(pending || 0);
+      var badTxt = bad === 0
+        ? '<span style="color:' + COLOR_GREEN + ';font-weight:700;">0 lỗi (An toàn)</span>'
+        : '<span style="color:' + COLOR_RED + ';font-weight:700;">' + bad + ' sector lỗi</span>';
+      rows.push(["Sector bad / chờ xử lý", badTxt]);
+    }
+
+    var html = "";
+    rows.forEach(function (r) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.1);border-radius:10px;font-size:12px;">' +
+        '<span style="color:var(--ux-text-2);">' + r[0] + '</span>' +
+        '<span style="font-weight:700;text-align:right;">' + r[1] + '</span>' +
+      '</div>';
+    });
+    document.getElementById("smartCleanSummary").innerHTML = html;
+    document.getElementById("smartModalLog").textContent = raw || "Chưa có nhật ký S.M.A.R.T.";
   }
 
   function openProcessModal(sortMode) {
@@ -643,6 +702,11 @@
     document.getElementById("procRefreshBtn").addEventListener("click", function () { callBridge("fetchProcesses"); showToast("Đang cập nhật tiến trình..."); });
     document.getElementById("procCloseBtn").addEventListener("click", function () { document.getElementById("processModal").classList.add("hidden"); });
     document.getElementById("smartCloseBtn").addEventListener("click", function () { document.getElementById("smartModal").classList.add("hidden"); });
+    document.getElementById("smartToggleRawBtn").addEventListener("click", function () {
+      var logEl = document.getElementById("smartModalLog");
+      var hidden = logEl.classList.toggle("hidden");
+      document.getElementById("smartToggleRawBtn").textContent = hidden ? "Xem thông số kỹ thuật chi tiết" : "Ẩn thông số kỹ thuật";
+    });
     document.querySelectorAll("[data-fan]").forEach(function (el) {
       el.addEventListener("click", function () {
         var mode = el.getAttribute("data-fan");
