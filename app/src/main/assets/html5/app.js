@@ -10,6 +10,7 @@
   var fileViewMode = "grid3"; // grid3 | grid6 | list
   var activeModalFile = null;
   var procSortBy = "cpu"; // cpu | mem
+  var smartTab = "summary"; // summary | raw
 
   var COLOR_GREEN = "#66bb6a";
   var COLOR_YELLOW = "#ffc400";
@@ -323,7 +324,8 @@
     });
   }
 
-  function openSmartModal() {
+  function openSmartModal(tab) {
+    smartTab = tab || "summary";
     renderSmartModal();
     document.getElementById("smartModal").classList.remove("hidden");
   }
@@ -349,6 +351,15 @@
   }
 
   function renderSmartModal() {
+    var sumBtn = document.getElementById("smartTabSummaryBtn");
+    var rawBtn = document.getElementById("smartTabRawBtn");
+    var sumEl = document.getElementById("smartCleanSummary");
+    var logEl = document.getElementById("smartModalLog");
+    if (sumBtn) sumBtn.classList.toggle("active", smartTab === "summary");
+    if (rawBtn) rawBtn.classList.toggle("active", smartTab === "raw");
+    if (sumEl) sumEl.classList.toggle("hidden", smartTab !== "summary");
+    if (logEl) logEl.classList.toggle("hidden", smartTab !== "raw");
+
     var sys = (state && state.system) || {};
     var raw = sys.smartRaw || "";
     var status = String(sys.smartStatus || "UNKNOWN").toUpperCase();
@@ -701,12 +712,10 @@
     document.getElementById("procSortMemBtn").addEventListener("click", function () { procSortBy = "mem"; renderProcesses(); });
     document.getElementById("procRefreshBtn").addEventListener("click", function () { callBridge("fetchProcesses"); showToast("Đang cập nhật tiến trình..."); });
     document.getElementById("procCloseBtn").addEventListener("click", function () { document.getElementById("processModal").classList.add("hidden"); });
+    document.getElementById("smartTabSummaryBtn").addEventListener("click", function () { smartTab = "summary"; renderSmartModal(); });
+    document.getElementById("smartTabRawBtn").addEventListener("click", function () { smartTab = "raw"; renderSmartModal(); });
+    document.getElementById("smartRefreshBtn").addEventListener("click", function () { callBridge("refreshStorage"); showToast("Đang cập nhật S.M.A.R.T..."); });
     document.getElementById("smartCloseBtn").addEventListener("click", function () { document.getElementById("smartModal").classList.add("hidden"); });
-    document.getElementById("smartToggleRawBtn").addEventListener("click", function () {
-      var logEl = document.getElementById("smartModalLog");
-      var hidden = logEl.classList.toggle("hidden");
-      document.getElementById("smartToggleRawBtn").textContent = hidden ? "Xem thông số kỹ thuật chi tiết" : "Ẩn thông số kỹ thuật";
-    });
     document.querySelectorAll("[data-fan]").forEach(function (el) {
       el.addEventListener("click", function () {
         var mode = el.getAttribute("data-fan");
