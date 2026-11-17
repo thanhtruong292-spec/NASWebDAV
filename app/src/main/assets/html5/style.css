@@ -777,7 +777,7 @@ body {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: 12px;
+  bottom: 60px;
   z-index: 120;
   background: #0f172a;
   border: 1px solid rgba(56, 189, 248, 0.35);
