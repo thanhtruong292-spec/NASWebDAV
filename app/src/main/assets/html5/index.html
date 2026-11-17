@@ -12,8 +12,8 @@
     <div class="brand">
       <div class="brand-icon">NAS</div>
       <div>
-        <div class="brand-name" id="topTitle">NAS WebDAV</div>
-        <div class="brand-sub" id="topSub">Đang kết nối...</div>
+        <div class="brand-name" id="topTitle">Trang chủ NAS</div>
+        <div class="brand-sub" id="topSub">Giám sát &amp; Thống kê WebDAV</div>
       </div>
     </div>
     <div class="badge" id="connBadge">
@@ -25,18 +25,34 @@
   <!-- VIEW: DASHBOARD -->
   <section id="view-dashboard">
     <div class="search-wrap">
+      <svg class="svg-ico" style="color:var(--ux-text-3);" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input id="searchInput" type="search" placeholder="Tìm kiếm tệp trên NAS..." />
       <button class="btn-pill primary" id="searchBtn">Tìm</button>
     </div>
 
     <div class="qa-grid">
-      <div class="qa-item" data-action="files"><div class="qa-ico">📁</div><div class="qa-lbl">Tệp</div></div>
-      <div class="qa-item" data-action="photos"><div class="qa-ico">🖼️</div><div class="qa-lbl">Ảnh mới</div></div>
-      <div class="qa-item" data-action="videos"><div class="qa-ico">🎬</div><div class="qa-lbl">Video mới</div></div>
-      <div class="qa-item" data-action="trash"><div class="qa-ico">🗑️</div><div class="qa-lbl">Thùng rác</div></div>
+      <div class="qa-item" data-action="files">
+        <div class="qa-ico-box" style="color:var(--ux-orange);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+        <div class="qa-lbl">Tệp</div>
+      </div>
+      <div class="qa-item" data-action="photos">
+        <div class="qa-ico-box" style="color:var(--ux-blue);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+        <div class="qa-lbl">Ảnh mới</div>
+      </div>
+      <div class="qa-item" data-action="videos">
+        <div class="qa-ico-box" style="color:var(--ux-purple);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg></div>
+        <div class="qa-lbl">Video mới</div>
+      </div>
+      <div class="qa-item" data-action="trash">
+        <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></div>
+        <div class="qa-lbl">Thùng rác</div>
+      </div>
     </div>
 
-    <button class="wide-btn" data-action="toolbox">⚙️ Công cụ &amp; Cài đặt</button>
+    <button class="wide-btn" data-action="toolbox">
+      <svg class="svg-ico" style="color:var(--ux-cyan);" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>Công cụ &amp; Cài đặt</span>
+    </button>
 
     <!-- Storage Card -->
     <div class="card">
@@ -44,12 +60,14 @@
         <span class="card-title">LƯU TRỮ • WebDAV đã quét</span>
         <div style="display:flex;align-items:center;gap:6px;">
           <span class="badge" id="storageFreshBadge">Đang tải...</span>
-          <button class="btn-icon" id="refreshStorageBtn" title="Làm mới">↻</button>
+          <button class="btn-icon" id="refreshStorageBtn" title="Làm mới">
+            <svg class="svg-ico" style="width:14px;height:14px;" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
         </div>
       </div>
       <div class="storage-head" id="storageSummaryLine">Đang đọc dữ liệu catalogue...</div>
       <div id="storageCategories"></div>
-      <div style="font-size:11px;font-weight:800;color:var(--text-3);margin:8px 0 4px;letter-spacing:0.8px;">FILE LỚN NHẤT</div>
+      <div style="font-size:10.5px;font-weight:800;color:var(--ux-text-3);margin:9px 0 4px;letter-spacing:0.9px;">FILE LỚN NHẤT</div>
       <div id="storageLargest"></div>
     </div>
 
@@ -61,25 +79,25 @@
       </div>
       <div class="gauge-grid">
         <div class="gauge" data-action="procCpu">
-          <div class="gauge-top">🖥️ CPU</div>
+          <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-green);" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/></svg>CPU</div>
           <div class="gauge-val" id="cpuVal">--</div>
           <div class="gauge-sub" id="cpuSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="cpuBar" style="width:0%"></div></div>
         </div>
         <div class="gauge" data-action="procMem">
-          <div class="gauge-top">💾 RAM</div>
+          <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-blue);" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>RAM</div>
           <div class="gauge-val" id="ramVal">--</div>
           <div class="gauge-sub" id="ramSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="ramBar" style="width:0%"></div></div>
         </div>
         <div class="gauge" data-action="diskProfile">
-          <div class="gauge-top">💽 Ổ CỨNG</div>
+          <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-orange);" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Ổ CỨNG</div>
           <div class="gauge-val" id="diskVal">--</div>
           <div class="gauge-sub" id="diskSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="diskBar" style="width:0%"></div></div>
         </div>
         <div class="gauge" data-action="smartDetails">
-          <div class="gauge-top">🛡️ S.M.A.R.T</div>
+          <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-green);" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>S.M.A.R.T</div>
           <div class="gauge-val" id="smartVal">--</div>
           <div class="gauge-sub" id="smartSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="smartBar" style="width:0%"></div></div>
@@ -88,8 +106,11 @@
 
       <div class="fan-row">
         <div>
-          <div style="font-size:12.5px;font-weight:700;">🌀 Quạt tản nhiệt</div>
-          <div style="font-size:11px;color:var(--text-2);" id="fanStatusText">--</div>
+          <div style="font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:6px;">
+            <svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-cyan);" viewBox="0 0 24 24"><path d="M12 12c0-3 2.5-5 5-5 2 0 3.5 1.5 3.5 3.5 0 2.5-2.5 3.5-5 3.5"/><path d="M12 12c3 0 5 2.5 5 5 0 2-1.5 3.5-3.5 3.5-2.5 0-3.5-2.5-3.5-5"/><path d="M12 12c0 3-2.5 5-5 5-2 0-3.5-1.5-3.5-3.5 0-2.5 2.5-3.5 5-3.5"/><path d="M12 12c-3 0-5-2.5-5-5 0-2 1.5-3.5 3.5-3.5 2.5 0 3.5 2.5 3.5 5"/></svg>
+            Quạt tản nhiệt
+          </div>
+          <div style="font-size:11px;color:var(--ux-text-2);" id="fanStatusText">--</div>
         </div>
         <div class="fan-modes">
           <button class="btn-pill" data-fan="off">Dừng</button>
@@ -126,7 +147,7 @@
       </div>
 
       <canvas id="metricsCanvas"></canvas>
-      <div style="text-align:right;font-size:11px;color:var(--text-3);margin-top:4px;" id="chartTimeFoot">--</div>
+      <div style="text-align:right;font-size:11px;color:var(--ux-text-3);margin-top:4px;" id="chartTimeFoot">--</div>
     </div>
   </section>
 
@@ -134,32 +155,32 @@
   <section id="view-apps" class="hidden">
     <div class="app-grid">
       <div class="app-tile" data-action="organizer">
-        <div style="font-size:22px;">✨</div>
+        <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg></div>
         <div class="app-tile-title">Phân loại Tệp AI</div>
         <div class="app-tile-sub">Sắp xếp ảnh/video thông minh</div>
       </div>
       <div class="app-tile" data-action="social">
-        <div style="font-size:22px;">⬇️</div>
+        <div class="qa-ico-box" style="color:var(--ux-pink);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
         <div class="app-tile-title">Tải Video MXH</div>
         <div class="app-tile-sub">TikTok, Douyin, YouTube, FB</div>
       </div>
       <div class="app-tile" data-action="guest">
-        <div style="font-size:22px;">🔑</div>
+        <div class="qa-ico-box" style="color:var(--ux-yellow);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></div>
         <div class="app-tile-title">Khách WebDAV</div>
         <div class="app-tile-sub">Cấp quyền truy cập tạm thời</div>
       </div>
       <div class="app-tile" data-action="screenRecord">
-        <div style="font-size:22px;">🎥</div>
+        <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></div>
         <div class="app-tile-title">Quay màn hình</div>
         <div class="app-tile-sub">Lưu trực tiếp lên NAS</div>
       </div>
       <div class="app-tile" data-action="files">
-        <div style="font-size:22px;">📂</div>
+        <div class="qa-ico-box" style="color:var(--ux-orange);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
         <div class="app-tile-title">Quản lý Tệp</div>
         <div class="app-tile-sub">Duyệt, phát video &amp; ảnh Native</div>
       </div>
       <div class="app-tile" data-action="performance">
-        <div style="font-size:22px;">⚡</div>
+        <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
         <div class="app-tile-title">Hiệu năng &amp; Mạng</div>
         <div class="app-tile-sub">Đo tốc độ LAN / Tailscale</div>
       </div>
@@ -174,7 +195,7 @@
         <span class="badge" id="thumbStatusBadge">--</span>
       </div>
       <div style="font-size:13px;font-weight:700;margin-bottom:6px;" id="thumbDetailText">Đang tải trạng thái...</div>
-      <div class="bar-track" style="margin-bottom:10px;"><div class="bar-fill" id="thumbBar" style="width:0%;background:var(--cyan);"></div></div>
+      <div class="bar-track" style="margin-bottom:10px;"><div class="bar-fill" id="thumbBar" style="width:0%;background:var(--ux-cyan);"></div></div>
       <div style="display:flex;gap:8px;">
         <button class="btn-pill primary" data-thumb="scan">Quét ngay</button>
         <button class="btn-pill" data-thumb="resume">Tiếp tục</button>
@@ -217,25 +238,25 @@
         <span class="card-title">PHIÊN ĐĂNG NHẬP</span>
       </div>
       <div style="font-size:14px;font-weight:800;" id="moreUser">--</div>
-      <div style="font-size:12px;color:var(--text-2);margin-top:2px;" id="moreUrl">--</div>
+      <div style="font-size:12px;color:var(--ux-text-2);margin-top:2px;" id="moreUrl">--</div>
     </div>
 
     <div class="card">
       <div class="list-item" data-action="performance">
-        <div><div class="list-title">⚡ Hiệu năng ứng dụng</div><div class="list-sub">Độ trễ, tốc độ truyền tải</div></div>
-        <span>▸</span>
+        <div><div class="list-title">Hiệu năng ứng dụng</div><div class="list-sub">Độ trễ, tốc độ truyền tải</div></div>
+        <span class="badge">▸</span>
       </div>
       <div class="list-item" data-action="appSettings">
-        <div><div class="list-title">⚙️ Cài đặt ứng dụng Android</div><div class="list-sub">Quyền lưu trữ, pin, thông báo</div></div>
-        <span>▸</span>
+        <div><div class="list-title">Cài đặt ứng dụng Android</div><div class="list-sub">Quyền lưu trữ, pin, thông báo</div></div>
+        <span class="badge">▸</span>
       </div>
       <div class="list-item" data-action="about">
-        <div><div class="list-title">ℹ️ Giới thiệu phiên bản</div><div class="list-sub" id="moreVersion">--</div></div>
-        <span>▸</span>
+        <div><div class="list-title">Giới thiệu phiên bản</div><div class="list-sub" id="moreVersion">--</div></div>
+        <span class="badge">▸</span>
       </div>
       <div class="list-item" data-action="logout">
-        <div><div class="list-title" style="color:var(--red);">🚪 Đăng xuất</div><div class="list-sub">Xóa phiên hiện tại và quay lại màn hình đăng nhập</div></div>
-        <span>▸</span>
+        <div><div class="list-title" style="color:var(--ux-red);">Đăng xuất</div><div class="list-sub">Xóa phiên hiện tại và quay lại màn hình đăng nhập</div></div>
+        <span class="badge" style="color:var(--ux-red);">▸</span>
       </div>
     </div>
   </section>

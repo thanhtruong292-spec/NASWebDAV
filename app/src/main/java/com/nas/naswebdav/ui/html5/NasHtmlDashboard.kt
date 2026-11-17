@@ -14,8 +14,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.nas.naswebdav.*
 import com.nas.naswebdav.shared.SharedStateHolder
 import com.nas.naswebdav.ui.screens.dashboardDiskMetric
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -46,7 +48,7 @@ fun NasHtmlDashboardScreen(
     // Initial data fetch on screen mount
     LaunchedEffect(viewName) {
         try { authVM.ensureSmartNetwork(context) } catch (_: Exception) {}
-        sysMonitorVM.fetchStatusNow()
+        withContext(Dispatchers.IO) { sysMonitorVM.fetchStatusNow() }
         sysMonitorVM.fetchStorageSummary()
         sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
         deviceVM.fetchSmartData()
@@ -60,7 +62,7 @@ fun NasHtmlDashboardScreen(
         var tick = 0
         while (isActive) {
             if (tick % 2 == 0) {
-                sysMonitorVM.fetchStatusNow()
+                withContext(Dispatchers.IO) { sysMonitorVM.fetchStatusNow() }
             }
             if (tick % 15 == 0) {
                 smartToolsVM.fetchThumbnailAudit()
