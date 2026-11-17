@@ -14452,6 +14452,7 @@ def _thumbnail_generator():
         while True:
             page = _thumbnail_catalogue_page(cursor_path, 512)
             if not page["ready"]:
+                yield (None, None, None)
                 break
             if page["root"] != os.path.realpath(base_dir) or page["revision"] != catalogue_revision:
                 raise RuntimeError("catalogue_changed")
@@ -14461,6 +14462,7 @@ def _thumbnail_generator():
             for rel_path, name in rows:
                 cursor_path = rel_path
                 if any(part.startswith(".") or part in ("_broken_quarantine",) for part in rel_path.split("/")):
+                    yield ("", "", rel_path)
                     continue
                 ext = os.path.splitext(name)[1].lower()
                 yield (os.path.join(base_dir, *rel_path.split("/")), ext, rel_path)
@@ -14592,6 +14594,12 @@ def _thumbnail_generator():
                 _thumb_stats["total_media"] = media_total
 
             for real_path, ext, rel_path in _scan_roots(after_path):
+                if real_path is None:
+                    with _thumb_stats_lock:
+                        _thumb_stats["running"] = False
+                        _thumb_stats["paused"] = True
+                    interrupted = True
+                    break
                 # Re-check gates each iteration — pause may flip mid-scan
                 if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
                     with _thumb_stats_lock:
@@ -14600,8 +14608,6 @@ def _thumbnail_generator():
                     log.info("[Thumbnail] Gate closed mid-scan — processed %d/%d so far.", total, _thumb_stats["total_media"])
                     interrupted = True
                     break
-                if ext not in MEDIA_ALL_EXTS:
-                    continue
                 total += 1
                 thumb_checkpoint_cursor = str(catalogue_revision) + "\n" + rel_path
                 thumb_completed = total
@@ -14610,6 +14616,8 @@ def _thumbnail_generator():
                         INDEX_DB_PATH, "thumbnail", thumb_lease["owner"], thumb_lease["token"],
                         thumb_checkpoint_cursor, min(total, media_total), media_total, state="running"):
                         raise RuntimeError("thumbnail_work_lease_lost")
+                if not real_path or ext not in MEDIA_ALL_EXTS:
+                    continue
 
                 # Skip formats the NAS cannot decode — never retry, never placeholder.
                 if ext in THUMB_UNSUPPORTED_EXTS:
