@@ -304,6 +304,34 @@
     </div>
   </div>
 
+  <!-- SYSTEM PROCESSES MODAL (CPU / RAM) -->
+  <div class="ux-modal-backdrop hidden" id="processModal">
+    <div class="ux-modal" style="max-width:420px;max-height:82vh;display:flex;flex-direction:column;">
+      <div class="card-header" style="margin-bottom:8px;">
+        <span class="card-title" id="procModalTitle">TIẾN TRÌNH CPU / RAM</span>
+        <div style="display:flex;gap:6px;">
+          <button class="zoom-btn" id="procSortCpuBtn">CPU</button>
+          <button class="zoom-btn" id="procSortMemBtn">RAM</button>
+          <button class="zoom-btn" id="procRefreshBtn">↻</button>
+          <button class="zoom-btn" id="procCloseBtn">✕</button>
+        </div>
+      </div>
+      <div id="procListContainer" style="overflow-y:auto;flex:1;max-height:62vh;"></div>
+    </div>
+  </div>
+
+  <!-- S.M.A.R.T MODAL -->
+  <div class="ux-modal-backdrop hidden" id="smartModal">
+    <div class="ux-modal" style="max-width:420px;max-height:80vh;display:flex;flex-direction:column;">
+      <div class="card-header" style="margin-bottom:8px;">
+        <span class="card-title">CHI TIẾT S.M.A.R.T &amp; Ổ CỨNG</span>
+        <button class="zoom-btn" id="smartCloseBtn">✕</button>
+      </div>
+      <div style="font-size:13px;font-weight:800;margin-bottom:6px;" id="smartModalSummary">--</div>
+      <pre id="smartModalLog" style="flex:1;overflow:auto;max-height:56vh;font-size:10.5px;color:var(--ux-text-2);background:rgba(8,13,26,0.9);padding:10px;border-radius:10px;white-space:pre-wrap;"></pre>
+    </div>
+  </div>
+
   <div class="ux-toast" id="uxToast"></div>
   <script src="app.js"></script>
 </body>

@@ -97,6 +97,7 @@ fun NasHtmlDashboardScreen(
         fileBrowserVM.currentUrl,
         fileBrowserVM.isLoading,
         fileSort,
+        sysMonitorVM.systemProcesses,
         thumbAudit,
         connStatus
     ) {
@@ -227,6 +228,16 @@ fun NasHtmlDashboardScreen(
                             fileBrowserVM.renameFile(context, item, newName)
                         }
                     }
+
+                    @JavascriptInterface
+                    fun fetchProcesses() {
+                        post { sysMonitorVM.fetchSystemProcesses(context) }
+                    }
+
+                    @JavascriptInterface
+                    fun killProcess(pid: Int) {
+                        post { sysMonitorVM.killSystemProcess(context, pid) }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -323,6 +334,7 @@ private fun buildHtml5StateJson(
         put("diskPercent", (diskMetric?.percent ?: 0f).toDouble())
         put("smartStatus", deviceVM.smartInfo.status.ifBlank { "UNKNOWN" })
         put("hddTemp", sys.temp.takeUnless { it.startsWith("--") } ?: deviceVM.smartInfo.temperature)
+        put("smartRaw", deviceVM.smartInfo.rawLog)
         put("fanStatus", sys.fanStatus)
         put("fanMode", sys.fanMode)
         put("omvInfo", "OpenMediaVault • ${sys.uptime}")
@@ -389,6 +401,19 @@ private fun buildHtml5StateJson(
         put("loading", fileBrowserVM.isLoading)
         put("items", fArr)
     })
+
+    val pArr = JSONArray()
+    sysMonitorVM.systemProcesses.forEach { p ->
+        pArr.put(JSONObject().apply {
+            put("pid", p.pid)
+            put("name", p.name)
+            put("user", p.user)
+            put("cpu", p.cpu.toDouble())
+            put("mem", p.mem.toDouble())
+            put("isSystem", p.isSystem)
+        })
+    }
+    root.put("processes", pArr)
 
     return root.toString()
 }

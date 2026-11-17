@@ -9,6 +9,7 @@
   var fileFilter = "all";
   var fileViewMode = "grid3"; // grid3 | grid6 | list
   var activeModalFile = null;
+  var procSortBy = "cpu"; // cpu | mem
 
   var COLOR_GREEN = "#66bb6a";
   var COLOR_YELLOW = "#ffc400";
@@ -217,6 +218,12 @@
     if (currentView === "files") {
       renderFiles();
     }
+    if (!document.getElementById("processModal").classList.contains("hidden")) {
+      renderProcesses();
+    }
+    if (!document.getElementById("smartModal").classList.contains("hidden")) {
+      renderSmartModal();
+    }
 
     // Range & tab UI
     document.querySelectorAll("[data-range]").forEach(function (btn) {
@@ -312,6 +319,62 @@
         ev.stopPropagation();
         var item = filtered[Number(btn.getAttribute("data-fmenu"))];
         if (item) openFileModal(item);
+      });
+    });
+  }
+
+  function openSmartModal() {
+    renderSmartModal();
+    document.getElementById("smartModal").classList.remove("hidden");
+  }
+
+  function renderSmartModal() {
+    var sys = (state && state.system) || {};
+    document.getElementById("smartModalSummary").textContent =
+      (sys.smartStatus || "UNKNOWN") + " • " + (sys.hddTemp || "--") + " • " + (sys.diskCap || "--");
+    document.getElementById("smartModalLog").textContent = sys.smartRaw || "Đang tải nhật ký S.M.A.R.T...";
+  }
+
+  function openProcessModal(sortMode) {
+    procSortBy = sortMode || "cpu";
+    callBridge("fetchProcesses");
+    renderProcesses();
+    document.getElementById("processModal").classList.remove("hidden");
+  }
+
+  function renderProcesses() {
+    var container = document.getElementById("procListContainer");
+    if (!container) return;
+    document.getElementById("procSortCpuBtn").classList.toggle("active", procSortBy === "cpu");
+    document.getElementById("procSortMemBtn").classList.toggle("active", procSortBy === "mem");
+    var procs = ((state && state.processes) || []).slice();
+    procs.sort(function (a, b) {
+      return procSortBy === "mem" ? (b.mem - a.mem) : (b.cpu - a.cpu);
+    });
+    if (procs.length === 0) {
+      container.innerHTML = '<div class="list-sub" style="padding:12px 0;">Đang tải danh sách tiến trình từ NAS...</div>';
+      return;
+    }
+    var html = "";
+    procs.slice(0, 40).forEach(function (p) {
+      var val = procSortBy === "mem" ? p.mem : p.cpu;
+      var c = pctColor(val);
+      html += '<div class="list-item" style="padding:8px 0;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div class="list-title" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+            String(p.name || "?").replace(/</g, "&lt;") +
+            ' <span style="color:var(--ux-text-3);font-size:10.5px;">#' + p.pid + ' (' + (p.user || '') + ')</span></div>' +
+          '<div class="list-sub" style="font-variant-numeric:tabular-nums;">CPU: <b style="color:' + pctColor(p.cpu) + '">' + Number(p.cpu || 0).toFixed(1) + '%</b> • RAM: <b style="color:' + pctColor(p.mem) + '">' + Number(p.mem || 0).toFixed(1) + '%</b></div>' +
+        '</div>' +
+        (!p.isSystem ? ('<button class="btn-pill danger" data-killpid="' + p.pid + '" style="padding:4px 8px;font-size:11px;">Dừng</button>') : '<span class="badge">Hệ thống</span>') +
+      '</div>';
+    });
+    container.innerHTML = html;
+    container.querySelectorAll("[data-killpid]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var pid = Number(btn.getAttribute("data-killpid"));
+        callBridge("killProcess", pid);
+        showToast("Đã gửi lệnh dừng PID " + pid);
       });
     });
   }
@@ -567,9 +630,19 @@
 
     document.querySelectorAll("[data-action]").forEach(function (el) {
       el.addEventListener("click", function () {
-        callBridge("action", el.getAttribute("data-action"));
+        var act = el.getAttribute("data-action");
+        if (act === "procCpu") openProcessModal("cpu");
+        else if (act === "procMem") openProcessModal("mem");
+        else if (act === "smartDetails" || act === "diskProfile") openSmartModal();
+        else callBridge("action", act);
       });
     });
+
+    document.getElementById("procSortCpuBtn").addEventListener("click", function () { procSortBy = "cpu"; renderProcesses(); });
+    document.getElementById("procSortMemBtn").addEventListener("click", function () { procSortBy = "mem"; renderProcesses(); });
+    document.getElementById("procRefreshBtn").addEventListener("click", function () { callBridge("fetchProcesses"); showToast("Đang cập nhật tiến trình..."); });
+    document.getElementById("procCloseBtn").addEventListener("click", function () { document.getElementById("processModal").classList.add("hidden"); });
+    document.getElementById("smartCloseBtn").addEventListener("click", function () { document.getElementById("smartModal").classList.add("hidden"); });
     document.querySelectorAll("[data-fan]").forEach(function (el) {
       el.addEventListener("click", function () {
         var mode = el.getAttribute("data-fan");
