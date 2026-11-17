@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>NAS WebDAV HTML5</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-icon">NAS</div>
+      <div>
+        <div class="brand-name" id="topTitle">NAS WebDAV</div>
+        <div class="brand-sub" id="topSub">Đang kết nối...</div>
+      </div>
+    </div>
+    <div class="badge" id="connBadge">
+      <span class="dot" id="connDot"></span>
+      <span id="connText">LAN</span>
+    </div>
+  </div>
+
+  <!-- VIEW: DASHBOARD -->
+  <section id="view-dashboard">
+    <div class="search-wrap">
+      <input id="searchInput" type="search" placeholder="Tìm kiếm tệp trên NAS..." />
+      <button class="btn-pill primary" id="searchBtn">Tìm</button>
+    </div>
+
+    <div class="qa-grid">
+      <div class="qa-item" data-action="files"><div class="qa-ico">📁</div><div class="qa-lbl">Tệp</div></div>
+      <div class="qa-item" data-action="photos"><div class="qa-ico">🖼️</div><div class="qa-lbl">Ảnh mới</div></div>
+      <div class="qa-item" data-action="videos"><div class="qa-ico">🎬</div><div class="qa-lbl">Video mới</div></div>
+      <div class="qa-item" data-action="trash"><div class="qa-ico">🗑️</div><div class="qa-lbl">Thùng rác</div></div>
+    </div>
+
+    <button class="wide-btn" data-action="toolbox">⚙️ Công cụ &amp; Cài đặt</button>
+
+    <!-- Storage Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">LƯU TRỮ • WebDAV đã quét</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="badge" id="storageFreshBadge">Đang tải...</span>
+          <button class="btn-icon" id="refreshStorageBtn" title="Làm mới">↻</button>
+        </div>
+      </div>
+      <div class="storage-head" id="storageSummaryLine">Đang đọc dữ liệu catalogue...</div>
+      <div id="storageCategories"></div>
+      <div style="font-size:11px;font-weight:800;color:var(--text-3);margin:8px 0 4px;letter-spacing:0.8px;">FILE LỚN NHẤT</div>
+      <div id="storageLargest"></div>
+    </div>
+
+    <!-- System 2x2 Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">HỆ THỐNG</span>
+        <span class="badge"><span class="dot" id="sysDot"></span><span id="sysUpdated">Vừa cập nhật</span></span>
+      </div>
+      <div class="gauge-grid">
+        <div class="gauge" data-action="procCpu">
+          <div class="gauge-top">🖥️ CPU</div>
+          <div class="gauge-val" id="cpuVal">--</div>
+          <div class="gauge-sub" id="cpuSub">--</div>
+          <div class="bar-track"><div class="bar-fill" id="cpuBar" style="width:0%"></div></div>
+        </div>
+        <div class="gauge" data-action="procMem">
+          <div class="gauge-top">💾 RAM</div>
+          <div class="gauge-val" id="ramVal">--</div>
+          <div class="gauge-sub" id="ramSub">--</div>
+          <div class="bar-track"><div class="bar-fill" id="ramBar" style="width:0%"></div></div>
+        </div>
+        <div class="gauge" data-action="diskProfile">
+          <div class="gauge-top">💽 Ổ CỨNG</div>
+          <div class="gauge-val" id="diskVal">--</div>
+          <div class="gauge-sub" id="diskSub">--</div>
+          <div class="bar-track"><div class="bar-fill" id="diskBar" style="width:0%"></div></div>
+        </div>
+        <div class="gauge" data-action="smartDetails">
+          <div class="gauge-top">🛡️ S.M.A.R.T</div>
+          <div class="gauge-val" id="smartVal">--</div>
+          <div class="gauge-sub" id="smartSub">--</div>
+          <div class="bar-track"><div class="bar-fill" id="smartBar" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <div class="fan-row">
+        <div>
+          <div style="font-size:12.5px;font-weight:700;">🌀 Quạt tản nhiệt</div>
+          <div style="font-size:11px;color:var(--text-2);" id="fanStatusText">--</div>
+        </div>
+        <div class="fan-modes">
+          <button class="btn-pill" data-fan="off">Dừng</button>
+          <button class="btn-pill" data-fan="auto">Tự động</button>
+          <button class="btn-pill" data-fan="custom">Tùy chỉnh</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Monitoring Chart Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">GIÁM SÁT</span>
+        <div style="display:flex;gap:4px;">
+          <button class="zoom-btn" data-range="1">1h</button>
+          <button class="zoom-btn" data-range="6">6h</button>
+          <button class="zoom-btn" data-range="24">24h</button>
+        </div>
+      </div>
+
+      <div class="seg-tabs">
+        <button class="seg-btn active" data-chart-tab="0">Nhiệt độ</button>
+        <button class="seg-btn" data-chart-tab="1">Tài nguyên</button>
+        <button class="seg-btn" data-chart-tab="2">Mạng</button>
+      </div>
+
+      <div class="chart-toolbar">
+        <div class="chart-legend" id="chartLegend"></div>
+        <div class="zoom-ctrl">
+          <button class="zoom-btn" id="zoomOutBtn">−</button>
+          <button class="zoom-btn" id="zoomResetBtn">1.0x</button>
+          <button class="zoom-btn" id="zoomInBtn">+</button>
+        </div>
+      </div>
+
+      <canvas id="metricsCanvas"></canvas>
+      <div style="text-align:right;font-size:11px;color:var(--text-3);margin-top:4px;" id="chartTimeFoot">--</div>
+    </div>
+  </section>
+
+  <!-- VIEW: APPS -->
+  <section id="view-apps" class="hidden">
+    <div class="app-grid">
+      <div class="app-tile" data-action="organizer">
+        <div style="font-size:22px;">✨</div>
+        <div class="app-tile-title">Phân loại Tệp AI</div>
+        <div class="app-tile-sub">Sắp xếp ảnh/video thông minh</div>
+      </div>
+      <div class="app-tile" data-action="social">
+        <div style="font-size:22px;">⬇️</div>
+        <div class="app-tile-title">Tải Video MXH</div>
+        <div class="app-tile-sub">TikTok, Douyin, YouTube, FB</div>
+      </div>
+      <div class="app-tile" data-action="guest">
+        <div style="font-size:22px;">🔑</div>
+        <div class="app-tile-title">Khách WebDAV</div>
+        <div class="app-tile-sub">Cấp quyền truy cập tạm thời</div>
+      </div>
+      <div class="app-tile" data-action="screenRecord">
+        <div style="font-size:22px;">🎥</div>
+        <div class="app-tile-title">Quay màn hình</div>
+        <div class="app-tile-sub">Lưu trực tiếp lên NAS</div>
+      </div>
+      <div class="app-tile" data-action="files">
+        <div style="font-size:22px;">📂</div>
+        <div class="app-tile-title">Quản lý Tệp</div>
+        <div class="app-tile-sub">Duyệt, phát video &amp; ảnh Native</div>
+      </div>
+      <div class="app-tile" data-action="performance">
+        <div style="font-size:22px;">⚡</div>
+        <div class="app-tile-title">Hiệu năng &amp; Mạng</div>
+        <div class="app-tile-sub">Đo tốc độ LAN / Tailscale</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW: SYSTEM -->
+  <section id="view-system" class="hidden">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">THUMBNAIL DAEMON</span>
+        <span class="badge" id="thumbStatusBadge">--</span>
+      </div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px;" id="thumbDetailText">Đang tải trạng thái...</div>
+      <div class="bar-track" style="margin-bottom:10px;"><div class="bar-fill" id="thumbBar" style="width:0%;background:var(--cyan);"></div></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-pill primary" data-thumb="scan">Quét ngay</button>
+        <button class="btn-pill" data-thumb="resume">Tiếp tục</button>
+        <button class="btn-pill" data-thumb="pause">Tạm dừng</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">TIẾN TRÌNH &amp; DỊCH VỤ NAS</span>
+      </div>
+      <div class="list-item" data-action="toolbox">
+        <div>
+          <div class="list-title">Auto Backup &amp; Đồng bộ</div>
+          <div class="list-sub" id="backupStatusSub">Đang chạy ngầm qua WorkManager Native</div>
+        </div>
+        <span class="badge">Mở ▸</span>
+      </div>
+      <div class="list-item" data-action="diskProfile">
+        <div>
+          <div class="list-title">Hồ sơ Ổ đĩa &amp; S.M.A.R.T</div>
+          <div class="list-sub" id="sysSmartLine">--</div>
+        </div>
+        <span class="badge">Chi tiết ▸</span>
+      </div>
+      <div class="list-item" data-action="performance">
+        <div>
+          <div class="list-title">OMV &amp; Tài nguyên Hệ thống</div>
+          <div class="list-sub" id="sysOmvLine">--</div>
+        </div>
+        <span class="badge">Xem ▸</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW: MORE -->
+  <section id="view-more" class="hidden">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">PHIÊN ĐĂNG NHẬP</span>
+      </div>
+      <div style="font-size:14px;font-weight:800;" id="moreUser">--</div>
+      <div style="font-size:12px;color:var(--text-2);margin-top:2px;" id="moreUrl">--</div>
+    </div>
+
+    <div class="card">
+      <div class="list-item" data-action="performance">
+        <div><div class="list-title">⚡ Hiệu năng ứng dụng</div><div class="list-sub">Độ trễ, tốc độ truyền tải</div></div>
+        <span>▸</span>
+      </div>
+      <div class="list-item" data-action="appSettings">
+        <div><div class="list-title">⚙️ Cài đặt ứng dụng Android</div><div class="list-sub">Quyền lưu trữ, pin, thông báo</div></div>
+        <span>▸</span>
+      </div>
+      <div class="list-item" data-action="about">
+        <div><div class="list-title">ℹ️ Giới thiệu phiên bản</div><div class="list-sub" id="moreVersion">--</div></div>
+        <span>▸</span>
+      </div>
+      <div class="list-item" data-action="logout">
+        <div><div class="list-title" style="color:var(--red);">🚪 Đăng xuất</div><div class="list-sub">Xóa phiên hiện tại và quay lại màn hình đăng nhập</div></div>
+        <span>▸</span>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
