@@ -307,7 +307,7 @@
   <!-- SYSTEM PROCESSES MODAL (CPU / RAM) -->
   <div class="ux-modal-backdrop hidden" id="processModal">
     <div class="ux-modal">
-      <div class="card-header" style="margin-bottom:8px;">
+      <div class="card-header" style="margin-bottom:10px;">
         <span class="card-title" id="procModalTitle">TIẾN TRÌNH CPU / RAM</span>
         <div style="display:flex;gap:6px;align-items:center;">
           <button class="zoom-btn" id="procSortCpuBtn">CPU</button>
@@ -316,7 +316,7 @@
           <button class="zoom-btn" id="procCloseBtn">✕</button>
         </div>
       </div>
-      <div id="procListContainer" style="overflow-y:auto;min-height:140px;max-height:66vh;"></div>
+      <div id="procListContainer"></div>
     </div>
   </div>
 
@@ -329,7 +329,7 @@
       </div>
       <div id="smartCleanSummary" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
       <button class="btn-pill" id="smartToggleRawBtn" style="width:100%;margin-bottom:8px;">Xem thông số kỹ thuật chi tiết</button>
-      <pre id="smartModalLog" class="hidden" style="overflow:auto;min-height:100px;max-height:30vh;font-size:10.5px;color:var(--ux-text-2);background:rgba(8,13,26,0.9);padding:10px;border-radius:10px;white-space:pre-wrap;"></pre>
+      <pre id="smartModalLog" class="hidden" style="overflow:auto;max-height:42vh;font-size:10.5px;color:var(--ux-text-2);background:rgba(8,13,26,0.9);padding:10px;border-radius:10px;white-space:pre-wrap;"></pre>
     </div>
   </div>
 
