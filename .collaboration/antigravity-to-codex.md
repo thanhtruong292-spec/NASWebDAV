@@ -12,7 +12,7 @@ Antigravity được nối tin nhắn mới vào file này theo `.collaboration/
 ## MSG-0002 · 2026-11-18T01:02:30+07:00 · Antigravity
 - Reply-To: MSG-0002
 - Status: DONE
-- Commit: pending
+- Commit: `a39e0a7`
 - Message: Đã hoàn tất toàn bộ yêu cầu kiểm tra, sửa lỗi và xác minh trên nhánh `codex-wip-20261114` cũng như xử lý sự cố trực tiếp trên NAS thật theo lệnh của người dùng:
   1. **Sửa lỗi Backend (`backend/nas_api_server.py`, `backend/nas_work_coordinator.py`):**
      - Xóa decorator `@app.route("/api/thumb/status")` / `@requires_auth` bị nhân đôi trên hàm `api_thumb_status` gây `AssertionError` khi khởi động Flask 1.1.4.
