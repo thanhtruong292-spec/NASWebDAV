@@ -2,6 +2,8 @@ package com.nas.naswebdav.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,9 +50,9 @@ private val _ChartPanelTitleLetterSpacing = 1.5.sp
 
 // Ke thua nguong tu GaugeCard (MainMenuScreen.kt) de bieu do duong dong bo voi GaugeCard tron.
 // Mau: Do 0xFFEF5350 / Vang 0xFFFFC400 (vang am thuan, dam hon Material 400 mat) / Xanh 0xFF66BB6A
-private val _StatusRed    = AccentRed
-private val _StatusYellow = AccentOrange
-private val _StatusGreen  = AccentGreen
+private val _StatusRed    = Color(0xFFEF5350)
+private val _StatusYellow = Color(0xFFFFC400)
+private val _StatusGreen  = Color(0xFF66BB6A)
 
 private fun percentStatusColor(latest: Float): Color = when {
     latest >= 90f -> _StatusRed
@@ -364,8 +366,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     // - HDD / RAM: Nét đứt (Dashed Line), màu Cyan (#00E5FF) / Xanh Dương (#00B0FF) khi bình thường
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(cpuTempVals, AccentRed, "CPU", "°C", Icons.Default.Memory, isDashed = false, colorOf = ::cpuTempStatusColor),
-            Series(hddTempVals, AccentCyan, "HDD", "°C", Icons.Default.Storage, isDashed = true, colorOf = ::hddTempStatusColor)
+            Series(cpuTempVals, _StatusGreen, "CPU", "°C", Icons.Default.Memory, isDashed = false, colorOf = ::cpuTempStatusColor),
+            Series(hddTempVals, _StatusGreen, "HDD", "°C", Icons.Default.Storage, isDashed = true, colorOf = ::hddTempStatusColor)
         )
         1 -> listOf(
             Series(cpuPctVals, AccentOrange, "CPU", "%", Icons.Default.Speed, isDashed = false, colorOf = ::cpuPercentStatusColor),
@@ -392,6 +394,18 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val range = (maxVal - minVal).coerceAtLeast(0.1f)
 
     var touchedIndex by remember { mutableIntStateOf(-1) }
+    var zoomScale by remember(tabIndex, history.size) { mutableFloatStateOf(1f) }
+    var panFraction by remember(tabIndex, history.size) { mutableFloatStateOf(1f) }
+    val visibleCount = if (history.size >= 4) {
+        (history.size / zoomScale).toInt().coerceIn(minOf(history.size, 8), history.size)
+    } else history.size
+    val maxStart = (history.size - visibleCount).coerceAtLeast(0)
+    val startIdx = (panFraction * maxStart).toInt().coerceIn(0, maxStart)
+    val endIdx = if (history.isEmpty()) -1 else (startIdx + visibleCount - 1).coerceIn(startIdx, history.lastIndex)
+    val visibleHistory = if (endIdx >= startIdx && startIdx in history.indices) {
+        history.subList(startIdx, endIdx + 1)
+    } else history
+
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     val textPx = 10f * density
     val topPad = 10f * density
@@ -400,27 +414,69 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val rightPad = 12f * density
 
     Column {
-        // Chú thích màu & kiểu nét kẻ — Legend gộp chung thông số số liệu
+        // Chú thích màu & kiểu nét kẻ + nút Zoom (+/-)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
                 val displayIdx = if (touchedIndex in history.indices) touchedIndex else history.size - 1
                 series.forEach { s ->
                     val currentVal = if (displayIdx in s.values.indices) s.values[displayIdx] else 0f
                     val displayColor = s.colorOf?.invoke(currentVal) ?: s.color
                     val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
                     val valStr = "${fmt.format(currentVal)}${s.unit}"
-                    val styleLabel = if (s.isDashed) "- - - " else "━━ "
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(styleLabel, fontSize = 12.sp, color = displayColor, fontWeight = FontWeight.Black)
-                        Icon(s.icon, null, tint = displayColor, modifier = Modifier.size(13.dp))
-                        Text("${s.label}: $valStr", fontSize = 12.sp, color = displayColor, fontWeight = FontWeight.Bold)
+                    val styleLabel = if (s.isDashed) "- - " else "━━ "
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(styleLabel, fontSize = 11.sp, color = displayColor, fontWeight = FontWeight.Black)
+                        Icon(s.icon, null, tint = displayColor, modifier = Modifier.size(12.dp))
+                        Text("${s.label}: $valStr", fontSize = 11.sp, color = displayColor, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            if (history.size >= 8) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = _ChartDarkSurface,
+                        modifier = Modifier.clickable {
+                            zoomScale = (zoomScale / 2f).coerceIn(1f, 8f)
+                            touchedIndex = -1
+                        }
+                    ) {
+                        Text("−", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (zoomScale > 1f) TextPrimary else _ChartTextSecond,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp))
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (zoomScale > 1f) _ChartAccentCyan.copy(alpha = 0.18f) else _ChartDarkSurface,
+                        modifier = Modifier.clickable {
+                            zoomScale = 1f
+                            panFraction = 1f
+                            touchedIndex = -1
+                        }
+                    ) {
+                        Text("%.1fx".format(zoomScale), fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                            color = if (zoomScale > 1f) _ChartAccentCyan else _ChartTextSecond,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = _ChartDarkSurface,
+                        modifier = Modifier.clickable {
+                            zoomScale = (zoomScale * 2f).coerceIn(1f, 8f)
+                            touchedIndex = -1
+                        }
+                    ) {
+                        Text("+", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (zoomScale < 8f) TextPrimary else _ChartTextSecond,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp))
                     }
                 }
             }
         }
         Spacer(Modifier.height(6.dp))
         
-        // Canvas biểu đồ + touch detection
+        // Canvas biểu đồ + touch detection (hỗ trợ pinch-to-zoom 2 ngón & vuốt xem mốc)
         Box(Modifier.fillMaxWidth()) {
             androidx.compose.foundation.Canvas(
                 modifier = Modifier
@@ -430,22 +486,36 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                val pos = event.changes.firstOrNull()?.position
-                                if (pos != null && history.size >= 2) {
-                                    val usableW = size.width - leftPad - rightPad
-                                    val step = usableW / (history.size - 1).toFloat()
-                                    val idx = ((pos.x - leftPad) / step).toInt().coerceIn(0, history.size - 1)
-                                    
-                                    when (event.type) {
-                                        androidx.compose.ui.input.pointer.PointerEventType.Press,
-                                        androidx.compose.ui.input.pointer.PointerEventType.Move -> {
-                                            touchedIndex = idx
-                                            event.changes.forEach { it.consume() }
+                                val pressed = event.changes.filter { it.pressed }
+                                val usableW = (size.width - leftPad - rightPad).coerceAtLeast(1f)
+                                if (pressed.size >= 2 && history.size >= 4) {
+                                    val zoom = event.calculateZoom()
+                                    val pan = event.calculatePan()
+                                    if (zoom != 1f) {
+                                        zoomScale = (zoomScale * zoom).coerceIn(1f, 8f)
+                                    }
+                                    if (pan.x != 0f && zoomScale > 1f) {
+                                        panFraction = (panFraction - (pan.x / usableW)).coerceIn(0f, 1f)
+                                    }
+                                    touchedIndex = -1
+                                    event.changes.forEach { it.consume() }
+                                } else {
+                                    val pos = event.changes.firstOrNull()?.position
+                                    val vCount = visibleHistory.size
+                                    if (pos != null && vCount >= 2) {
+                                        val step = usableW / (vCount - 1).toFloat()
+                                        val localIdx = ((pos.x - leftPad) / step).toInt().coerceIn(0, vCount - 1)
+                                        when (event.type) {
+                                            androidx.compose.ui.input.pointer.PointerEventType.Press,
+                                            androidx.compose.ui.input.pointer.PointerEventType.Move -> {
+                                                touchedIndex = (startIdx + localIdx).coerceIn(0, history.lastIndex)
+                                                event.changes.forEach { it.consume() }
+                                            }
+                                            androidx.compose.ui.input.pointer.PointerEventType.Release -> {
+                                                touchedIndex = -1
+                                            }
+                                            else -> {}
                                         }
-                                        androidx.compose.ui.input.pointer.PointerEventType.Release -> {
-                                            touchedIndex = -1
-                                        }
-                                        else -> {}
                                     }
                                 }
                             }
@@ -498,13 +568,13 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 }
 
                 // Grid các đường kẻ dọc mờ (0.5dp) + Nhãn thời gian tự động tại mốc
-                val sampleSize = history.size
+                val sampleSize = visibleHistory.size
                 if (sampleSize >= 2) {
                     val vGridCount = 5.coerceAtMost(sampleSize)
                     val vStep = (sampleSize - 1) / (vGridCount - 1).toFloat()
                     val spansMultipleDays = (
-                        history.first().timestamp.length >= 10 && history.last().timestamp.length >= 10 &&
-                        history.first().timestamp.substring(0, 10) != history.last().timestamp.substring(0, 10)
+                        visibleHistory.first().timestamp.length >= 10 && visibleHistory.last().timestamp.length >= 10 &&
+                        visibleHistory.first().timestamp.substring(0, 10) != visibleHistory.last().timestamp.substring(0, 10)
                     )
                     
                     for (gi in 0 until vGridCount) {
@@ -520,12 +590,12 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         )
 
                         // Nhãn thời gian động (HH:mm hoặc HH:mm (dd/M/yy)) dưới chân đường kẻ dọc
-                        val rawTs = history[pIdx].timestamp
+                        val rawTs = visibleHistory[pIdx].timestamp
                         val timeLabel = when {
                             rawTs.length >= 19 -> {
                                 val hhmm = rawTs.substring(11, 16)
                                 val datePart = rawTs.substring(0, 10)
-                                val latestDate = history.last().timestamp.take(10)
+                                val latestDate = visibleHistory.last().timestamp.take(10)
                                 if (spansMultipleDays && datePart != latestDate) {
                                     val y2 = rawTs.substring(2, 4)
                                     val m2 = rawTs.substring(5, 7).toIntOrNull() ?: 0
@@ -546,21 +616,38 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
                 // Vẽ các series đường kẻ mảnh bằng 1 Path liên tục với kiểu Solid/Dashed phân biệt
                 series.forEach { s ->
-                    val pts = s.values
+                    val pts = if (endIdx >= startIdx && endIdx < s.values.size) {
+                        s.values.subList(startIdx, endIdx + 1)
+                    } else s.values
                     if (pts.size < 2) return@forEach
                     fun xOf(i: Int) = leftPad + (i.toFloat() / (pts.size - 1)) * usableW
                     fun yOf(v: Float) = (topPad + usableH) - ((v.coerceIn(minVal, maxVal) - minVal) / range) * usableH
 
-                    // Fill vùng mờ nhẹ (0.04f alpha)
+                    val colorFn: (Float) -> Color = { v -> s.colorOf?.invoke(v) ?: s.color }
+
+                    // Fill vùng mờ nhẹ (theo ngưỡng màu Xanh/Vàng/Đỏ nếu có colorOf)
                     val fillPath = androidx.compose.ui.graphics.Path().apply {
                         moveTo(xOf(0), topPad + usableH)
                         pts.forEachIndexed { i, v -> lineTo(xOf(i), yOf(v)) }
                         lineTo(xOf(pts.lastIndex), topPad + usableH)
                         close()
                     }
-                    drawPath(fillPath, s.color.copy(alpha = 0.04f))
-
-                    val colorFn: (Float) -> Color = { v -> s.colorOf?.invoke(v) ?: s.color }
+                    if (s.colorOf != null) {
+                        drawPath(
+                            fillPath,
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    _StatusRed.copy(alpha = 0.08f),
+                                    _StatusYellow.copy(alpha = 0.06f),
+                                    _StatusGreen.copy(alpha = 0.04f)
+                                ),
+                                startY = topPad,
+                                endY = topPad + usableH
+                            )
+                        )
+                    } else {
+                        drawPath(fillPath, s.color.copy(alpha = 0.04f))
+                    }
 
                     // Vẽ từng đoạn [i, i+1] chuyển màu theo trạng thái nhiệt độ/tài nguyên (Xanh -> Vàng -> Đỏ)
                     var accumulatedLength = 0f
@@ -601,11 +688,12 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         )
                     }
 
-                    // Đánh dấu từng điểm màu theo nhiệt độ / trạng thái
+                    // Đánh dấu từng điểm màu nhỏ gọn theo nhiệt độ / trạng thái
                     if (s.colorOf != null) {
+                        val dotRadius = if (zoomScale > 2f) 1.5f * density else 1.0f * density
                         for (i in pts.indices) {
                             val ptColor = colorFn(pts[i])
-                            drawCircle(ptColor, 2.0f * density, Offset(xOf(i), yOf(pts[i])))
+                            drawCircle(ptColor, dotRadius, Offset(xOf(i), yOf(pts[i])))
                         }
                     }
 
@@ -619,10 +707,9 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 }
 
                 // Chế độ tương tác vuốt (Scrubbing)
-                if (touchedIndex in history.indices && series.isNotEmpty()) {
-                    val pts0 = series[0].values
-                    if (touchedIndex < pts0.size) {
-                        val cx = leftPad + (touchedIndex.toFloat() / (pts0.size - 1)) * usableW
+                if (touchedIndex in startIdx..endIdx && visibleHistory.size >= 2 && series.isNotEmpty()) {
+                    val localTouched = touchedIndex - startIdx
+                    val cx = leftPad + (localTouched.toFloat() / (visibleHistory.size - 1)) * usableW
 
                         drawLine(TextPrimary, Offset(cx, topPad), Offset(cx, topPad + usableH), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f)))
 
@@ -681,7 +768,6 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             labelPaint.color = android.graphics.Color.argb(255, (ptColor.red*255).toInt(), (ptColor.green*255).toInt(), (ptColor.blue*255).toInt())
                             drawContext.canvas.nativeCanvas.drawText(label, labelX, labelY, labelPaint)
                         }
-                    }
                 }
             }
         }
