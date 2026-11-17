@@ -396,13 +396,36 @@
 
     var html = "";
     rows.forEach(function (r) {
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.1);border-radius:10px;font-size:12px;">' +
-        '<span style="color:var(--ux-text-2);">' + r[0] + '</span>' +
-        '<span style="font-weight:700;text-align:right;">' + r[1] + '</span>' +
+      html += '<div class="list-item" style="padding:9px 0;">' +
+        '<div style="flex:1;min-width:0;"><div class="list-title" style="font-size:12.5px;color:var(--ux-text-2);">' + r[0] + '</div></div>' +
+        '<div style="font-size:12.5px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;">' + r[1] + '</div>' +
       '</div>';
     });
-    document.getElementById("smartCleanSummary").innerHTML = html;
-    document.getElementById("smartModalLog").textContent = raw || "Chưa có nhật ký S.M.A.R.T.";
+    if (sumEl) sumEl.innerHTML = html;
+
+    if (logEl) {
+      var attrHtml = "";
+      String(raw).split(/\r?\n/).forEach(function (line) {
+        var m = line.match(/^\s*(\d+)\s+(\S+)\s+0x[0-9a-fA-F]+\s+(\d+)\s+(\d+)\s+(\d+)\s+\S+\s+\S+\s+\S+\s+(.+)$/);
+        if (m) {
+          var attrName = m[2].replace(/_/g, " ");
+          attrHtml += '<div class="list-item" style="padding:8px 0;">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div class="list-title" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                attrName + ' <span style="color:var(--ux-text-3);font-size:10.5px;">#' + m[1] + '</span></div>' +
+              '<div class="list-sub" style="font-variant-numeric:tabular-nums;">Giá trị: <b>' + m[3] + '</b> • Tệ nhất: <b>' + m[4] + '</b> • Ngưỡng: <b>' + m[5] + '</b></div>' +
+            '</div>' +
+            '<span class="badge" style="font-variant-numeric:tabular-nums;max-width:44%;overflow:hidden;text-overflow:ellipsis;">' + m[6].trim().replace(/</g, "&lt;") + '</span>' +
+          '</div>';
+        }
+      });
+      if (attrHtml) {
+        logEl.innerHTML = attrHtml;
+      } else {
+        logEl.innerHTML = '<pre style="margin:0;padding:8px 0;font-size:11px;line-height:1.5;color:var(--ux-text-2);white-space:pre-wrap;word-break:break-word;">' +
+          String(raw || "Chưa có nhật ký S.M.A.R.T.").replace(/</g, "&lt;") + '</pre>';
+      }
+    }
   }
 
   function openProcessModal(sortMode) {

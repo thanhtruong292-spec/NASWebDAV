@@ -323,17 +323,17 @@
   <!-- S.M.A.R.T MODAL -->
   <div class="ux-modal-backdrop hidden" id="smartModal">
     <div class="ux-modal">
-      <div class="card-header" style="margin-bottom:10px;">
-        <span class="card-title">S.M.A.R.T Ổ CỨNG</span>
-        <div style="display:flex;gap:6px;align-items:center;">
+      <div class="card-header" style="margin-bottom:10px;flex-wrap:nowrap;">
+        <span class="card-title" style="white-space:nowrap;">S.M.A.R.T</span>
+        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
           <button class="zoom-btn active" id="smartTabSummaryBtn">Tổng quan</button>
           <button class="zoom-btn" id="smartTabRawBtn">Kỹ thuật</button>
           <button class="zoom-btn" id="smartRefreshBtn">↻</button>
           <button class="zoom-btn" id="smartCloseBtn">✕</button>
         </div>
       </div>
-      <div id="smartCleanSummary" style="display:flex;flex-direction:column;gap:8px;"></div>
-      <pre id="smartModalLog" class="hidden" style="margin:0;font-size:11px;line-height:1.5;color:var(--ux-text-2);background:rgba(8,13,26,0.9);padding:12px;border:1px solid rgba(148,163,184,0.12);border-radius:10px;white-space:pre-wrap;word-break:break-word;overflow-x:auto;"></pre>
+      <div id="smartCleanSummary"></div>
+      <div id="smartModalLog" class="hidden"></div>
     </div>
   </div>
 
