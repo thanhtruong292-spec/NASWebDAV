@@ -243,6 +243,35 @@
         <span class="badge">Xem ▸</span>
       </div>
     </div>
+
+    <div class="card" id="alertCard">
+      <div class="card-header">
+        <span class="card-title">CẢNH BÁO THÔNG MINH</span>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--ux-cyan);">
+          <input type="checkbox" id="alertEnabledChk" checked style="accent-color:var(--ux-cyan);" /> Bật chạy nền
+        </label>
+      </div>
+      <div class="alert-grid">
+        <label class="alert-field">
+          <span>HDD (°C)</span>
+          <input id="alertHddInput" type="number" min="35" max="75" value="50" class="ux-input alert-num" />
+        </label>
+        <label class="alert-field">
+          <span>CPU (%)</span>
+          <input id="alertCpuInput" type="number" min="50" max="99" value="90" class="ux-input alert-num" />
+        </label>
+        <label class="alert-field">
+          <span>Ổ đĩa (%)</span>
+          <input id="alertDiskInput" type="number" min="60" max="99" value="90" class="ux-input alert-num" />
+        </label>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ux-text-2);">
+          <input type="checkbox" id="alertSmartChk" checked style="accent-color:var(--ux-cyan);" /> Báo lỗi S.M.A.R.T
+        </label>
+        <button class="btn-pill primary" id="saveAlertsBtn">Lưu cảnh báo</button>
+      </div>
+    </div>
   </section>
 
   <!-- VIEW: MORE -->
@@ -284,6 +313,8 @@
         </button>
         <div class="files-path" id="filesPathTitle">/webdav/</div>
         <span class="badge" id="filesCountBadge">0</span>
+        <button class="btn-icon" id="fileUploadBtn" title="Tải tệp lên NAS">+</button>
+        <button class="btn-icon" id="fileSelectBtn" title="Chọn nhiều tệp">☑</button>
         <button class="btn-icon" id="fileViewToggleBtn" title="Chế độ xem">⊞</button>
         <button class="btn-icon" id="fileRefreshBtn" title="Làm mới">↻</button>
       </div>
@@ -293,6 +324,7 @@
       </div>
       <div class="chip-row">
         <button class="chip active" data-ffilter="all">Tất cả</button>
+        <button class="chip" data-ffilter="timeline">Dòng thời gian</button>
         <button class="chip" data-ffilter="dir">Thư mục</button>
         <button class="chip" data-ffilter="image">Ảnh</button>
         <button class="chip" data-ffilter="video">Video</button>
@@ -302,6 +334,15 @@
       </div>
     </div>
     <div id="filesContainer"></div>
+    <div id="batchActionBar" class="batch-bar hidden">
+      <span id="batchCountText" style="font-size:12px;font-weight:800;color:var(--ux-cyan);">0 mục</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn-pill" id="batchShareBtn">Chia sẻ</button>
+        <button class="btn-pill primary" id="batchDownloadBtn">Tải về</button>
+        <button class="btn-pill danger" id="batchDeleteBtn">Xóa</button>
+        <button class="btn-pill" id="batchCancelBtn">✕</button>
+      </div>
+    </div>
   </section>
 
   <!-- FILE ACTION MODAL -->
@@ -310,7 +351,8 @@
       <div style="font-size:14px;font-weight:800;margin-bottom:4px;" id="modalFileName">--</div>
       <div style="font-size:11.5px;color:var(--ux-text-2);margin-bottom:10px;" id="modalFileMeta">--</div>
       <input class="ux-input" id="modalRenameInput" type="text" placeholder="Tên mới..." />
-      <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+        <button class="btn-pill" id="modalShareBtn">Chia sẻ link</button>
         <button class="btn-pill danger" id="modalDeleteBtn">Xóa</button>
         <button class="btn-pill" id="modalCancelBtn">Đóng</button>
         <button class="btn-pill primary" id="modalRenameBtn">Đổi tên</button>

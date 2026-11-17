@@ -153,7 +153,10 @@ class PreferencesRepository(context: Context) {
         val enabled: Boolean = true,
         val pauseOnDiskLow: Boolean = true,
         val cpuThreshold: Int = 90,
-        val ramThreshold: Int = 85
+        val ramThreshold: Int = 85,
+        val hddTempThreshold: Int = 50,
+        val diskThreshold: Int = 90,
+        val smartAlert: Boolean = true
     )
 
     fun getAlertRules(): AlertRules {
@@ -162,7 +165,10 @@ class PreferencesRepository(context: Context) {
             enabled = p.getBoolean(KEY_ALERT_ENABLED, true),
             pauseOnDiskLow = p.getBoolean(KEY_ALERT_PAUSE_DISK_LOW, true),
             cpuThreshold = p.getInt(KEY_ALERT_CPU, 90),
-            ramThreshold = p.getInt(KEY_ALERT_RAM, 85)
+            ramThreshold = p.getInt(KEY_ALERT_RAM, 85),
+            hddTempThreshold = p.getInt(KEY_ALERT_HDD_TEMP, 50),
+            diskThreshold = p.getInt(KEY_ALERT_DISK, 90),
+            smartAlert = p.getBoolean(KEY_ALERT_SMART, true)
         )
     }
 
@@ -172,7 +178,17 @@ class PreferencesRepository(context: Context) {
             putBoolean(KEY_ALERT_PAUSE_DISK_LOW, rules.pauseOnDiskLow)
             putInt(KEY_ALERT_CPU, rules.cpuThreshold)
             putInt(KEY_ALERT_RAM, rules.ramThreshold)
+            putInt(KEY_ALERT_HDD_TEMP, rules.hddTempThreshold)
+            putInt(KEY_ALERT_DISK, rules.diskThreshold)
+            putBoolean(KEY_ALERT_SMART, rules.smartAlert)
         }
+    }
+
+    fun getLastAlertTimestamp(key: String): Long =
+        prefs(PREFS_NAS).getLong("last_alert_$key", 0L)
+
+    fun setLastAlertTimestamp(key: String, ts: Long) {
+        prefs(PREFS_NAS).edit().putLong("last_alert_$key", ts).apply()
     }
 
     // ─── Coil cache clear timestamp ───
@@ -289,6 +305,9 @@ class PreferencesRepository(context: Context) {
         const val KEY_ALERT_PAUSE_DISK_LOW = "alert_pause_disk_low"
         const val KEY_ALERT_CPU = "alert_cpu_threshold"
         const val KEY_ALERT_RAM = "alert_ram_threshold"
+        const val KEY_ALERT_HDD_TEMP = "alert_hdd_temp_threshold"
+        const val KEY_ALERT_DISK = "alert_disk_threshold"
+        const val KEY_ALERT_SMART = "alert_smart_enabled"
         const val KEY_LAST_CACHE_CLEAR = "last_cache_clear"
         const val KEY_STORAGE_SUMMARY = "storage_summary_json"
         const val KEY_STORAGE_USAGE = "storage_usage_json"

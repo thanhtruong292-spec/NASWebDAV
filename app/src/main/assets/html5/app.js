@@ -11,6 +11,10 @@
   var activeModalFile = null;
   var procSortBy = "cpu"; // cpu | mem
   var smartTab = "summary"; // summary | raw
+  var selectMode = false;
+  var selectedPaths = {};
+  var timelineData = null;
+  var timelineLoading = false;
 
   var COLOR_GREEN = "#66bb6a";
   var COLOR_YELLOW = "#ffc400";
@@ -233,6 +237,15 @@
     document.getElementById("backupStatusSub").textContent = state.backupSub || "Chạy nền qua WorkManager Native";
     document.getElementById("sysSmartLine").textContent = smartStatus + " • " + (sys.hddTemp || "--");
     document.getElementById("sysOmvLine").textContent = sys.omvInfo || "OpenMediaVault";
+    var al = state.alerts || {};
+    var alBox = document.getElementById("alertCard");
+    if (alBox && !alBox.getAttribute("data-dirty")) {
+      document.getElementById("alertEnabledChk").checked = al.enabled !== false;
+      document.getElementById("alertHddInput").value = al.hddTemp || 50;
+      document.getElementById("alertCpuInput").value = al.cpuTemp || 90;
+      document.getElementById("alertDiskInput").value = al.diskPct || 90;
+      document.getElementById("alertSmartChk").checked = al.smart !== false;
+    }
 
     // More tab
     document.getElementById("moreUser").textContent = state.user || "admin";
@@ -269,10 +282,78 @@
     return /\.(mp4|mkv|avi|mov|mpg|mpeg|wmv|flv|ts|m4v|webm)$/i.test(name || "");
   }
 
+  function syncBatchBar(itemsMap) {
+    var keys = Object.keys(selectedPaths);
+    var bar = document.getElementById("batchActionBar");
+    var selBtn = document.getElementById("fileSelectBtn");
+    if (selBtn) selBtn.classList.toggle("active", selectMode);
+    if (!bar) return;
+    bar.classList.toggle("hidden", !selectMode || keys.length === 0);
+    document.getElementById("batchCountText").textContent = keys.length + " mục";
+    var shareBtn = document.getElementById("batchShareBtn");
+    if (shareBtn) {
+      var singleItem = keys.length === 1 ? itemsMap[keys[0]] : null;
+      shareBtn.disabled = !(singleItem && !singleItem.isDir);
+    }
+  }
+
+  function renderTimeline(container, apiBase) {
+    document.getElementById("filesPathTitle").textContent = "Dòng thời gian Ảnh";
+    if (timelineLoading) {
+      document.getElementById("filesCountBadge").textContent = "...";
+      container.className = "files-center-state";
+      container.innerHTML = '<div class="ux-spinner"></div><div style="font-size:13px;color:var(--ux-text-2);font-weight:600;">Đang tải dòng thời gian ảnh...</div>';
+      return;
+    }
+    var items = (timelineData && timelineData.items) || [];
+    document.getElementById("filesCountBadge").textContent = String((timelineData && timelineData.total) || items.length);
+    if (items.length === 0) {
+      container.className = "files-center-state";
+      container.innerHTML = '<div style="font-size:13px;color:var(--ux-text-2);">Chưa có ảnh nào trong chỉ mục NAS.</div>';
+      return;
+    }
+    var groups = {};
+    var order = [];
+    items.forEach(function (it) {
+      var d = it.mtime ? new Date(it.mtime * 1000) : null;
+      var label = (d && !isNaN(d.getTime()))
+        ? ("Tháng " + String(d.getMonth() + 1).padStart(2, "0") + " / " + d.getFullYear())
+        : "Khác";
+      if (!groups[label]) { groups[label] = []; order.push(label); }
+      groups[label].push(it);
+    });
+    container.className = "";
+    var html = "";
+    order.forEach(function (label) {
+      html += '<div class="timeline-group-title">' + label + ' (' + groups[label].length + ')</div><div class="files-grid">';
+      groups[label].forEach(function (it) {
+        var thumbUrl = (apiBase && it.relPath) ? (apiBase + "/api/thumb?path=" + encodeURIComponent(it.relPath)) : "";
+        var safeName = String(it.name || "").replace(/</g, "&lt;");
+        html += '<div class="f-tile" data-tlpath="' + String(it.path || "").replace(/"/g, "&quot;") + '">' +
+          '<div class="f-thumb"><img loading="lazy" src="' + thumbUrl + '" /></div>' +
+          '<div class="f-name">' + safeName + '</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    });
+    container.innerHTML = html;
+    container.querySelectorAll("[data-tlpath]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        callBridge("openFile", el.getAttribute("data-tlpath"));
+      });
+    });
+  }
+
   function renderFiles() {
     var fState = (state && state.files) || {};
     var container = document.getElementById("filesContainer");
     if (!container) return;
+    var apiBase = (state && state.apiBase) || "";
+    if (fileFilter === "timeline") {
+      renderTimeline(container, apiBase);
+      syncBatchBar({});
+      return;
+    }
     document.getElementById("filesPathTitle").textContent = fState.title || "/webdav/";
     var list = fState.items || [];
     var q = (document.getElementById("fileSearchInput").value || "").trim().toLowerCase();
@@ -295,12 +376,15 @@
       return;
     }
 
-    var apiBase = (state && state.apiBase) || "";
     var isList = fileViewMode === "list";
     container.className = isList ? "files-list" : ("files-grid" + (fileViewMode === "grid6" ? " cols-6" : ""));
 
+    var itemsMap = {};
     var html = "";
     filtered.forEach(function (f, idx) {
+      itemsMap[f.path] = f;
+      var isSel = !!selectedPaths[f.path];
+      var selBadge = selectMode ? ('<span class="sel-check">' + (isSel ? "✓" : "") + '</span>') : "";
       var thumbUrl = (!f.isDir && (isImgFile(f.name) || isVidFile(f.name)) && apiBase && f.relPath)
         ? (apiBase + "/api/thumb?path=" + encodeURIComponent(f.relPath)) : "";
       var icoSvg = f.isDir
@@ -312,13 +396,14 @@
       var safeName = String(f.name || "").replace(/</g, "&lt;");
       var meta = f.isDir ? "Thư mục" : fmtBytes(f.size);
       if (isList) {
-        html += '<div class="f-row" data-fidx="' + idx + '">' +
+        html += '<div class="f-row' + (isSel ? ' selected' : '') + '" data-fidx="' + idx + '">' +
           '<div class="f-row-thumb">' + thumbHtml + '</div>' +
           '<div style="flex:1;min-width:0;"><div class="list-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + safeName + '</div><div class="list-sub">' + meta + '</div></div>' +
-          '<button class="btn-icon" data-fmenu="' + idx + '">⋮</button>' +
+          (selectMode ? ('<span class="sel-check" style="position:static;">' + (isSel ? "✓" : "") + '</span>') : ('<button class="btn-icon" data-fmenu="' + idx + '">⋮</button>')) +
         '</div>';
       } else {
-        html += '<div class="f-tile" data-fidx="' + idx + '">' +
+        html += '<div class="f-tile' + (isSel ? ' selected' : '') + '" data-fidx="' + idx + '">' +
+          selBadge +
           '<div class="f-thumb">' + thumbHtml + '</div>' +
           '<div class="f-name">' + safeName + '</div>' +
           (fileViewMode === "grid3" ? ('<div class="f-meta">' + meta + '</div>') : "") +
@@ -326,12 +411,20 @@
       }
     });
     container.innerHTML = html;
+    syncBatchBar(itemsMap);
 
     container.querySelectorAll("[data-fidx]").forEach(function (el) {
       el.addEventListener("click", function (ev) {
         if (ev.target && ev.target.hasAttribute("data-fmenu")) return;
         var item = filtered[Number(el.getAttribute("data-fidx"))];
-        if (item) callBridge("openFile", item.path);
+        if (!item) return;
+        if (selectMode) {
+          if (selectedPaths[item.path]) delete selectedPaths[item.path];
+          else selectedPaths[item.path] = true;
+          renderFiles();
+        } else {
+          callBridge("openFile", item.path);
+        }
       });
       var timer = null;
       el.addEventListener("touchstart", function () {
@@ -849,9 +942,48 @@
 
     // File Manager controls
     document.getElementById("fileBackBtn").addEventListener("click", function () { callBridge("fileBack"); });
+    document.getElementById("fileUploadBtn").addEventListener("click", function () { callBridge("pickUploadFiles"); });
+    document.getElementById("fileSelectBtn").addEventListener("click", function () {
+      selectMode = !selectMode;
+      selectedPaths = {};
+      renderFiles();
+    });
+    document.getElementById("batchCancelBtn").addEventListener("click", function () {
+      selectMode = false;
+      selectedPaths = {};
+      renderFiles();
+    });
+    document.getElementById("batchDeleteBtn").addEventListener("click", function () {
+      var paths = Object.keys(selectedPaths);
+      if (!paths.length) return;
+      callBridge("fileDeleteBatch", JSON.stringify(paths));
+      showToast("Đang xóa " + paths.length + " mục...");
+      selectMode = false;
+      selectedPaths = {};
+      renderFiles();
+    });
+    document.getElementById("batchDownloadBtn").addEventListener("click", function () {
+      var paths = Object.keys(selectedPaths);
+      if (!paths.length) return;
+      callBridge("fileDownloadBatch", JSON.stringify(paths));
+      showToast("Đang tải " + paths.length + " tệp về Downloads/NASWebDAV...");
+    });
+    document.getElementById("batchShareBtn").addEventListener("click", function () {
+      var keys = Object.keys(selectedPaths);
+      if (keys.length !== 1) return;
+      var list = (state && state.files && state.files.items) || [];
+      var item = list.find(function (f) { return f.path === keys[0]; });
+      if (item && item.relPath) callBridge("createShareLink", item.relPath);
+    });
     document.getElementById("fileRefreshBtn").addEventListener("click", function () {
-      callBridge("fileRefresh");
-      showToast("Đang tải lại thư mục...");
+      if (fileFilter === "timeline") {
+        timelineLoading = true;
+        renderFiles();
+        callBridge("fetchTimeline", 0);
+      } else {
+        callBridge("fileRefresh");
+        showToast("Đang tải lại thư mục...");
+      }
     });
     document.getElementById("fileViewToggleBtn").addEventListener("click", function () {
       fileViewMode = fileViewMode === "grid3" ? "grid6" : (fileViewMode === "grid6" ? "list" : "grid3");
@@ -869,6 +1001,10 @@
       btn.addEventListener("click", function () {
         fileFilter = btn.getAttribute("data-ffilter");
         document.querySelectorAll("[data-ffilter]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        if (fileFilter === "timeline") {
+          timelineLoading = true;
+          callBridge("fetchTimeline", 0);
+        }
         renderFiles();
       });
     });
@@ -880,6 +1016,12 @@
       });
     });
     document.getElementById("modalCancelBtn").addEventListener("click", function () {
+      document.getElementById("fileActionModal").classList.add("hidden");
+    });
+    document.getElementById("modalShareBtn").addEventListener("click", function () {
+      if (activeModalFile && activeModalFile.relPath) {
+        callBridge("createShareLink", activeModalFile.relPath);
+      }
       document.getElementById("fileActionModal").classList.add("hidden");
     });
     document.getElementById("modalRenameBtn").addEventListener("click", function () {
@@ -897,6 +1039,24 @@
       showToast("Đang chuyển vào Thùng rác...");
       document.getElementById("fileActionModal").classList.add("hidden");
     });
+    var alertCard = document.getElementById("alertCard");
+    if (alertCard) {
+      alertCard.querySelectorAll("input").forEach(function (inp) {
+        inp.addEventListener("input", function () { alertCard.setAttribute("data-dirty", "1"); });
+        inp.addEventListener("change", function () { alertCard.setAttribute("data-dirty", "1"); });
+      });
+      document.getElementById("saveAlertsBtn").addEventListener("click", function () {
+        alertCard.removeAttribute("data-dirty");
+        callBridge("saveAlertRules", JSON.stringify({
+          enabled: document.getElementById("alertEnabledChk").checked,
+          hddTemp: Number(document.getElementById("alertHddInput").value || 50),
+          cpuTemp: Number(document.getElementById("alertCpuInput").value || 90),
+          diskPct: Number(document.getElementById("alertDiskInput").value || 90),
+          smart: document.getElementById("alertSmartChk").checked
+        }));
+        showToast("Đã lưu cài đặt cảnh báo thông minh");
+      });
+    }
 
     // Touch pinch-zoom + pan + scrub on Canvas
     var canvas = document.getElementById("metricsCanvas");
@@ -964,6 +1124,13 @@
     updateState: function (newState) {
       state = newState;
       renderState();
+    },
+    onTimelineLoaded: function (data) {
+      timelineData = data || { total: 0, items: [] };
+      timelineLoading = false;
+      if (currentView === "files" && fileFilter === "timeline") {
+        renderFiles();
+      }
     }
   };
 })();

@@ -15930,6 +15930,92 @@ def api_guest_revoke():
         return jsonify({"error": str(e)}), 500
 
 
+# ============ TEMPORARY FILE SHARE LINKS ============
+_share_links = {}  # {token: {"path": real_path, "expires_at": epoch}}
+_share_lock = threading.Lock()
+
+
+def _resolve_share_target(raw_path):
+    root = _get_webdav_public_dir()
+    if not root:
+        return None
+    root_real = os.path.realpath(root)
+    rel = str(raw_path or "").strip()
+    if rel.startswith("/webdav/"):
+        rel = rel[len("/webdav/"):]
+    elif rel == "/webdav":
+        rel = ""
+    rel = rel.lstrip("/")
+    if not rel:
+        return None
+    candidate = os.path.realpath(os.path.join(root_real, rel))
+    if candidate != root_real and not candidate.startswith(root_real + os.sep):
+        return None
+    if not os.path.isfile(candidate):
+        return None
+    return candidate
+
+
+@app.route("/api/share/create", methods=["POST"])
+@requires_auth
+def api_share_create():
+    import binascii
+    try:
+        body = request.get_json(force=True) or {}
+        raw_path = body.get("path", "")
+        hours = int(body.get("hours", 24) or 24)
+        hours = max(1, min(168, hours))
+        target = _resolve_share_target(raw_path)
+        if not target:
+            return jsonify({"error": "Tệp không tồn tại hoặc đường dẫn không hợp lệ"}), 404
+        token = binascii.hexlify(os.urandom(12)).decode("ascii")
+        now = time.time()
+        exp = now + (hours * 3600)
+        with _share_lock:
+            expired = [k for k, v in _share_links.items() if v.get("expires_at", 0) <= now]
+            for k in expired:
+                _share_links.pop(k, None)
+            if len(_share_links) >= 200:
+                oldest = sorted(_share_links.items(), key=lambda kv: kv[1].get("expires_at", 0))[:20]
+                for k, _ in oldest:
+                    _share_links.pop(k, None)
+            _share_links[token] = {"path": target, "expires_at": exp}
+        return jsonify({
+            "token": token,
+            "url": "/api/share/dl/%s" % token,
+            "expires_at": int(exp)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/share/dl/<token>", methods=["GET"])
+def api_share_download(token):
+    import re as _re_tok
+    if not _re_tok.match(r'^[a-f0-9]{24}$', token or ""):
+        return jsonify({"error": "Token không hợp lệ"}), 404
+    now = time.time()
+    with _share_lock:
+        entry = _share_links.get(token)
+        if entry and entry.get("expires_at", 0) <= now:
+            _share_links.pop(token, None)
+            entry = None
+    if not entry:
+        return jsonify({"error": "Liên kết chia sẻ đã hết hạn hoặc không tồn tại"}), 404
+    target = entry.get("path", "")
+    root = _get_webdav_public_dir()
+    if not root or not target:
+        return jsonify({"error": "Không tìm thấy tệp"}), 404
+    root_real = os.path.realpath(root)
+    real_target = os.path.realpath(target)
+    if real_target != root_real and not real_target.startswith(root_real + os.sep):
+        return jsonify({"error": "Truy cập bị từ chối"}), 403
+    if not os.path.isfile(real_target):
+        return jsonify({"error": "Tệp không còn tồn tại"}), 404
+    from flask import send_file
+    return send_file(real_target, as_attachment=True, attachment_filename=os.path.basename(real_target))
+
+
 # ============ LIVESTREAM RECORDER (TikTok / Facebook / YouTube Live) ============
 # Ghi hinh livestream theo thoi gian thuc xuong HDD.
 # S? dùng yt-dlp voi --live-from-start de capture HLS stream.

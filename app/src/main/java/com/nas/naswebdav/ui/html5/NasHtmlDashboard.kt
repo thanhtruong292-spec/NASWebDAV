@@ -1,12 +1,21 @@
 package com.nas.naswebdav.ui.html5
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.os.Environment
+import android.provider.OpenableColumns
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -49,6 +58,56 @@ fun NasHtmlDashboardScreen(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pageLoaded by remember { mutableStateOf(false) }
     val uiScope = rememberCoroutineScope()
+
+    val uploadPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val targetFolder = fileBrowserVM.currentUrl.ifBlank { WebDavManager.currentBaseUrl }.trimEnd('/')
+        uiScope.launch(Dispatchers.IO) {
+            var okCount = 0
+            WebDavManager.threadLocalAuth.set(
+                WebDavManager.AuthState(
+                    WebDavManager.currentBaseUrl,
+                    SecurePrefsHelper.getUser(context),
+                    SecurePrefsHelper.getPass(context)
+                )
+            )
+            try {
+                uris.forEachIndexed { idx, uri ->
+                    var tempFile: java.io.File? = null
+                    try {
+                        val rawName = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                            val col = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (c.moveToFirst() && col >= 0) c.getString(col) else null
+                        } ?: "upload_${System.currentTimeMillis()}_$idx"
+                        val safeName = rawName.replace('/', '_').replace('\\', '_').replace("..", "_").take(180)
+                        val encoded = java.net.URLEncoder.encode(safeName, "UTF-8").replace("+", "%20")
+                        val destUrl = "$targetFolder/$encoded"
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            val temp = java.io.File(context.cacheDir, safeName)
+                            tempFile = temp
+                            temp.outputStream().use { input.copyTo(it) }
+                            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                            WebDavManager.uploadFile(destUrl, temp, mime)
+                            okCount++
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                    } finally {
+                        tempFile?.delete()
+                    }
+                }
+            } finally {
+                WebDavManager.threadLocalAuth.remove()
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Đã tải lên $okCount/${uris.size} tệp", Toast.LENGTH_SHORT).show()
+                fileBrowserVM.refresh()
+            }
+        }
+    }
 
     // Initial data fetch on screen mount
     LaunchedEffect(viewName) {
@@ -256,6 +315,168 @@ fun NasHtmlDashboardScreen(
                     fun killProcess(pid: Int) {
                         post { sysMonitorVM.killSystemProcess(context, pid) }
                     }
+
+                    @JavascriptInterface
+                    fun pickUploadFiles() {
+                        post { uploadPickerLauncher.launch(arrayOf("*/*")) }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchTimeline(offset: Int) {
+                        uiScope.launch(Dispatchers.IO) {
+                            try {
+                                val base = WebDavManager.currentBaseUrl.ifBlank { SecurePrefsHelper.getUrl(context) }
+                                val apiBase = base.toApiBaseUrl()
+                                val req = okhttp3.Request.Builder()
+                                    .url("$apiBase/api/photos/timeline?limit=120&offset=$offset")
+                                    .let(WebDavManager::tagCurrentAuth)
+                                    .build()
+                                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                                    val body = resp.body?.string() ?: "{}"
+                                    val rawJson = JSONObject(body)
+                                    val rawItems = rawJson.optJSONArray("items") ?: JSONArray()
+                                    val outItems = JSONArray()
+                                    val rootBase = WebDavManager.currentBaseUrl.trimEnd('/')
+                                    for (i in 0 until rawItems.length()) {
+                                        val it = rawItems.getJSONObject(i)
+                                        val p = it.optString("path", "")
+                                        val rel = if (p.startsWith("/")) "/webdav$p" else "/webdav/$p"
+                                        val cleanRel = rel.replace("//", "/")
+                                        val fullUrl = rootBase + "/" + p.trimStart('/')
+                                        outItems.put(JSONObject().apply {
+                                            put("name", p.substringAfterLast('/'))
+                                            put("path", fullUrl)
+                                            put("relPath", cleanRel)
+                                            put("mtime", it.optLong("mtime", 0L))
+                                            put("size", it.optLong("size", 0L))
+                                        })
+                                    }
+                                    val result = JSONObject().apply {
+                                        put("total", rawJson.optInt("total", outItems.length()))
+                                        put("offset", offset)
+                                        put("items", outItems)
+                                    }.toString()
+                                    withContext(Dispatchers.Main) {
+                                        webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.onTimelineLoaded($result);", null)
+                                    }
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.onTimelineLoaded({total:0,offset:0,items:[]});", null)
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fileDeleteBatch(pathsJson: String) {
+                        post {
+                            val arr = runCatching { JSONArray(pathsJson) }.getOrNull() ?: return@post
+                            val pathSet = mutableSetOf<String>()
+                            for (i in 0 until arr.length()) pathSet.add(arr.optString(i))
+                            val items = fileBrowserVM.fileList.filter { it.path in pathSet }
+                            if (items.isNotEmpty()) fileBrowserVM.deleteMultipleFiles(context, items)
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fileDownloadBatch(pathsJson: String) {
+                        val arr = runCatching { JSONArray(pathsJson) }.getOrNull() ?: return
+                        val paths = (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+                        if (paths.isEmpty()) return
+                        uiScope.launch(Dispatchers.IO) {
+                            val dlDir = java.io.File(
+                                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                                "NASWebDAV"
+                            ).apply { mkdirs() }
+                            var okCount = 0
+                            paths.forEach { url ->
+                                try {
+                                    val name = url.substringAfterLast('/').substringBefore('?').ifBlank { "nas_${System.currentTimeMillis()}" }
+                                    val req = okhttp3.Request.Builder().url(url).let(WebDavManager::tagCurrentAuth).build()
+                                    NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                                        if (resp.isSuccessful) {
+                                            resp.body?.byteStream()?.use { inp ->
+                                                java.io.File(dlDir, name).outputStream().use { out -> inp.copyTo(out) }
+                                                okCount++
+                                            }
+                                        }
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {}
+                            }
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "Đã tải $okCount/${paths.size} tệp vào Downloads/NASWebDAV", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun createShareLink(relPath: String) {
+                        uiScope.launch(Dispatchers.IO) {
+                            try {
+                                val base = WebDavManager.currentBaseUrl.ifBlank { SecurePrefsHelper.getUrl(context) }
+                                val apiBase = base.toApiBaseUrl()
+                                val body = JSONObject().put("path", relPath).put("hours", 24).toString()
+                                val req = okhttp3.Request.Builder()
+                                    .url("$apiBase/api/share/create")
+                                    .post(okhttp3.RequestBody.create(null, body))
+                                    .let(WebDavManager::tagCurrentAuth)
+                                    .build()
+                                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                                    val txt = resp.body?.string() ?: "{}"
+                                    val j = JSONObject(txt)
+                                    val relUrl = j.optString("url", "")
+                                    if (!resp.isSuccessful || relUrl.isBlank()) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, j.optString("error", "Không thể tạo link chia sẻ"), Toast.LENGTH_SHORT).show()
+                                        }
+                                        return@use
+                                    }
+                                    val fullLink = "$apiBase$relUrl"
+                                    withContext(Dispatchers.Main) {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        cm?.setPrimaryClip(ClipData.newPlainText("NAS Share Link", fullLink))
+                                        Toast.makeText(context, "Đã sao chép link chia sẻ (hiệu lực 24h)", Toast.LENGTH_SHORT).show()
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, fullLink)
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(Intent.createChooser(shareIntent, "Chia sẻ liên kết tệp NAS"))
+                                    }
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "Lỗi tạo link: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun saveAlertRules(jsonStr: String) {
+                        post {
+                            val obj = runCatching { JSONObject(jsonStr) }.getOrNull() ?: return@post
+                            val repo = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+                            val cur = repo.getAlertRules()
+                            repo.setAlertRules(
+                                cur.copy(
+                                    enabled = obj.optBoolean("enabled", cur.enabled),
+                                    hddTempThreshold = obj.optInt("hddTemp", cur.hddTempThreshold).coerceIn(35, 75),
+                                    cpuThreshold = obj.optInt("cpuTemp", cur.cpuThreshold).coerceIn(50, 99),
+                                    diskThreshold = obj.optInt("diskPct", cur.diskThreshold).coerceIn(60, 99),
+                                    smartAlert = obj.optBoolean("smart", cur.smartAlert)
+                                )
+                            )
+                            scheduleNasAlertWorker(context)
+                        }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -421,6 +642,23 @@ private fun buildHtml5StateJson(
         put("loading", fileBrowserVM.isLoading)
         put("items", fArr)
     })
+
+    // Alert rules snapshot + live evaluation
+    val alertRules = com.nas.naswebdav.utils.PreferencesRepository.get(context).getAlertRules()
+    root.put("alerts", JSONObject().apply {
+        put("enabled", alertRules.enabled)
+        put("hddTemp", alertRules.hddTempThreshold)
+        put("cpuTemp", alertRules.cpuThreshold)
+        put("diskPct", alertRules.diskThreshold)
+        put("smart", alertRules.smartAlert)
+    })
+    NasAlertEvaluator.evaluateAndNotify(
+        context = context,
+        cpuPct = cpuPct,
+        hddTempC = sys.temp.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0,
+        diskPct = (diskMetric?.percent ?: 0f).toDouble(),
+        smartStatus = deviceVM.smartInfo.status
+    )
 
     val pArr = JSONArray()
     sysMonitorVM.systemProcesses.forEach { p ->
