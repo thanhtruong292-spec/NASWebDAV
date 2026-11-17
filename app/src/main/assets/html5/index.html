@@ -118,6 +118,20 @@
           <button class="btn-pill" data-fan="custom">Tùy chỉnh</button>
         </div>
       </div>
+      <div id="fanRuleHint" style="font-size:10.5px;color:var(--ux-text-3);margin-top:6px;line-height:1.4;">--</div>
+      <div id="fanCustomBox" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,0.12);display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">
+          <span style="color:var(--ux-text-2);">Ngưỡng BẬT quạt (theo HDD)</span>
+          <b id="fanOnVal" style="color:var(--ux-cyan);font-variant-numeric:tabular-nums;">42°C</b>
+        </div>
+        <input id="fanOnSlider" type="range" min="32" max="58" step="1" value="42" style="width:100%;accent-color:var(--ux-cyan);" />
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">
+          <span style="color:var(--ux-text-2);">Ngưỡng TẮT quạt (khi nguội)</span>
+          <b id="fanOffVal" style="color:var(--ux-green);font-variant-numeric:tabular-nums;">40°C</b>
+        </div>
+        <input id="fanOffSlider" type="range" min="28" max="55" step="1" value="40" style="width:100%;accent-color:var(--ux-green);" />
+        <button class="btn-pill primary" id="fanApplyCustomBtn" style="width:100%;margin-top:2px;">Lưu ngưỡng quạt tùy chỉnh</button>
+      </div>
     </div>
 
     <!-- Monitoring Chart Card -->

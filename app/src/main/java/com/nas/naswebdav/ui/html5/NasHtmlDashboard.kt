@@ -18,6 +18,7 @@ import com.nas.naswebdav.ui.screens.dashboardDiskMetric
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -47,6 +48,7 @@ fun NasHtmlDashboardScreen(
 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pageLoaded by remember { mutableStateOf(false) }
+    val uiScope = rememberCoroutineScope()
 
     // Initial data fetch on screen mount
     LaunchedEffect(viewName) {
@@ -148,7 +150,20 @@ fun NasHtmlDashboardScreen(
 
                     @JavascriptInterface
                     fun setFanMode(mode: String) {
-                        post { deviceVM.setFanMode(mode) }
+                        post {
+                            deviceVM.setFanMode(mode) {
+                                uiScope.launch(Dispatchers.IO) { sysMonitorVM.fetchStatusNow() }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun setFanCustom(onTemp: Double, offTemp: Double) {
+                        post {
+                            deviceVM.setFanMode("custom", onTemp.toFloat(), offTemp.toFloat()) {
+                                uiScope.launch(Dispatchers.IO) { sysMonitorVM.fetchStatusNow() }
+                            }
+                        }
                     }
 
                     @JavascriptInterface
@@ -340,6 +355,8 @@ private fun buildHtml5StateJson(
         put("smartRaw", deviceVM.smartInfo.rawLog)
         put("fanStatus", sys.fanStatus)
         put("fanMode", sys.fanMode)
+        put("fanOnTemp", sys.fanOnTemp.toDouble())
+        put("fanOffTemp", sys.fanOffTemp.toDouble())
         put("omvInfo", "OpenMediaVault • ${sys.uptime}")
     }
     root.put("system", sysJson)

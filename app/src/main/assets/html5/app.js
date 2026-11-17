@@ -24,10 +24,11 @@
     return window.NasBridge || null;
   }
 
-  function callBridge(fn, arg) {
+  function callBridge(fn, arg, arg2) {
     var b = bridge();
     if (!b || typeof b[fn] !== "function") return;
-    if (arg !== undefined) b[fn](arg);
+    if (arg2 !== undefined) b[fn](arg, arg2);
+    else if (arg !== undefined) b[fn](arg);
     else b[fn]();
   }
 
@@ -196,6 +197,29 @@
     document.querySelectorAll("[data-fan]").forEach(function (btn) {
       btn.classList.toggle("active", btn.getAttribute("data-fan") === sys.fanMode);
     });
+    var onT = Math.round(Number(sys.fanOnTemp || 42));
+    var offT = Math.round(Number(sys.fanOffTemp || 40));
+    var ruleHint = document.getElementById("fanRuleHint");
+    if (ruleHint) {
+      if (sys.fanMode === "auto") {
+        ruleHint.textContent = "Tự động (theo HDD): ≥42°C chạy 30% • ≥47°C 60% • ≥52°C 100% • ≤40°C dừng (CPU≥75°C / HDD≥60°C ép 100%)";
+      } else if (sys.fanMode === "custom") {
+        ruleHint.textContent = "Tùy chỉnh (theo HDD): Bật ≥ " + onT + "°C • Tắt ≤ " + offT + "°C (+5°C/+10°C tăng tốc 60%/100%)";
+      } else {
+        ruleHint.textContent = "Quạt đang tắt thủ công (chỉ ép chạy nếu quá nhiệt khẩn cấp).";
+      }
+    }
+    var customBox = document.getElementById("fanCustomBox");
+    if (customBox) {
+      var isCustom = sys.fanMode === "custom";
+      customBox.classList.toggle("hidden", !isCustom);
+      if (isCustom && !customBox.getAttribute("data-dirty")) {
+        var onSl = document.getElementById("fanOnSlider");
+        var offSl = document.getElementById("fanOffSlider");
+        if (onSl) { onSl.value = onT; document.getElementById("fanOnVal").textContent = onT + "°C"; }
+        if (offSl) { offSl.value = offT; document.getElementById("fanOffVal").textContent = offT + "°C"; }
+      }
+    }
 
     // System tab
     var th = state.thumb || {};
@@ -742,10 +766,47 @@
     document.querySelectorAll("[data-fan]").forEach(function (el) {
       el.addEventListener("click", function () {
         var mode = el.getAttribute("data-fan");
+        var customBox = document.getElementById("fanCustomBox");
+        if (customBox) customBox.removeAttribute("data-dirty");
+        if (mode === "custom" && customBox) {
+          customBox.classList.remove("hidden");
+        }
         callBridge("setFanMode", mode);
-        showToast("Đã chuyển chế độ quạt: " + mode);
+        showToast("Đã chuyển chế độ quạt: " + (mode === "auto" ? "Tự động" : (mode === "custom" ? "Tùy chỉnh" : "Dừng")));
       });
     });
+    var fanOnSl = document.getElementById("fanOnSlider");
+    var fanOffSl = document.getElementById("fanOffSlider");
+    if (fanOnSl && fanOffSl) {
+      fanOnSl.addEventListener("input", function () {
+        document.getElementById("fanCustomBox").setAttribute("data-dirty", "1");
+        var v = Number(fanOnSl.value);
+        if (Number(fanOffSl.value) >= v) {
+          fanOffSl.value = Math.max(28, v - 2);
+          document.getElementById("fanOffVal").textContent = fanOffSl.value + "°C";
+        }
+        document.getElementById("fanOnVal").textContent = v + "°C";
+      });
+      fanOffSl.addEventListener("input", function () {
+        document.getElementById("fanCustomBox").setAttribute("data-dirty", "1");
+        var v = Number(fanOffSl.value);
+        if (v >= Number(fanOnSl.value)) {
+          fanOnSl.value = Math.min(58, v + 2);
+          document.getElementById("fanOnVal").textContent = fanOnSl.value + "°C";
+        }
+        document.getElementById("fanOffVal").textContent = v + "°C";
+      });
+    }
+    var applyFanBtn = document.getElementById("fanApplyCustomBtn");
+    if (applyFanBtn && fanOnSl && fanOffSl) {
+      applyFanBtn.addEventListener("click", function () {
+        var onV = Number(fanOnSl.value);
+        var offV = Number(fanOffSl.value);
+        document.getElementById("fanCustomBox").removeAttribute("data-dirty");
+        callBridge("setFanCustom", onV, offV);
+        showToast("Đã lưu ngưỡng quạt: Bật ≥ " + onV + "°C • Tắt ≤ " + offV + "°C");
+      });
+    }
     document.querySelectorAll("[data-thumb]").forEach(function (el) {
       el.addEventListener("click", function () {
         var act = el.getAttribute("data-thumb");
