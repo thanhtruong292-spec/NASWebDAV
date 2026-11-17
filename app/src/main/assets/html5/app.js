@@ -6,6 +6,9 @@
   var zoomScale = 1.0;
   var panFraction = 1.0;
   var touchedIdx = -1;
+  var fileFilter = "all";
+  var fileViewMode = "grid3"; // grid3 | grid6 | list
+  var activeModalFile = null;
 
   var COLOR_GREEN = "#66bb6a";
   var COLOR_YELLOW = "#ffc400";
@@ -88,7 +91,7 @@
   }
 
   function renderView() {
-    var views = ["dashboard", "apps", "system", "more"];
+    var views = ["dashboard", "apps", "files", "system", "more"];
     views.forEach(function (v) {
       var el = document.getElementById("view-" + v);
       if (el) el.classList.toggle("hidden", v !== currentView);
@@ -96,6 +99,7 @@
     var titles = {
       dashboard: ["Trang chủ NAS", "Giám sát & Thống kê WebDAV"],
       apps: ["Ứng dụng NAS", "Công cụ thông minh & Tiện ích"],
+      files: ["Quản lý Tệp", "Duyệt, xem ảnh & phát Video"],
       system: ["Hệ thống NAS", "Tiến trình nền & Dịch vụ"],
       more: ["Thêm", "Tài khoản & Thiết lập"]
     };
@@ -209,6 +213,11 @@
     document.getElementById("moreUrl").textContent = (state.baseUrl || "") + " (" + (state.connLabel || "") + ")";
     document.getElementById("moreVersion").textContent = "Phiên bản " + (state.versionName || "1.0");
 
+    // Files tab
+    if (currentView === "files") {
+      renderFiles();
+    }
+
     // Range & tab UI
     document.querySelectorAll("[data-range]").forEach(function (btn) {
       btn.classList.toggle("active", Number(btn.getAttribute("data-range")) === chartRange);
@@ -219,6 +228,100 @@
     document.getElementById("zoomResetBtn").textContent = zoomScale.toFixed(1) + "x";
 
     drawChart();
+  }
+
+  function isImgFile(name) {
+    return /\.(jpg|jpeg|png|webp|gif|bmp|heic|heif)$/i.test(name || "");
+  }
+  function isVidFile(name) {
+    return /\.(mp4|mkv|avi|mov|mpg|mpeg|wmv|flv|ts|m4v|webm)$/i.test(name || "");
+  }
+
+  function renderFiles() {
+    var fState = (state && state.files) || {};
+    var container = document.getElementById("filesContainer");
+    if (!container) return;
+    document.getElementById("filesPathTitle").textContent = fState.title || "/webdav/";
+    var list = fState.items || [];
+    var q = (document.getElementById("fileSearchInput").value || "").trim().toLowerCase();
+    var filtered = list.filter(function (f) {
+      if (q && String(f.name || "").toLowerCase().indexOf(q) < 0) return false;
+      if (fileFilter === "dir") return !!f.isDir;
+      if (fileFilter === "image") return !f.isDir && isImgFile(f.name);
+      if (fileFilter === "video") return !f.isDir && isVidFile(f.name);
+      return true;
+    });
+    document.getElementById("filesCountBadge").textContent = fState.loading ? "..." : String(filtered.length);
+    if (fState.loading && filtered.length === 0) {
+      container.innerHTML = '<div class="card"><div class="list-sub">Đang tải danh sách tệp từ NAS...</div></div>';
+      return;
+    }
+    if (filtered.length === 0) {
+      container.innerHTML = '<div class="card"><div class="list-sub">Không có tệp nào phù hợp.</div></div>';
+      return;
+    }
+
+    var apiBase = (state && state.apiBase) || "";
+    var isList = fileViewMode === "list";
+    container.className = isList ? "files-list" : ("files-grid" + (fileViewMode === "grid6" ? " cols-6" : ""));
+
+    var html = "";
+    filtered.forEach(function (f, idx) {
+      var thumbUrl = (!f.isDir && (isImgFile(f.name) || isVidFile(f.name)) && apiBase && f.relPath)
+        ? (apiBase + "/api/thumb?path=" + encodeURIComponent(f.relPath)) : "";
+      var icoSvg = f.isDir
+        ? '<svg class="svg-ico" style="width:26px;height:26px;color:var(--ux-cyan);" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
+        : isVidFile(f.name)
+          ? '<svg class="svg-ico" style="width:24px;height:24px;color:var(--ux-purple);" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg>'
+          : '<svg class="svg-ico" style="width:24px;height:24px;color:var(--ux-text-2);" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+      var thumbHtml = thumbUrl ? ('<img loading="lazy" src="' + thumbUrl + '" onerror="this.style.display=\'none\'" />') : icoSvg;
+      var safeName = String(f.name || "").replace(/</g, "&lt;");
+      var meta = f.isDir ? "Thư mục" : fmtBytes(f.size);
+      if (isList) {
+        html += '<div class="f-row" data-fidx="' + idx + '">' +
+          '<div class="f-row-thumb">' + thumbHtml + '</div>' +
+          '<div style="flex:1;min-width:0;"><div class="list-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + safeName + '</div><div class="list-sub">' + meta + '</div></div>' +
+          '<button class="btn-icon" data-fmenu="' + idx + '">⋮</button>' +
+        '</div>';
+      } else {
+        html += '<div class="f-tile" data-fidx="' + idx + '">' +
+          '<div class="f-thumb">' + thumbHtml + '</div>' +
+          '<div class="f-name">' + safeName + '</div>' +
+          (fileViewMode === "grid3" ? ('<div class="f-meta">' + meta + '</div>') : "") +
+        '</div>';
+      }
+    });
+    container.innerHTML = html;
+
+    container.querySelectorAll("[data-fidx]").forEach(function (el) {
+      el.addEventListener("click", function (ev) {
+        if (ev.target && ev.target.hasAttribute("data-fmenu")) return;
+        var item = filtered[Number(el.getAttribute("data-fidx"))];
+        if (item) callBridge("openFile", item.path);
+      });
+      var timer = null;
+      el.addEventListener("touchstart", function () {
+        var item = filtered[Number(el.getAttribute("data-fidx"))];
+        timer = setTimeout(function () { if (item) openFileModal(item); }, 520);
+      }, { passive: true });
+      el.addEventListener("touchend", function () { if (timer) clearTimeout(timer); });
+      el.addEventListener("touchmove", function () { if (timer) clearTimeout(timer); });
+    });
+    container.querySelectorAll("[data-fmenu]").forEach(function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var item = filtered[Number(btn.getAttribute("data-fmenu"))];
+        if (item) openFileModal(item);
+      });
+    });
+  }
+
+  function openFileModal(item) {
+    activeModalFile = item;
+    document.getElementById("modalFileName").textContent = item.name;
+    document.getElementById("modalFileMeta").textContent = item.isDir ? "Thư mục" : fmtBytes(item.size);
+    document.getElementById("modalRenameInput").value = item.name;
+    document.getElementById("fileActionModal").classList.remove("hidden");
   }
 
   function drawChart() {
@@ -510,6 +613,57 @@
       panFraction = 1.0;
       touchedIdx = -1;
       renderState();
+    });
+
+    // File Manager controls
+    document.getElementById("fileBackBtn").addEventListener("click", function () { callBridge("fileBack"); });
+    document.getElementById("fileRefreshBtn").addEventListener("click", function () {
+      callBridge("fileRefresh");
+      showToast("Đang tải lại thư mục...");
+    });
+    document.getElementById("fileViewToggleBtn").addEventListener("click", function () {
+      fileViewMode = fileViewMode === "grid3" ? "grid6" : (fileViewMode === "grid6" ? "list" : "grid3");
+      showToast("Chế độ xem: " + fileViewMode);
+      renderFiles();
+    });
+    document.getElementById("fileSearchInput").addEventListener("input", function () { renderFiles(); });
+    document.getElementById("fileSearchInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        var kw = e.target.value.trim();
+        if (kw) callBridge("search", kw);
+      }
+    });
+    document.querySelectorAll("[data-ffilter]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        fileFilter = btn.getAttribute("data-ffilter");
+        document.querySelectorAll("[data-ffilter]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        renderFiles();
+      });
+    });
+    document.querySelectorAll("[data-fsort]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var mode = btn.getAttribute("data-fsort");
+        callBridge("fileSort", mode);
+        showToast("Sắp xếp theo: " + mode);
+      });
+    });
+    document.getElementById("modalCancelBtn").addEventListener("click", function () {
+      document.getElementById("fileActionModal").classList.add("hidden");
+    });
+    document.getElementById("modalRenameBtn").addEventListener("click", function () {
+      if (!activeModalFile) return;
+      var nn = document.getElementById("modalRenameInput").value.trim();
+      if (nn && nn !== activeModalFile.name) {
+        callBridge("fileRename", JSON.stringify({ path: activeModalFile.path, name: nn }));
+        showToast("Đang đổi tên...");
+      }
+      document.getElementById("fileActionModal").classList.add("hidden");
+    });
+    document.getElementById("modalDeleteBtn").addEventListener("click", function () {
+      if (!activeModalFile) return;
+      callBridge("fileDelete", activeModalFile.path);
+      showToast("Đang chuyển vào Thùng rác...");
+      document.getElementById("fileActionModal").classList.add("hidden");
     });
 
     // Touch pinch-zoom + pan + scrub on Canvas

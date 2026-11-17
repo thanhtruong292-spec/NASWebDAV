@@ -261,6 +261,49 @@
     </div>
   </section>
 
+  <!-- VIEW: FILES -->
+  <section id="view-files" class="hidden">
+    <div class="files-bar">
+      <div class="files-nav">
+        <button class="btn-icon" id="fileBackBtn" title="Quay lại">
+          <svg class="svg-ico" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="files-path" id="filesPathTitle">/webdav/</div>
+        <span class="badge" id="filesCountBadge">0</span>
+        <button class="btn-icon" id="fileViewToggleBtn" title="Chế độ xem">⊞</button>
+        <button class="btn-icon" id="fileRefreshBtn" title="Làm mới">↻</button>
+      </div>
+      <div class="search-wrap" style="margin-bottom:8px;padding:4px 8px;">
+        <svg class="svg-ico" style="color:var(--ux-text-3);" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="fileSearchInput" type="search" placeholder="Lọc nhanh hoặc Enter tìm toàn NAS..." />
+      </div>
+      <div class="chip-row">
+        <button class="chip active" data-ffilter="all">Tất cả</button>
+        <button class="chip" data-ffilter="dir">Thư mục</button>
+        <button class="chip" data-ffilter="image">Ảnh</button>
+        <button class="chip" data-ffilter="video">Video</button>
+        <button class="chip" data-fsort="name">Tên</button>
+        <button class="chip" data-fsort="date">Mới nhất</button>
+        <button class="chip" data-fsort="size">Dung lượng</button>
+      </div>
+    </div>
+    <div id="filesContainer"></div>
+  </section>
+
+  <!-- FILE ACTION MODAL -->
+  <div class="ux-modal-backdrop hidden" id="fileActionModal">
+    <div class="ux-modal">
+      <div style="font-size:14px;font-weight:800;margin-bottom:4px;" id="modalFileName">--</div>
+      <div style="font-size:11.5px;color:var(--ux-text-2);margin-bottom:10px;" id="modalFileMeta">--</div>
+      <input class="ux-input" id="modalRenameInput" type="text" placeholder="Tên mới..." />
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn-pill danger" id="modalDeleteBtn">Xóa</button>
+        <button class="btn-pill" id="modalCancelBtn">Đóng</button>
+        <button class="btn-pill primary" id="modalRenameBtn">Đổi tên</button>
+      </div>
+    </div>
+  </div>
+
   <div class="ux-toast" id="uxToast"></div>
   <script src="app.js"></script>
 </body>

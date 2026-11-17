@@ -241,40 +241,48 @@ fun NasNavHost(
                 )
             }
 
-            // ── FILES (File browser) ───────────────────────────────────
+            // ── FILES (File browser - HTML5 WebView) ───────────────────
             composable(NasRoutes.FILES) {
-                BrowserScreen(
-                    onVideo = { url ->
-                        val auth = WebDavManager.currentAuthState()
-                        openExternalVideoPlayer(
-                            context = mContext,
-                            url = url,
-                            user = auth.user,
-                            pass = auth.pass,
-                            onError = {
-                                onSetMediaUrl(url)
-                                navController.navigate(NasRoutes.VIDEO)
-                            }
-                        )
-                    },
-                    onImage = { url ->
-                        onSetMediaUrl(url)
-                        navController.navigate(NasRoutes.IMAGE)
-                    },
-                    onLogout = {
-                        domainProvider.livestream.viewModelScope.launch {
-                            domainProvider.repository.addSystemLog("INFO", "Network",
-                                "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
-                        }
-                        performLogout(domainProvider)
-                        navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
-                    },
-                    onBackToMenu = {
+                androidx.activity.compose.BackHandler {
+                    if (!domainProvider.fileBrowser.goBack()) {
                         domainProvider.fileBrowser.resetToDefaultMode()
                         navController.navigate(NasRoutes.DASHBOARD) {
                             popUpTo(NasRoutes.DASHBOARD) { inclusive = true }
                         }
-                    },
+                    }
+                }
+                com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
+                    viewName = "files",
+                    onAction = { act, arg ->
+                        when (act) {
+                            "openVideo" -> if (!arg.isNullOrBlank()) {
+                                val auth = WebDavManager.currentAuthState()
+                                openExternalVideoPlayer(
+                                    context = mContext,
+                                    url = arg,
+                                    user = auth.user,
+                                    pass = auth.pass,
+                                    onError = {
+                                        onSetMediaUrl(arg)
+                                        navController.navigate(NasRoutes.VIDEO)
+                                    }
+                                )
+                            }
+                            "openImage" -> if (!arg.isNullOrBlank()) {
+                                onSetMediaUrl(arg)
+                                navController.navigate(NasRoutes.IMAGE)
+                            }
+                            "search" -> if (!arg.isNullOrBlank()) {
+                                domainProvider.fileBrowser.searchGlobal(arg)
+                            }
+                            "backToMenu" -> {
+                                domainProvider.fileBrowser.resetToDefaultMode()
+                                navController.navigate(NasRoutes.DASHBOARD) {
+                                    popUpTo(NasRoutes.DASHBOARD) { inclusive = true }
+                                }
+                            }
+                        }
+                    }
                 )
             }
 

@@ -2,6 +2,7 @@ package com.nas.naswebdav.ui.html5
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -38,9 +39,11 @@ fun NasHtmlDashboardScreen(
     val deviceVM = LocalDeviceManagementVM.current
     val smartToolsVM = LocalSmartToolsVM.current
     val autoBackupVM = LocalAutoBackupVM.current
+    val fileBrowserVM = LocalFileBrowserVM.current
     val authVM = LocalAuthSessionVM.current
     val connStatus by SharedStateHolder.connectionStatus.collectAsState()
     val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
+    val fileSort by fileBrowserVM.fileSort.collectAsState()
 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pageLoaded by remember { mutableStateOf(false) }
@@ -72,6 +75,8 @@ fun NasHtmlDashboardScreen(
                 sysMonitorVM = sysMonitorVM,
                 deviceVM = deviceVM,
                 autoBackupVM = autoBackupVM,
+                fileBrowserVM = fileBrowserVM,
+                fileSort = fileSort,
                 thumbAudit = thumbAudit,
                 connStatus = connStatus.message
             )
@@ -88,6 +93,10 @@ fun NasHtmlDashboardScreen(
         sysMonitorVM.storageSummary,
         sysMonitorVM.metricsHistory.size,
         deviceVM.smartInfo,
+        fileBrowserVM.fileList,
+        fileBrowserVM.currentUrl,
+        fileBrowserVM.isLoading,
+        fileSort,
         thumbAudit,
         connStatus
     ) {
@@ -97,6 +106,8 @@ fun NasHtmlDashboardScreen(
             sysMonitorVM = sysMonitorVM,
             deviceVM = deviceVM,
             autoBackupVM = autoBackupVM,
+            fileBrowserVM = fileBrowserVM,
+            fileSort = fileSort,
             thumbAudit = thumbAudit,
             connStatus = connStatus.message
         )
@@ -153,8 +164,81 @@ fun NasHtmlDashboardScreen(
                             }
                         }
                     }
+
+                    @JavascriptInterface
+                    fun openFile(path: String) {
+                        post {
+                            val item = fileBrowserVM.fileList.firstOrNull { it.path == path } ?: return@post
+                            if (item.isDirectory) {
+                                fileBrowserVM.openFolder(item)
+                            } else {
+                                val lower = item.name.lowercase()
+                                when {
+                                    lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".avi") ||
+                                    lower.endsWith(".mov") || lower.endsWith(".ts") || lower.endsWith(".webm") ||
+                                    lower.endsWith(".m4v") || lower.endsWith(".flv") -> onAction("openVideo", item.path)
+                                    lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
+                                    lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".bmp") ||
+                                    lower.endsWith(".heic") || lower.endsWith(".heif") -> onAction("openImage", item.path)
+                                    else -> onAction("openImage", item.path)
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fileBack() {
+                        post {
+                            if (!fileBrowserVM.goBack()) {
+                                onAction("backToMenu", null)
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fileRefresh() {
+                        post { fileBrowserVM.refresh() }
+                    }
+
+                    @JavascriptInterface
+                    fun fileSort(mode: String) {
+                        post {
+                            fileBrowserVM.setFileSort(mode)
+                            fileBrowserVM.refresh()
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fileDelete(path: String) {
+                        post {
+                            val item = fileBrowserVM.fileList.firstOrNull { it.path == path } ?: return@post
+                            fileBrowserVM.deleteFile(context, item)
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fileRename(jsonStr: String) {
+                        post {
+                            val obj = runCatching { JSONObject(jsonStr) }.getOrNull() ?: return@post
+                            val path = obj.optString("path", "")
+                            val newName = obj.optString("name", "").trim()
+                            if (path.isBlank() || newName.isBlank()) return@post
+                            val item = fileBrowserVM.fileList.firstOrNull { it.path == path } ?: return@post
+                            fileBrowserVM.renameFile(context, item, newName)
+                        }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
+                    override fun onReceivedHttpAuthRequest(
+                        view: WebView?,
+                        handler: HttpAuthHandler?,
+                        host: String?,
+                        realm: String?
+                    ) {
+                        val auth = WebDavManager.currentAuthState()
+                        handler?.proceed(auth.user, auth.pass)
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         pageLoaded = true
                         view?.evaluateJavascript("window.NasUI && window.NasUI.setView('$viewName');", null)
@@ -177,10 +261,14 @@ private fun buildHtml5StateJson(
     sysMonitorVM: com.nas.naswebdav.monitor.SystemMonitorViewModel,
     deviceVM: com.nas.naswebdav.device.DeviceManagementViewModel,
     autoBackupVM: com.nas.naswebdav.backup.AutoBackupViewModel,
+    fileBrowserVM: com.nas.naswebdav.browser.FileBrowserViewModel,
+    fileSort: String,
     thumbAudit: ThumbnailAuditData,
     connStatus: String
 ): String {
     val root = JSONObject()
+    val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+    root.put("apiBase", apiBase)
     val connOk = connStatus.contains("Đã kết nối", ignoreCase = true) ||
         connStatus.contains("LAN", ignoreCase = true) ||
         connStatus.contains("Tailscale", ignoreCase = true)
@@ -269,6 +357,38 @@ private fun buildHtml5StateJson(
         })
     }
     root.put("metrics", mArr)
+
+    // File Browser snapshot
+    val sortedFiles = when (fileSort) {
+        "date" -> fileBrowserVM.fileList.sortedWith(compareByDescending<NasFile> { it.isDirectory }.thenByDescending { it.lastModified })
+        "size" -> fileBrowserVM.fileList.sortedWith(compareByDescending<NasFile> { it.isDirectory }.thenByDescending { it.contentLength })
+        else -> fileBrowserVM.fileList.sortedWith(compareByDescending<NasFile> { it.isDirectory }.thenBy { it.name.lowercase() })
+    }
+    val fArr = JSONArray()
+    sortedFiles.take(300).forEach { f ->
+        val relPath = runCatching {
+            val uPath = java.net.URI(f.path).path ?: f.path
+            val idx = uPath.indexOf("/webdav/")
+            if (idx >= 0) uPath.substring(idx) else uPath
+        }.getOrDefault(f.path)
+        fArr.put(JSONObject().apply {
+            put("name", f.name)
+            put("path", f.path)
+            put("relPath", relPath)
+            put("isDir", f.isDirectory)
+            put("size", f.contentLength)
+        })
+    }
+    val curTitle = if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle.isNotBlank()) {
+        fileBrowserVM.specialTitle
+    } else {
+        runCatching { java.net.URI(fileBrowserVM.currentUrl).path ?: "/webdav/" }.getOrDefault("/webdav/")
+    }
+    root.put("files", JSONObject().apply {
+        put("title", curTitle)
+        put("loading", fileBrowserVM.isLoading)
+        put("items", fArr)
+    })
 
     return root.toString()
 }
