@@ -26,6 +26,16 @@
     else b[fn]();
   }
 
+  var toastTimer = null;
+  function showToast(msg) {
+    var el = document.getElementById("uxToast");
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("show"); }, 1800);
+  }
+
   function fmtBytes(bytes) {
     var n = Number(bytes || 0);
     if (n >= 1099511627776) return (n / 1099511627776).toFixed(2) + " TB";
@@ -401,6 +411,33 @@
         ctx.arc(cx, cy, 2, 0, Math.PI * 2);
         ctx.fill();
       });
+
+      // Lucian-style floating scrub tooltip pill
+      var tipParts = series.map(function (s) {
+        var v = s.vals[li];
+        return s.label + ": " + (chartTab === 2 ? v.toFixed(2) : v.toFixed(1)) + s.unit;
+      });
+      var tipText = tipParts.join("  •  ");
+      ctx.save();
+      ctx.font = "bold 10.5px sans-serif";
+      var tw = ctx.measureText(tipText).width + 16;
+      var tx = Math.max(leftPad + tw / 2, Math.min(w - rightPad - tw / 2, cx));
+      var ty = topPad + 12;
+      ctx.fillStyle = "rgba(8, 13, 26, 0.92)";
+      ctx.strokeStyle = "rgba(34, 211, 238, 0.45)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(tx - tw / 2, ty - 11, tw, 20, 7);
+      } else {
+        ctx.rect(tx - tw / 2, ty - 11, tw, 20);
+      }
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#f1f5f9";
+      ctx.textAlign = "center";
+      ctx.fillText(tipText, tx, ty + 3);
+      ctx.restore();
     }
 
     var footTs = vis[legIdx].ts || "";
@@ -422,6 +459,7 @@
     });
     document.getElementById("refreshStorageBtn").addEventListener("click", function () {
       callBridge("refreshStorage");
+      showToast("Đang làm mới thống kê lưu trữ...");
     });
 
     document.querySelectorAll("[data-action]").forEach(function (el) {
@@ -431,12 +469,16 @@
     });
     document.querySelectorAll("[data-fan]").forEach(function (el) {
       el.addEventListener("click", function () {
-        callBridge("setFanMode", el.getAttribute("data-fan"));
+        var mode = el.getAttribute("data-fan");
+        callBridge("setFanMode", mode);
+        showToast("Đã chuyển chế độ quạt: " + mode);
       });
     });
     document.querySelectorAll("[data-thumb]").forEach(function (el) {
       el.addEventListener("click", function () {
-        callBridge("thumbControl", el.getAttribute("data-thumb"));
+        var act = el.getAttribute("data-thumb");
+        callBridge("thumbControl", act);
+        showToast("Đã gửi lệnh Thumbnail: " + act);
       });
     });
     document.querySelectorAll("[data-range]").forEach(function (el) {
