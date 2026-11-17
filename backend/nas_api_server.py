@@ -567,6 +567,29 @@ def _init_index_db():
             if "built" not in state_columns:
                 conn.execute("ALTER TABLE index_state ADD COLUMN built INTEGER NOT NULL DEFAULT 0")
             conn.execute("UPDATE index_state SET ready=0, incomplete_reason='scan_pending'")
+            # Moc 1: bang luu chu ky anh (aHash) chung cho tat ca client (Android/Web/PC).
+            # Tung client chi can gui path + aHash len NAS, cac client khac tai su dung
+            # thay tinh toan lai lan luot -> giam tai NAS va tien luong mang.
+            conn.execute("""CREATE TABLE IF NOT EXISTS image_fingerprints (
+                path TEXT PRIMARY KEY,
+                source_version TEXT NOT NULL DEFAULT '',
+                ahash TEXT NOT NULL DEFAULT '',
+                size INTEGER NOT NULL DEFAULT 0,
+                mtime INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL DEFAULT 0
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_image_fps_ahash ON image_fingerprints(ahash)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_image_fps_version ON image_fingerprints(source_version)")
+            # Moc 2: bang luu tag phan loai anh (AI tags) chung cho catalogue.
+            # Tag duoc luu lien ket voi catalogue_revision de client biet khi nao can reload.
+            conn.execute("""CREATE TABLE IF NOT EXISTS ai_image_tags (
+                path TEXT PRIMARY KEY,
+                category TEXT NOT NULL DEFAULT 'Khac',
+                catalogue_revision INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL DEFAULT 0
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_tags_category ON ai_image_tags(category)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_tags_revision ON ai_image_tags(catalogue_revision)")
             conn.commit()
         finally:
             conn.close()
@@ -1478,7 +1501,22 @@ except Exception as _mig_err:
     log.error("[DB] Lỗi khi copy DB cũ: %s", _mig_err)
     raise
 
-nas_work_coordinator.import_legacy_catalogue(DB_PATH, "/var/lib/nas_fast_index.db")
+_legacy_fast_index_db = "/var/lib/nas_fast_index.db"
+nas_work_coordinator.import_legacy_catalogue(DB_PATH, _legacy_fast_index_db)
+# Sau khi import catalogue legado thanh cong, doi ten db cu thanh .db.migrated
+# de server khoi dong lan sau khong import lai va giam tai bo nho.
+try:
+    if os.path.isfile(_legacy_fast_index_db):
+        _li_conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            _li_already = _li_conn.execute(
+                "SELECT 1 FROM catalogue_imports WHERE source='nas_fast_index'").fetchone()
+        finally:
+            _li_conn.close()
+        if _li_already:
+            os.rename(_legacy_fast_index_db, _legacy_fast_index_db + ".migrated")
+except Exception as _li_err:
+    log.warning("[DB] Khong the doi ten nas_fast_index.db sau import: %s", _li_err)
 
 PID_FILE = "/var/run/nas_api_server.pid"
 LAN_WHITELIST_PATH = "/etc/nas/lan_whitelist.conf"
@@ -4237,86 +4275,139 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic"}
 
 def _scan_photos_lightweight():
     """
-    Quet va phan loai ảnh theo ten thư mục — Python 3.5 thuan, KHÔNG cần Docker.
-    Chay truc tiep tren NAS, chi dùng os.walk() va string matching.
-    Ghi ket qua ra AI_TAGS_PATH de Android Đọc qua /api/ai/tags.
+    Quet va phan loai anh theo ten thu muc — Python 3.5 thuan, KHONG can Docker.
+    Chay truc tiep tren NAS, DOC danh sach anh tu file_index cua catalogue (nas_index.db)
+    thay boi os.walk toan bo thu muc. Luu tag vao bang ai_image_tags trong nas_index.db
+    (lien ket voi catalogue_revision), loai bo file ai_tags.json cu hoac dong bo hai chieu.
     """
     try:
         with _alert_state_lock:
             if _alert_states["ai_scan_running"]:
-                return False  # Đang ch?y r?i
+                return False  # Dang chay roi
             _alert_states["ai_scan_running"] = True
 
-        root_dir = WEBDAV_FILE_ROOT
-        categories = {}  # {"Mang Xa Hoi": ["Facebook/img1.jpg", ...], ...}
-        total = 0
+        root = _get_webdav_public_dir()
+        if not root:
+            log.error("[AI Scan] WebDAV root chua san sang")
+            with _alert_state_lock:
+                _alert_states["ai_scan_running"] = False
+            return False
+        root_real = os.path.realpath(root)
 
-        for dirpath, dirnames, filenames in os.walk(root_dir):
-            # B? qua thư mục an (.trash, .thumbnails...)
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
+        try:
+            conn.execute("BEGIN")
+            state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
+            if (not state or state[0] != root_real or not state[2] or
+                    time.time() - float(state[4] or 0) > FILE_INDEX_FRESHNESS_SECONDS or _index_scan_lock.locked()):
+                _refresh_file_index_for_search()
+                # Lay lai state sau khi refresh
+                state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
+                if not state or state[0] != root_real or not state[2]:
+                    conn.rollback()
+                    log.error("[AI Scan] Catalogue chua san sang (root=%s)", root)
+                    with _alert_state_lock:
+                        _alert_states["ai_scan_running"] = False
+                    return False
+            catalogue_revision = state[3] or 0
 
-            # L?y ten thư mục hien tai va cha
-            rel_dir = dirpath[len(root_dir):].strip("/").strip("\\")
-            folder_parts = rel_dir.lower().replace("\\", "/").split("/") if rel_dir else []
+            # Doc tat ca anh tu file_index (da duoc index boi file_index daemon).
+            # Chi lay anh (co duan hinh anh).
+            ext_predicate = " OR ".join(["lower(name) LIKE ?"] * len(_IMAGE_EXTS))
+            ext_params = ["%%%s" % ext for ext in sorted(_IMAGE_EXTS)]
+            rows = conn.execute(
+                "SELECT path,name,size,mtime FROM file_index WHERE is_dir=0 AND (" + ext_predicate + ") "
+                "ORDER BY path",
+                tuple(ext_params)).fetchall()
 
-            for fname in filenames:
-                ext = os.path.splitext(fname)[1].lower()
-                if ext not in _IMAGE_EXTS:
-                    continue
+            # Xoa tag cu cua catalogue_revision nay truoc khi ghi moi (tranh bo sinh).
+            conn.execute("DELETE FROM ai_image_tags WHERE catalogue_revision=?", (catalogue_revision,))
+
+            categories = {}  # {"Mang Xa Hoi": ["Facebook/img1.jpg", ...], ...}
+            total = 0
+            now = time.time()
+            tag_rows = []
+            for row in rows:
+                fpath, fname, fsize, fmtime = row[0], row[1], row[2], row[3]
                 total += 1
-                rel_path = os.path.join(rel_dir, fname).replace("\\", "/")
+                rel_path = fpath  # file_index.path luu da la relative duoi root
 
-                # Phan loai dua tren ten thư mục
+                # Phan loai dua ten thu muc (giong logic cu, khong can Docker/TFLite).
                 matched = False
-                for cat_name, keywords in _FOLDER_CATEGORY_MAP.items():
+                cat_name = "Khac"
+                for cname, keywords in _FOLDER_CATEGORY_MAP.items():
                     for kw in keywords:
-                        for part in folder_parts:
-                            if kw in part:
-                                if cat_name not in categories:
-                                    categories[cat_name] = []
-                                categories[cat_name].append(rel_path)
-                                matched = True
-                                break
-                        if matched:
+                        if kw in fpath.lower():
+                            cat_name = cname
+                            matched = True
                             break
                     if matched:
                         break
-                # Không kh?p thư mục nao -> xep vao "Khac"
-                if not matched:
-                    if "Khac" not in categories:
-                        categories["Khac"] = []
-                    categories["Khac"].append(rel_path)
 
-        # Ghi ra JSON (atomic write: tmp -> rename)
-        ai_data = {
-            "categories": categories,
-            "total": total,
-            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        tmp_path = AI_TAGS_PATH + ".tmp"
-        try:
-            parent_dir = os.path.dirname(AI_TAGS_PATH)
-            if not os.path.exists(parent_dir):
-                os.makedirs(parent_dir)
-        except Exception:
-            pass
-        with open(tmp_path, "w") as f:
-            json.dump(ai_data, f)
-        os.rename(tmp_path, AI_TAGS_PATH)
-        categories = None
-        ai_data = None
-        _release_memory_to_os()
+                if cat_name not in categories:
+                    categories[cat_name] = []
+                categories[cat_name].append(rel_path)
 
-        with _alert_state_lock:
-            _alert_states["ai_scan_running"] = False
-            _alert_states["ai_last_scan"] = time.time()
+                tag_rows.append((rel_path, cat_name, catalogue_revision, now))
 
-        return True
+            # Ghi batch tag moi (atomic trong transaction cua conn).
+            if tag_rows:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO ai_image_tags(path,category,catalogue_revision,updated_at) "
+                    "VALUES(?,?,?,?)", tag_rows)
+            conn.commit()
+
+            # Giu lai file ai_tags.json cu de client cu van doc duoc (dong bo hai chieu trong giai cap phat).
+            try:
+                _write_ai_tags_json(categories, total, catalogue_revision)
+            except Exception:
+                pass
+
+            categories = None
+            tag_rows = None
+            _release_memory_to_os()
+
+            with _alert_state_lock:
+                _alert_states["ai_scan_running"] = False
+                _alert_states["ai_last_scan"] = time.time()
+                _alert_states["ai_catalogue_revision"] = catalogue_revision
+
+            return True
+        finally:
+            conn.close()
     except Exception as e:
         with _alert_state_lock:
             _alert_states["ai_scan_running"] = False
-        log.error("[AI Scan] Lỗi: %s", e)
+        log.error("[AI Scan] Loi: %s", e)
         return False
+
+
+def _write_ai_tags_json(categories, total, catalogue_revision):
+    """Ghi (hoac xoa neu co) ai_tags.json de client cu van doc duoc trong giai cap phat.
+    Khi co du lieu moi trong DB, ghi JSON tu DB; neu categories trong, xoa file cu."""
+    try:
+        parent_dir = os.path.dirname(AI_TAGS_PATH)
+        if parent_dir and not os.path.exists(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
+        if not categories or total == 0:
+            # Xoa file cu neu khong co du lieu moi
+            if os.path.exists(AI_TAGS_PATH):
+                try: os.remove(AI_TAGS_PATH)
+                except Exception: pass
+            return
+        ai_data = {
+            "categories": categories,
+            "total": total,
+            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "catalogue_revision": catalogue_revision,
+            "source": "file_index_db",
+        }
+        tmp_path = AI_TAGS_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(ai_data, f)
+        os.rename(tmp_path, AI_TAGS_PATH)
+    except Exception:
+        pass
 
 
 _background_heavy_gate_cache = {"time": 0.0, "allowed": True}
@@ -4571,6 +4662,8 @@ def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, 
                         pass
         except Exception:
             pass
+    if deleted_files or deleted_dirs or deleted_broken_flv:
+        _index_mutated_directories([root_dir])
     return (deleted_files, deleted_dirs, deleted_broken_flv)
 
 
@@ -10258,8 +10351,9 @@ def api_backup_schedule_set():
 #   /etc/nginx/openmediavault-webgui.d/nas_api.conf       (nginx reverse proxy)
 #   /etc/nginx/openmediavault-webgui.d/openmediavault-webdav.conf
 #   /var/www/webdav/config/config.php               (OMV WebDAV publicDir)
-#   <WEBDAV_ROOT>/cookies.txt                       (TikTok cookies — neu accessible)
+#   <WEBDAV_ROOT>/cookies.txt                       (TikTok cookies — CHI duoc doc duoc neu nam trong WEBDAV_FILE_ROOT, duoc kiem toan qua _cookie_path_is_confined + _audit_cookie_access)
 #   <WEBDAV_ROOT>/.nas_meta/tiktok_live_watch.json  (watcher state on HDD)
+#   qBittorrent SID cookie lay tu localhost auth login (khong tu file cookie trinh duyet).
 # ============================================================================
 import tarfile
 
@@ -10664,6 +10758,22 @@ def api_backup_restore():
                 except Exception as e:
                     errors.append({"file": dest, "reason": str(e)[:120]})
 
+        # Invalidate index for any restored files that live under WEBDAV root.
+        try:
+            _restored_dirs = set()
+            for dest in restored:
+                try:
+                    _d = os.path.dirname(os.path.realpath(dest))
+                    if _d:
+                        _restored_dirs.add(_d)
+                except Exception:
+                    pass
+            if _restored_dirs:
+                _index_mutated_directories(_restored_dirs)
+        except NameError:
+            # Isolated test seam may not define _index_mutated_directories.
+            pass
+
         # FIX-REVIEW-193369e-#2: rollback CHI dest da thay trong transaction nay
         # (replaced_in_tx + _tx_tag), khong phai moi attempted. Co critical ->
         # KHONG restart, tra 500.
@@ -10903,6 +11013,8 @@ def api_torrent_control():
             return jsonify({"error": "Hành động không xác định"}), 400
 
         # Stệp 3: Send POST with form-encoded body + SID cookie
+        # (SID cookie chi duoc lay tu qBittorrent localhost auth login, khong tu file cookie trinh duyet.)
+        _audit_cookie_access("qbt_sid", qbt_base, bool(sid_cookie), "qbittorrent_local_auth" if sid_cookie else "no_sid_received")
         post_data = {"hashes": torrent_hash}
         if action == "delete":
             post_data["deleteFiles"] = "false"
@@ -11033,9 +11145,15 @@ def _social_worker(job_id, url, folder):
         has_fb_cookies = False
         if os.path.exists(cookies_path) and os.access(cookies_path, os.R_OK):
             try:
-                with open(cookies_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    if '.facebook.com' in f.read():
-                        has_fb_cookies = True
+                _ensure_cookie_guard()
+                ok = _cookie_path_is_confined(cookies_path)
+                _audit_cookie_access("read", cookies_path, ok, "check_facebook_cookies" if ok else "path_outside_allowed_dirs")
+                if not ok:
+                    has_fb_cookies = False
+                else:
+                    with open(cookies_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        if '.facebook.com' in f.read():
+                            has_fb_cookies = True
             except Exception:
                 pass
 
@@ -11102,7 +11220,10 @@ def _social_worker(job_id, url, folder):
         ]
 
         cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
-        if os.path.exists(cookies_path) and os.access(cookies_path, os.R_OK):
+        _ensure_cookie_guard()
+        _cookie_ok = _cookie_path_is_confined(cookies_path)
+        _audit_cookie_access("read", cookies_path, _cookie_ok, "pass_to_ytdlp" if _cookie_ok else "path_outside_allowed_dirs")
+        if _cookie_ok and os.path.exists(cookies_path) and os.access(cookies_path, os.R_OK):
             cmd.extend(["--cookies", cookies_path])
 
         if platform == "tiktok":
@@ -11660,28 +11781,67 @@ def api_system_logs_clear():
 @app.route("/api/ai/tags")
 @requires_auth
 def api_ai_tags():
-    """Tr? v? phan loai ảnh theo thư mục. Quet truc tiep tren NAS."""
+    """Tra ve phan loai anh. Doc tu bang ai_image_tags trong nas_index.db (catalogue)
+    thay boi doc file ai_tags.json. Neu DB chua co du lieu, fallback ve file JSON cu."""
     try:
-        if not os.path.exists(AI_TAGS_PATH):
+        root = _get_webdav_public_dir()
+        if not root:
             return jsonify({
                 "categories": {},
                 "total": 0,
-                "status": "Chưa có dữ liệu. Nhấn nút Quét để phân loại ảnh.",
+                "status": "WebDAV root chua san sang",
                 "ai_running": _alert_states.get("ai_scan_running", False)
             })
-        mtime = os.path.getmtime(AI_TAGS_PATH)
-        with open(AI_TAGS_PATH, "r") as f:
-            tags_data = json.load(f)
-
+        root_real = os.path.realpath(root)
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+        try:
+            state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
+            catalogue_revision = state[3] if state else 0
+            rows = conn.execute(
+                "SELECT path,category FROM ai_image_tags WHERE catalogue_revision=? ORDER BY category,path",
+                (catalogue_revision,)).fetchall()
+        finally:
+            conn.close()
+        categories = {}
+        total = 0
+        for fpath, cat in rows:
+            categories.setdefault(cat, []).append(fpath)
+            total += 1
+        if categories:
+            return jsonify({
+                "categories": categories,
+                "total": total,
+                "status": "ok",
+                "catalogue_revision": catalogue_revision,
+                "last_scan": _alert_states.get("ai_last_scan", 0) and
+                             datetime.datetime.fromtimestamp(_alert_states.get("ai_last_scan", 0)).strftime("%d/%m/%Y %H:%M") or "",
+                "ai_running": _alert_states.get("ai_scan_running", False),
+                "source": "file_index_db",
+            })
+        # Fallback ve file JSON cu (client cu hoac giai cap phat neu DB chua du lieu).
+        if os.path.exists(AI_TAGS_PATH):
+            try:
+                mtime = os.path.getmtime(AI_TAGS_PATH)
+                with open(AI_TAGS_PATH, "r") as f:
+                    tags_data = json.load(f)
+                return jsonify({
+                    "categories": tags_data.get("categories", {}),
+                    "total": tags_data.get("total", 0),
+                    "status": "ok",
+                    "last_scan": datetime.datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M"),
+                    "ai_running": _alert_states.get("ai_scan_running", False),
+                    "source": "ai_tags_json_fallback",
+                })
+            except Exception:
+                pass
         return jsonify({
-            "categories": tags_data.get("categories", {}),
-            "total": tags_data.get("total", 0),
-            "status": "ok",
-            "last_scan": datetime.datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M"),
-            "ai_running": _alert_states.get("ai_scan_running", False)
+            "categories": {},
+            "total": 0,
+            "status": "Chua co du lieu. Nhan nut Quet de phan loai anh.",
+            "ai_running": _alert_states.get("ai_scan_running", False),
         })
     except Exception as e:
-        return jsonify({"categories": {}, "total": 0, "status": "Lỗi: %s" % normalize_vietnamese_message(str(e))}), 500
+        return jsonify({"categories": {}, "total": 0, "status": "Loi: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
 @app.route("/api/ai/trigger", methods=["POST"])
@@ -13410,7 +13570,8 @@ def _hash_db():
 def api_hash_save():
     """Luu batch hash do client tinh (PC/app render + hash, NAS chi luu).
     Body: {"items": [{"path": "/webdav/a.jpg", "size": 123, "mtime": 456,
-    "sha256": "abc...", "partial": "md5-1MB"}]} — toi da 500 items/lan."""
+    "sha256": "abc...", "partial": "md5-1MB", "source_version": "..."}]} — toi da 500 items/lan.
+    source_version duoc dong bo bang vao bang verified_file_hashes (DB duy nhat nas_index.db)."""
     try:
         data = request.get_json(force=True, silent=True) or {}
         items = data.get("items", [])
@@ -13443,12 +13604,26 @@ def api_hash_save():
                         continue
                     if sz < 0 or sz > 10995116277760 or mt < 0:
                         continue
+                    source_version = str(it.get("source_version", "") or "")[:128]
                     conn.execute(
                         "INSERT OR REPLACE INTO file_hashes "
                         "(path, size, mtime, sha256, partial, scanned_at) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
                         (p, sz, mt, s, part, now))
                     saved += 1
+                    # Dong bo sang bang verified_file_hashes (DB duy nhat) neu co source_version
+                    if source_version:
+                        try:
+                            info = _duplicate_file_info(p)
+                            if info['version'] == source_version:
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO verified_file_hashes"
+                                    "(file_id,version,size,sha256,verified_at,path)"
+                                    " VALUES(?,?,?,?,?,?)",
+                                    (info['file_id'], source_version, sz, s, now, p))
+                        except (OSError, ValueError):
+                            # File chua index hoac khong xac nhan duoc thong tin — chi luu file_hashes
+                            pass
                 except Exception:
                     continue
             conn.commit()
@@ -14356,7 +14531,7 @@ def _thumbnail_generator():
             if not root:
                 time.sleep(30)
                 continue
-            nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail", os.path.realpath(root), priority=20)
+            nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail", os.path.realpath(root), priority=30)
             thumb_lease = nas_work_coordinator.claim_next(
                 INDEX_DB_PATH, "nas:thumbnail", True, lease_seconds=3600, job_name="thumbnail")
             if not thumb_lease:
@@ -14527,17 +14702,8 @@ def api_thumb():
             return jsonify({"error": "NAS không hỗ trợ giải mã HEIC/HEIF"}), 415
         if ext not in MEDIA_IMAGE_EXTS and ext not in MEDIA_VIDEO_EXTS:
             return jsonify({"error": "Không hỗ trợ"}), 415
-        if not _thumb_paused.is_set() or not _background_heavy_work_allowed(ignore_user_idle=True):
-            with _thumb_stats_lock:
-                _thumb_stats["paused"] = True
-                if not _thumb_stats.get("last_file"):
-                    _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
-            return jsonify({
-                "error": "NAS đang bận, tạm hoãn tạo ảnh thu nhỏ.",
-                "retry_later": True,
-                "block_reasons": sorted(_thumb_auto_block_reasons),
-                "heavy_processes": _heavy_background_processes()[:5],
-            }), 503
+        # CLIENT-FIRST: on-demand user request KHONG duoc chan boi gate livestream/USB/screen_record.
+        # Gate chi chan background worker. Yeu cua nguoi dung mo thu muc duoc render luon neu co tren dia.
         root = _get_webdav_public_dir()
         if not root:
             return jsonify({"error": "Thư mục WebDAV chưa sẵn sàng"}), 503
@@ -14705,7 +14871,7 @@ def api_thumb_status():
             base = data.get("_base_done", data["generated"])
             done = data["generated"] - base
             pending = data["total_media"] - data["generated"]
-            
+
             if done > 0 and elapsed > 0:
                 rate = done / elapsed
                 data["eta_seconds"] = int(pending / rate) if rate > 0 else -1
@@ -14714,22 +14880,91 @@ def api_thumb_status():
         else:
             data["elapsed_seconds"] = 0
             data["eta_seconds"] = -1
-            
+
         data.pop("start_time", None)
         data.pop("_base_done", None)
         if durable_jobs:
             job = durable_jobs[0]
             data["work"] = {key: job[key] for key in (
                 "state", "completed", "total", "updated_at", "error", "owner", "lease_expires_at")}
-        
-        # Format thoi gian thảnh "hh:mm"
+
+        # --- actual_status: tieng viet ro rang, phan biet scan_cursor/scan_total ---
+        # Luu luon so lieu gan nhat (khong tra total_media=0, generated=0 khi paused).
+        conn = None
+        try:
+            conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+            state_row = conn.execute(
+                "SELECT root,ready,incomplete_reason,catalogue_revision,scanned_at,built FROM index_state WHERE id=1"
+            ).fetchone()
+        except sqlite3.Error:
+            state_row = None
+        finally:
+            if conn is not None:
+                conn.close()
+
+        scan_total = 0
+        scan_cursor = ""
+        try:
+            conn2 = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+            try:
+                cnt = conn2.execute("SELECT count(*) FROM file_index WHERE is_dir=0").fetchone()
+                scan_total = int(cnt[0] if cnt else 0)
+            finally:
+                conn2.close()
+        except sqlite3.Error:
+            scan_total = int(data.get("total_media") or 0)
+
+        if state_row:
+            # state_row[5] = built (so nguyen), khong phai con trow file.
+            # Con trow quet thuc su lay tu _thumb_stats last_file (file cuoi cung da xu ly).
+            scan_cursor = data.get("last_file", "") or ""
+
+        # Xac dinh trang thai gate/thuc te.
+        paused = bool(data.get("paused"))
+        block_reasons = sorted(data.get("block_reasons", []))
+        running = bool(data.get("running"))
+        job_state = ""
+        if durable_jobs:
+            job_state = durable_jobs[0].get("state", "")
+
+        if not state_row or not state_row[1]:
+            actual_status = "index_not_ready"
+        elif paused and block_reasons:
+            actual_status = "paused:" + ",".join(block_reasons)
+        elif paused:
+            actual_status = "paused"
+        elif running and job_state == "running":
+            actual_status = "scanning"
+        elif job_state == "complete":
+            actual_status = "idle"
+        else:
+            actual_status = "idle"
+
+        data["actual_status"] = actual_status
+        data["scan_cursor"] = scan_cursor
+        data["scan_total"] = scan_total
+
+        # Thong tin thuc te: so thumbnail thuc co tren dia (khong lay tu con tro quet).
+        # work.completed/con tro quet la so file da duyet qua, KHONG PHAI so thumbnail da tao.
+        work_job = durable_jobs[0] if durable_jobs else {}
+        actual_generated = int(data.get("generated", 0) or 0)
+        actual_total = int(data.get("total_media", 0) or 0)
+        if actual_total == 0:
+            actual_total = int(work_job.get("total", 0) or 0)
+        actual_missing = actual_total - actual_generated
+        if actual_missing < 0:
+            actual_missing = 0
+        data["actual_generated"] = actual_generated
+        data["actual_total"] = actual_total
+        data["actual_missing"] = actual_missing
+
+        # Format thoi gian thah "hh:mm"
         el = data.get("elapsed_seconds", 0)
         data["elapsed_fmt"] = "%02d:%02d" % (el // 3600, (el % 3600) // 60)
         et = data.get("eta_seconds", -1)
         data["eta_fmt"] = "%02d:%02d" % (et // 3600, (et % 3600) // 60) if et > 0 else "--:--"
-        
-        return jsonify(data)
 
+        return jsonify(data)
 
 @app.route("/api/work/status")
 @requires_auth
@@ -14900,6 +15135,176 @@ def api_nas_work_files():
     finally:
         conn.close()
 
+
+# ============================================================================
+# FINGERPRINT (Moc 1) — Chu ky anh aHash chung cho tat ca client.
+# Android FingerprintWorker (Room) khong con tinh toan aHash lap lai tung may.
+# Thay do: client goi /api/fingerprint/pending de lay danh sach anh chua co aHash,
+# tinh aHash tren may client (tu first 512KB qua WebDAV Range), POST ve
+# /api/fingerprint/save. NAS luu vao bang image_fingerprints trong nas_index.db.
+# Client khac (Web, PC worker, Android khac) goi /api/fingerprint/lookup de tai
+# aHash da co thay tinh toan lai.
+# ============================================================================
+
+
+def _fingerprint_db():
+    """Mo shared index DB va co ban table image_fingerprints (da duoc tao trong _init_db)."""
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS image_fingerprints (
+            path TEXT PRIMARY KEY,
+            source_version TEXT NOT NULL DEFAULT '',
+            ahash TEXT NOT NULL DEFAULT '',
+            size INTEGER NOT NULL DEFAULT 0,
+            mtime INTEGER NOT NULL DEFAULT 0,
+            updated_at REAL NOT NULL DEFAULT 0
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_image_fps_ahash ON image_fingerprints(ahash)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_image_fps_version ON image_fingerprints(source_version)")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        log.debug("[Fingerprint] image_fingerprints table deferred", exc_info=True)
+    return conn
+
+
+def _image_fingerprint_is_stale(path, size, mtime):
+    """Tra ve True neu file da co aHash nhung kich thuoc/mtime da doi (can tinh lai)."""
+    conn = _fingerprint_db()
+    try:
+        row = conn.execute("SELECT size,mtime FROM image_fingerprints WHERE path=?", (path,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return True  # chua co -> can tinh
+    return int(row[0]) != int(size or 0) or int(row[1]) != int(mtime or 0)
+
+
+@app.route("/api/fingerprint/pending", methods=["GET"])
+@requires_auth
+def api_fingerprint_pending():
+    """Tra ve danh sach anh chua co aHash (hoac aHash bi stale) de client tinh toan.
+    Query: ?limit= (mac dinh 512, toi da 2048) & ?source_version= (phan biet phien ban client)."""
+    try:
+        limit = int(request.args.get("limit", "512") or 512)
+    except Exception:
+        limit = 512
+    if limit < 1 or limit > 2048:
+        limit = 512
+    source_version = (request.args.get("source_version") or "").strip()[:64]
+    root = _get_webdav_public_dir()
+    if not root:
+        return jsonify({"error": "WebDAV root unavailable"}), 503
+    root_real = os.path.realpath(root)
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        conn.execute("BEGIN")
+        state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
+        if (not state or not root or state[0] != root_real or not state[2] or
+                time.time() - float(state[4] or 0) > FILE_INDEX_FRESHNESS_SECONDS or _index_scan_lock.locked()):
+            _refresh_file_index_for_search()
+            return jsonify({"error": "catalogue_not_ready", "retry_after": 30}), 409
+        # Lay anh co du lieu trong file_index, bo qua nhung da co aHash hop le
+        # (khong stale). JOIN voi image_fingerprints bo loc nhanh.
+        rows = conn.execute("""
+            SELECT f.path, f.name, f.size, f.mtime
+            FROM file_index f
+            LEFT JOIN image_fingerprints fp ON fp.path = f.path
+            WHERE f.is_dir=0
+              AND (fp.path IS NULL OR fp.size<>f.size OR fp.mtime<>f.mtime OR fp.ahash='' OR fp.ahash IS NULL)
+              AND lower(f.mime) LIKE 'image/%'
+            ORDER BY f.path
+            LIMIT ?
+        """, (limit,)).fetchall()
+        files = [{"path": "/webdav/" + row[0], "name": row[1], "size": row[2], "mtime": row[3]} for row in rows]
+        return jsonify({"source": "file_index", "catalogue_revision": state[3],
+                        "source_version": source_version, "total": len(files), "files": files})
+    finally:
+        conn.close()
+
+
+@app.route("/api/fingerprint/save", methods=["POST"])
+@requires_auth
+def api_fingerprint_save():
+    """Nhan batch aHash tu client. Body: {"items": [{"path": "/webdav/a.jpg",
+    "source_version": "android-1.2", "ahash": "abcd1234...", "size": 123, "mtime": 456}], toi da 500/lan."""
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("items", [])
+    if not isinstance(items, list) or len(items) > 500:
+        return jsonify({"error": "items phai la list <= 500"}), 400
+    source_version = str(body.get("source_version") or "").strip()[:64]
+    now = time.time()
+    saved = 0
+    conn = _fingerprint_db()
+    try:
+        import re as _re_hash
+        for it in items:
+            try:
+                p = str(it.get("path", "") or "")
+                if not p or ".." in p or "\\" in p:
+                    continue
+                # Chuan hoa path: loai bo /webdav/ prefix neu co
+                if p.startswith("/webdav/"):
+                    p = p[len("/webdav/"):]
+                real = _resolve_webdav_request_path(p)
+                if not real:
+                    continue
+                ahash = str(it.get("ahash", "") or "").lower()
+                if not _re_hash.match(r"^[0-9a-f]{1,64}$", ahash or ""):
+                    continue
+                try:
+                    sz = int(it.get("size", 0) or 0)
+                    mt = int(it.get("mtime", 0) or 0)
+                except Exception:
+                    continue
+                if sz < 0 or mt < 0:
+                    continue
+                sv = str(it.get("source_version") or source_version or "unknown")[:64]
+                conn.execute(
+                    "INSERT OR REPLACE INTO image_fingerprints(path,source_version,ahash,size,mtime,updated_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (p, sv, ahash, sz, mt, now))
+                saved += 1
+            except Exception:
+                continue
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        log.error("[Fingerprint] save error: %s", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+    return jsonify({"result": "ok", "saved": saved})
+
+
+@app.route("/api/fingerprint/lookup", methods=["POST"])
+@requires_auth
+def api_fingerprint_lookup():
+    """Tra cuu aHash cho mot danh sach path. Body: {"paths": ["/webdav/a.jpg", ...]}.
+    Tra ve {"results": {"/webdav/a.jpg": {"ahash": "...", "source_version": "..."}}."""
+    body = request.get_json(force=True, silent=True) or {}
+    paths = body.get("paths", [])
+    if not isinstance(paths, list) or len(paths) > 500:
+        return jsonify({"error": "paths phai la list <= 500"}), 400
+    conn = _fingerprint_db()
+    try:
+        results = {}
+        for p in paths:
+            try:
+                if not isinstance(p, str) or ".." in p or "\\" in p:
+                    continue
+                if p.startswith("/webdav/"):
+                    p = p[len("/webdav/"):]
+                row = conn.execute("SELECT ahash,source_version,size,mtime FROM image_fingerprints WHERE path=?", (p,)).fetchone()
+                if row and row[0]:
+                    results["/webdav/" + p] = {"ahash": row[0], "source_version": row[1] or "",
+                                               "size": row[2], "mtime": row[3]}
+            except Exception:
+                continue
+    finally:
+        conn.close()
+    return jsonify({"result": "ok", "results": results})
+
 @app.route("/api/process_state", methods=["GET"])
 @requires_auth
 def api_process_state():
@@ -14938,7 +15343,7 @@ def api_thumb_control():
         root = _get_webdav_public_dir()
         if not root:
             return jsonify({"error": "Không tìm thấy thư mục WebDAV đã cấu hình"}), 503
-        nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail", os.path.realpath(root), priority=20)
+        nas_work_coordinator.request_job(INDEX_DB_PATH, "thumbnail", os.path.realpath(root), priority=30)
         with _thumb_gate_lock:
             _thumb_scan_requested = True
         return jsonify({"result": "ok", "scan_requested": True})
@@ -16636,6 +17041,7 @@ def _livestream_watchdog():
                 log.warning("[Livestream] Xu ly remux ngoai lock loi: %s", _ro)
             try:
                 with _ytdlp_lock:
+                    _ydl_dirs = set()
                     for jid, info in list(_ytdlp_jobs.items()):
                         pid = info.get("pid")
                         is_running = False
@@ -16646,9 +17052,12 @@ def _livestream_watchdog():
                             pass
                         if not is_running:
                             _cleanup_job_tmp(info.get("tmp_dir", ""))
+                            _ydl_dirs.add(info.get("folder", ""))
                             del _ytdlp_jobs[jid]
                         else:
                             ytdlp_active = True
+                    if _ydl_dirs:
+                        _index_mutated_directories([d for d in _ydl_dirs if d])
             except NameError:
                 ytdlp_active = False
             _set_thumbnail_auto_block("livestream", active)
@@ -16974,11 +17383,97 @@ _tiktok_cookies_cache = {
 _TIKTOK_COOKIES_CHECK_INTERVAL = 600  # 10 phut moi lan goi mang den TikTok
 _TIKTOK_COOKIES_EXPIRY_WARN_SEC = 3 * 86400  # báo trước 3 ngày khi sắp hết hạn
 
+_COOKIE_ACCESS_AUDIT_LOG = os.path.join(SYSTEM_DB_DIR, "cookie_access.audit.log")
+
+_COOKIE_ALLOWED_DIRS = None  # duoc cap nhat lan dau trong _ensure_cookie_guard()
+
+def _ensure_cookie_guard():
+    """Khoi tao danh sach cac thuoc duoc phep chua cookie (chi WEBDAV_FILE_ROOT va con cua no)."""
+    global _COOKIE_ALLOWED_DIRS
+    if _COOKIE_ALLOWED_DIRS is not None:
+        return
+    allowed = set()
+    root = os.path.realpath(WEBDAV_FILE_ROOT or "")
+    if root and os.path.isdir(root):
+        allowed.add(root)
+    # Them /etc/nas neu co (cai dat cookies boi admin qua install-pending-cookies.sh)
+    etc_nas = "/etc/nas"
+    if os.path.isdir(etc_nas):
+        allowed.add(os.path.realpath(etc_nas))
+    _COOKIE_ALLOWED_DIRS = allowed
+
+
+def _cookie_path_is_confined(path):
+    """Tra ve True neu `path` nam trong mot thuoc duoc phep va khong co path traversal/symlink thoat."""
+    if not path or not isinstance(path, str):
+        return False
+    _ensure_cookie_guard()
+    try:
+        real = os.path.realpath(path)
+    except Exception:
+        return False
+    for base in (_COOKIE_ALLOWED_DIRS or set()):
+        base = os.path.realpath(base)
+        if real == base or real.startswith(base + os.sep):
+            return True
+    return False
+
+
+def _is_valid_netscape_cookies_file(path):
+    """Kiem tra file cookies.txt co dang Netscape hop luon (co it nhat mot dong cookie hop le)."""
+    if not _cookie_path_is_confined(path):
+        return False
+    try:
+        if not os.path.isfile(path) or not os.access(path, os.R_OK):
+            return False
+        # Gioi han kich thuoc de chua doc file tro lon bi tao boi attacker
+        if os.path.getsize(path) > 4 * 1024 * 1024:
+            return False
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            valid_lines = 0
+            for line in f:
+                line = line.rstrip("\n")
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 7:
+                    valid_lines += 1
+                    if valid_lines >= 1:
+                        return True
+        return False
+    except Exception:
+        return False
+
+
+def _audit_cookie_access(action, path, ok, reason=""):
+    """Ghi nhat ky tien trinh truy cap cookie file de phat hien tam can (stealer-like behavior)."""
+    try:
+        log_dir = os.path.dirname(_COOKIE_ACCESS_AUDIT_LOG)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        with open(_COOKIE_ACCESS_AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write("%s\t%s\t%s\t%s\t%s\n" % (
+                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                action,
+                path or "",
+                "OK" if ok else "DENY",
+                reason,
+            ))
+    except Exception:
+        pass
+
+
 def _tiktok_cookies_path():
     return os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
 
 def _parse_cookies_sessionid_expiry(path):
-    """Đọc cookies.txt (Netscape format), tr? v? (epoch_expiry, sessionid_value) cho sessionid TikTok."""
+    """Đọc cookies.txt (Netscape format), trả về (epoch_expiry, sessionid_value) cho sessionid TikTok.
+    Chỉ đọc file trong phạm vi được phép (_cookie_path_is_confined) và ghi nhật ký kiểm toán."""
+    _ensure_cookie_guard()
+    ok = _cookie_path_is_confined(path)
+    _audit_cookie_access("read", path, ok, "parse_sessionid_expiry" if ok else "path_outside_allowed_dirs")
+    if not ok:
+        return 0, ""
     expiry = 0
     sessionid = ""
     try:

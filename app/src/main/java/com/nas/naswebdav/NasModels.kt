@@ -209,7 +209,13 @@ data class ThumbnailAuditData(
     val missing: Int = 0,
     val running: Boolean = false,
     val paused: Boolean = false,
-    val errors: Int = 0
+    val errors: Int = 0,
+    /** So file da duet qua trong vong quet nen (con tro quet), KHONG PHAI so thumbnail da tao. */
+    val scanProgress: Int = 0,
+    /** Tong so file can quet trong catalogue. */
+    val scanTotal: Int = 0,
+    /** Trang thia thuc su cua thumbnail (idle/scanning/paused/...). */
+    val actualStatus: String = ""
 )
 
 /** A single OMV systemd service in the OMV overview panel. */

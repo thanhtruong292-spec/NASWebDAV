@@ -1,141 +1,121 @@
 #!/usr/bin/env python3
-"""Quan ly file NAS qua ma hash + tim file trung lap — chay tren PC.
+# -*- coding: utf-8 -*-
+"""Quan ly file NAS qua hash + tim file trung lap — chay tren PC.
 
-1. Liet ke file qua WebDAV PROPFIND (body XML explicit + trailing slash,
-   giong app — nginx :8822 tra 405 neu thieu).
-2. Voi moi file: HEAD /api/hash/lookup?path=... — co roi thi bo qua.
-   Con lai: tai ve, tinh SHA-256 full + MD5 1MB dau (stream, khong nap RAM).
-3. POST /api/hash/save theo batch 200 items.
-4. Cuoi: GET /api/hash/duplicates?min_size=N — in nhom trung + tong dung
-   luong lang phi, ghi ra duplicates.json.
+Thay vie tu tu duyet WebDAV BFS thu cong + gui mtime=0, script nay dung
+coordinator API chuan hoa cua NAS (/api/work/claim, /api/work/checkpoint,
+/api/work/status) de lay trang cac file can hash qua lease/checkpoint.
+Moi ket qua hash duoc gan source_version (version cua file tai thoi diem
+hash) va gui len /api/hash/save, NAS luu vao bang verified_file_hashes
+cung DB voi file_index (nas_index.db).
 
 Dung:
     python scripts/pc_hash_manager.py --host http://192.168.100.254:5050 \
         --webdav-url http://192.168.100.254:8822/webdav \
-        --user <user> --pass <pass> [--workers 4] [--min-size 4096]
+        --user <user> --pass <pass> [--job hash] [--workers 4] [--min-size 4096]
         [--dry-run] [--report duplicates.json]
-
-Khac pc_thumb_batch.py: script nay hash MOI file (khong chi media) de quan
-ly + tim trung; khong render thumbnail.
 """
 import argparse
-import concurrent.futures as cf
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
-import xml.etree.ElementTree as ET
+import urllib.request
+import uuid
 
 try:
     import requests
 except ImportError:
     sys.exit("Thieu 'requests' — chay: pip install requests")
 
-PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
-<D:propfind xmlns:D="DAV:"><D:prop>
-  <D:getcontentlength/><D:getlastmodified/><D:getcontenttype/>
-  <D:resourcetype/><D:getetag/>
-</D:prop></D:propfind>"""
+
+class ApiError(Exception):
+    def __init__(self, status, detail):
+        Exception.__init__(self, "NAS API %s: %s" % (status, detail))
+        self.status = status
+        self.detail = detail
+
 
 SKIP_DIRS = {".thumbs", ".thumbnails", ".trash", ".nas_meta", ".git",
              ".recycle", "@eadir", "#recycle", ".cache"}
 
-_stats = {"total": 0, "cached": 0, "hashed": 0, "failed": 0}
-_lock = threading.Lock()
-_pending = []
-_pending_lock = threading.Lock()
-
 
 def _log(*a):
-    with _lock:
-        print(*a, flush=True)
+    print(*a, flush=True)
 
 
-def _bump(k):
-    with _lock:
-        _stats[k] += 1
+def webdav_rel(webdav_path):
+    """Chuyen duong /webdav/... thanh relative path (fay dang cua NAS)."""
+    if webdav_path.startswith("/webdav/"):
+        return webdav_path[len("/webdav/"):]
+    return webdav_path.lstrip("/")
 
 
-def propfind(session, base, path, depth=1):
-    stripped = path.strip("/")
-    url = base.rstrip("/") + ("/" + stripped + "/" if stripped else "/")
-    try:
-        r = session.request("PROPFIND", url,
-                            data=PROPFIND_BODY.encode("utf-8"),
-                            headers={"Depth": str(depth),
-                                     "Content-Type": "application/xml; charset=utf-8"},
-                            timeout=30)
-    except Exception as e:
-        _log("[WARN] PROPFIND loi %s: %s" % (url, e))
-        return []
-    if r.status_code not in (200, 207):
-        _log("[WARN] PROPFIND %s -> HTTP %s" % (url, r.status_code))
-        return []
-    out = []
-    try:
-        root = ET.fromstring(r.content)
-    except Exception as e:
-        _log("[WARN] PROPFIND %s XML loi: %s" % (url, e))
-        return []
-    for resp in root.iter():
-        if not resp.tag.endswith("response"):
-            continue
-        href, is_dir, size, mtime = "", False, 0, 0
-        for child in resp:
-            if child.tag.endswith("href") and child.text:
-                href = urllib.parse.unquote(child.text.strip())
-            if child.tag.endswith("propstat"):
-                for p in child.iter():
-                    if p.tag.endswith("resourcetype"):
-                        for rt in p:
-                            if rt.tag.endswith("collection"):
-                                is_dir = True
-                    elif p.tag.endswith("getcontentlength") and p.text:
-                        try:
-                            size = int(p.text.strip())
-                        except ValueError:
-                            pass
-                    elif p.tag.endswith("getlastmodified") and p.text:
-                        mtime = p.text.strip()
-        if href:
-            out.append((href, is_dir, size, mtime))
-    return out
+class NasClient(object):
+    def __init__(self, api_url, webdav_url, username, password):
+        self.api_url = api_url.rstrip("/")
+        self.webdav_url = webdav_url.rstrip("/") + "/"
+        raw = (username + ":" + password).encode("utf-8")
+        self.authorization = "Basic " + __import__("base64").b64encode(raw).decode("ascii")
+
+    def _request(self, url, method="GET", data=None, content_type="application/json", timeout=60):
+        headers = {"Authorization": self.authorization}
+        if content_type:
+            headers["Content-Type"] = content_type
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            detail = error.read(2048).decode("utf-8", errors="replace")
+            raise ApiError(error.code, detail)
+
+    def api(self, path, body=None):
+        data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+        raw = self._request(self.api_url + path, "GET" if body is None else "POST", data)
+        return json.loads(raw.decode("utf-8"))
+
+    def webdav_get(self, rel_path, stream=False):
+        url = self.webdav_url + urllib.parse.quote(rel_path, safe="/")
+        req = urllib.request.Request(url, headers={"Authorization": self.authorization})
+        return urllib.request.urlopen(req, timeout=600)
 
 
-def walk(session, base):
-    """BFS toan bo cay, yield (webdav-path, size)."""
-    seen = set()
-    queue = [""]
-    while queue:
-        path = queue.pop(0)
-        for href, is_dir, size, _mtime in propfind(session, base, path):
-            rel = href.split("/webdav/", 1)[-1] if "/webdav/" in href else href.lstrip("/")
-            rel = rel.strip("/")
-            if not rel or rel in seen:
-                continue
-            seen.add(rel)
-            parts = rel.lower().split("/")
-            if any(p.startswith(".") or p in SKIP_DIRS for p in parts):
-                continue
-            if is_dir or href.endswith("/"):
-                queue.append(rel)
-                continue
-            yield "/" + rel
-
-
-def lookup(session, api, path):
-    try:
-        r = session.get(api + "/api/hash/lookup", params={"path": path}, timeout=20)
-        if r.status_code == 200:
-            d = r.json()
-            if d.get("found"):
-                return d
-    except Exception:
-        pass
-    return None
+def claim_work(client, job_name, owner):
+    status = client.api("/api/work/status")
+    if not status.get("index_ready"):
+        raise ApiError(423, "catalogue_not_ready")
+    revision = status["catalogue_revision"]
+    jobs = dict((job["name"], job) for job in status.get("jobs", []))
+    prior = jobs.get(job_name) or {}
+    if prior.get("state") == "complete":
+        return None, revision, 0, 0, ""
+    if prior.get("state") in (None, "failed"):
+        client.api("/api/work/request", {"name": job_name})
+    lease = client.api("/api/work/claim", {"name": job_name, "owner": owner})
+    if not lease.get("token"):
+        return None, revision, 0, 0, ""
+    saved_cursor = lease.get("cursor", "")
+    revision_str, sep, saved_path = saved_cursor.partition("\n")
+    if sep and revision_str == str(revision):
+        cursor = saved_cursor
+        completed = lease.get("completed", 0)
+        total = max(lease.get("total", 0), completed)
+    else:
+        cursor = ""
+        completed = 0
+        total = lease.get("total", 0)
+    client.api("/api/work/checkpoint", {
+        "name": job_name, "owner": lease["owner"], "token": lease["token"],
+        "cursor": cursor, "completed": completed, "total": total,
+        "state": "running", "error": "",
+    })
+    return lease, revision, completed, total, cursor
 
 
 def hash_stream(resp, max_bytes=0):
@@ -157,86 +137,120 @@ def hash_stream(resp, max_bytes=0):
     return sha.hexdigest(), md5.hexdigest(), total
 
 
-def flush_pending(session, api, dry_run):
-    with _pending_lock:
-        batch = _pending[:200]
-        del _pending[:200]
-    if not batch:
-        return
-    if dry_run:
+def process_hash(client, job_name, owner, lease, revision, item, max_bytes, dry_run, stats):
+    """Hash mot file, gui ket qua len NAS voi source_version."""
+    rel = webdav_rel(item["path"])
+    size = item.get("size", 0)
+    if max_bytes > 0 and size > max_bytes:
+        with stats["lock"]:
+            stats["skipped_large"] += 1
         return
     try:
-        r = session.post(api + "/api/hash/save", json={"items": batch}, timeout=60)
-        if r.status_code != 200:
-            _log("[WARN] save batch HTTP %s" % (r.status_code,))
-    except Exception as e:
-        _log("[WARN] save batch loi: %s" % (e,))
-
-
-def process_one(session, webdav_base, api, path, dry_run, max_bytes):
-    _bump("total")
-    known = lookup(session, api, path)
-    if known:
-        _bump("cached")
-        return
-    url = webdav_base.rstrip("/") + "/" + urllib.parse.quote(path.lstrip("/"))
-    try:
-        r = session.get(url, timeout=600, stream=True)
-        if r.status_code != 200:
-            _bump("failed")
-            return
-        sha, partial, total = hash_stream(r, max_bytes)
+        resp = client.webdav_get(rel, stream=True)
+        sha, partial, total = hash_stream(resp, max_bytes)
         if not sha:
-            _bump("failed")
-            if max_bytes > 0:
-                _log("[SKIP] %s — qua lon" % (path,))
+            with stats["lock"]:
+                stats["failed"] += 1
+            return
+        if total != size:
+            with stats["lock"]:
+                stats["failed"] += 1
             return
     except Exception as e:
-        _bump("failed")
-        _log("[FAIL] hash %s: %s" % (path, e))
+        _log("[FAIL] hash %s: %s" % (item["path"], e))
+        with stats["lock"]:
+            stats["failed"] += 1
         return
-    _bump("hashed")
-    with _pending_lock:
-        _pending.append({"path": path, "size": total, "mtime": 0,
-                         "sha256": sha, "partial": partial})
-        need_flush = len(_pending) >= 200
-    if need_flush:
-        flush_pending(session, api, dry_run)
-    if _stats["total"] % 50 == 0:
-        _log("... %s file | moi=%s co-san=%s loi=%s" % (
-            _stats["total"], _stats["hashed"], _stats["cached"], _stats["failed"]))
+    version = str(item.get("mtime", 0)) + ":" + str(size) + ":" + sha
+    payload = {"path": item["path"], "size": total, "mtime": item.get("mtime", 0),
+               "sha256": sha, "partial": partial, "source_version": version}
+    if not dry_run:
+        try:
+            client.api("/api/hash/save", {"items": [payload]})
+        except ApiError as e:
+            _log("[WARN] save hash %s: %s" % (item["path"], e.detail))
+            with stats["lock"]:
+                stats["failed"] += 1
+            return
+    with stats["lock"]:
+        stats["hashed"] += 1
+        if stats["hashed"] % 50 == 0:
+            _log("... %s file | moi=%s loi=%s" % (
+                stats["hashed"] + stats.get("cached", 0),
+                stats["hashed"], stats["failed"]))
 
 
-def report_duplicates(session, api, min_size, report_path):
-    try:
-        r = session.get(api + "/api/hash/duplicates",
-                        params={"min_size": min_size}, timeout=120)
-        data = r.json()
-    except Exception as e:
-        _log("[WARN] lay duplicates loi: %s" % (e,))
+def run_hash_job(client, job_name, owner, workers, min_size, max_mb, dry_run):
+    stats = {"hashed": 0, "cached": 0, "failed": 0, "skipped_large": 0, "lock": threading.Lock()}
+    max_bytes = (max_mb or 0) * 1024 * 1024
+    lease, revision, completed, total, cursor = claim_work(client, job_name, owner)
+    if not lease:
+        _log("Khong co viec hash de lam (index san sang va job complete hoac NAS bani).")
         return
-    groups = data.get("groups", [])
-    wasted = sum(g.get("wasted_bytes", 0) for g in groups)
-    _log("TRUNG LAP: %s nhom, lang phi ~%sMB" % (len(groups), wasted // 1048576))
-    for g in groups[:20]:
-        _log("  - %s file x %s (%sKB) sha=%s..." % (
-            g["count"], g["files"][0].split("/")[-1],
-            g["wasted_bytes"] // 1024, g["sha256"][:12]))
-        for p in g["files"][:5]:
-            _log("      %s" % (p,))
-    if report_path:
-        with open(report_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=1)
-        _log("Da ghi bao cao: %s" % (report_path,))
+    _log("Hash job %s: revision=%s lease=%s total=%s" % (job_name, revision, lease["owner"], total))
+    page_cursor = cursor
+    need_total = True
+    while True:
+        page = client.api("/api/work/files", {
+            "name": job_name, "owner": lease["owner"], "token": lease["token"],
+            "cursor": page_cursor, "limit": 256, "catalogue_revision": revision,
+            "include_total": need_total,
+        })
+        if page["catalogue_revision"] != revision:
+            _log("Loi: catalogue thay doi giua chay hash, dung de tranh desync.")
+            return
+        if need_total:
+            total = page["total"]
+            need_total = False
+        files = page.get("files", [])
+        threads = []
+        for item in files:
+            size = item.get("size", 0)
+            if min_size and size < min_size:
+                with stats["lock"]:
+                    stats["cached"] += 1
+                continue
+            t = threading.Thread(target=process_hash, args=(client, job_name, owner,
+                                                            lease, revision, item, max_bytes, dry_run, stats))
+            t.start()
+            threads.append(t)
+            if len(threads) >= workers:
+                for t in threads:
+                    t.join()
+                threads = []
+        for t in threads:
+            t.join()
+        cursor = str(revision) + "\n" + (files[-1]["path"] if files else "")
+        client.api("/api/work/checkpoint", {
+            "name": job_name, "owner": lease["owner"], "token": lease["token"],
+            "cursor": cursor,
+            "completed": min(completed + len(files), total), "total": total,
+            "state": "running", "error": "",
+        })
+        completed = min(completed + len(files), total)
+        if page.get("eof"):
+            break
+        page_cursor = page.get("next_cursor", page_cursor)
+    error = "failed_files=%s" % stats["failed"] if stats["failed"] else ""
+    final_cursor = str(revision) + "\n" + (files[-1]["path"] if files else "")
+    client.api("/api/work/checkpoint", {
+        "name": job_name, "owner": lease["owner"], "token": lease["token"],
+        "cursor": final_cursor,
+        "completed": completed, "total": total, "state": "complete", "error": error,
+    })
+    _log("XONG hash: tong=%s moi=%s co-san=%s loi=%s boqua_lon=%s" % (
+        stats["hashed"] + stats["cached"], stats["hashed"], stats["cached"],
+        stats["failed"], stats["skipped_large"]))
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Quan ly file NAS qua hash + tim trung")
+    ap = argparse.ArgumentParser(description="Quan ly file NAS qua hash + tim trung (coordinator API)")
     ap.add_argument("--host", required=True)
     ap.add_argument("--user", required=True)
     ap.add_argument("--pass", dest="password", required=True)
     ap.add_argument("--webdav-url", default="")
     ap.add_argument("--api-url", default="")
+    ap.add_argument("--job", default="hash", choices=("hash", "duplicates", "fingerprint"))
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--min-size", type=int, default=4096,
                     help="Bo qua file nho hon N bytes khi bao trung (mac dinh 4096)")
@@ -245,34 +259,25 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--report", default="duplicates.json")
     args = ap.parse_args()
-    max_bytes = (args.max_mb or 0) * 1024 * 1024
-
-    session = requests.Session()
-    session.auth = (args.user, args.password)
     base = args.host.rstrip("/")
+    api = args.api_url.rstrip("/") if args.api_url else base
     webdav_base = (args.webdav_url.rstrip("/") if args.webdav_url
                    else base + "/webdav")
-    api = args.api_url.rstrip("/") if args.api_url else base
-
-    _log("WebDAV: %s | API: %s" % (webdav_base, api))
-    root = propfind(session, webdav_base, "")
-    _log("PROPFIND root -> %s muc" % (len(root),))
-    files = list(walk(session, webdav_base))
-    _log("Tim thay %s file." % (len(files),))
-    if not files:
-        return
-    t0 = time.time()
-    with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(process_one, session, webdav_base, api, p,
-                          args.dry_run, max_bytes) for p in files]
-        for f in cf.as_completed(futs):
-            f.result()
-    flush_pending(session, api, args.dry_run)
-    dt = time.time() - t0
-    _log("XONG trong %.0fs: tong=%s moi=%s co-san=%s loi=%s" % (
-        dt, _stats["total"], _stats["hashed"], _stats["cached"], _stats["failed"]))
+    client = NasClient(api, webdav_base, args.user, args.password)
+    run_hash_job(client, args.job, "pc-" + uuid.uuid4().hex[:20],
+                 args.workers, args.min_size, args.max_mb, args.dry_run)
     if not args.dry_run:
-        report_duplicates(session, api, args.min_size, args.report)
+        try:
+            data = client.api("/api/hash/duplicates", {"min_size": args.min_size})
+        except Exception:
+            data = None
+        if data:
+            groups = data.get("groups", [])
+            wasted = sum(g.get("wasted_bytes", 0) for g in groups)
+            _log("TRUNG LAP: %s nhom, lang phi ~%sMB" % (len(groups), wasted // 1048576))
+            with open(args.report, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+            _log("Da ghi bao cao: %s" % (args.report,))
 
 
 if __name__ == "__main__":

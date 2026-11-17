@@ -32,9 +32,11 @@ def production_namespace():
     ns = dict(os=os, json=json, shutil=shutil, tarfile=tarfile, tempfile=tempfile,
               threading=threading, time=time, signal=signal, uuid=uuid,
               log=Mock(), sys=Mock(), subprocess=Mock())
+    import sqlite3 as _sqlite3
+    ns['sqlite3'] = _sqlite3
     # Some unrelated functions have defaults evaluated at definition time.
     needed = {'api_backup_restore', '_restart_nas_api',
-              '_livestream_active_job_for_key_locked'}
+              '_livestream_active_job_for_key_locked', '_index_mutated_directories'}
     selected = [node for node in nodes if node.name in needed]
     while True:
         referenced = {n.id for node in selected for n in ast.walk(node)
@@ -48,7 +50,7 @@ def production_namespace():
     # Do not recursively pull platform/logging helpers into this isolated seam.
     selected = [n for n in selected if n.name in {
         'api_backup_restore', '_restart_nas_api',
-        '_livestream_active_job_for_key_locked'} or
+        '_livestream_active_job_for_key_locked', '_index_mutated_directories'} or
         ('restore' in n.name or 'drain' in n.name or 'finalizer' in n.name)]
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(SERVER), 'exec'), ns)
     return ns

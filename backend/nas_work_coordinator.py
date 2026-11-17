@@ -24,31 +24,46 @@ def import_legacy_catalogue(database, legacy):
               "storage_summary_revision"}
     conn = sqlite3.connect(database, timeout=30, isolation_level=None)
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("CREATE TABLE IF NOT EXISTS catalogue_imports (source TEXT PRIMARY KEY)")
-        if conn.execute("SELECT 1 FROM catalogue_imports WHERE source='nas_fast_index'").fetchone():
-            conn.commit()
-            return
         conn.execute("ATTACH DATABASE ? AS old", (legacy,))
-        schema = conn.execute("SELECT type,name,tbl_name,sql FROM old.sqlite_master "
-                              "WHERE sql IS NOT NULL AND name NOT GLOB 'sqlite_*' "
-                              "ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END").fetchall()
-        if not any(name == "file_index" for _, name, _, _ in schema):
-            raise ValueError("Legacy catalogue lacks file_index")
-        for kind, name, table, ddl in schema:
-            if kind == "trigger" and table == "file_index" and name.startswith("storage_summary_"):
-                continue  # Superseded by one catalogue revision per transaction.
-            if table not in tables or kind not in ("table", "index"):
-                raise ValueError("Unknown legacy catalogue object: " + name)
-            if kind == "table" and table == "thumb_neg_cache":
-                conn.execute("CREATE TABLE IF NOT EXISTS thumb_neg_cache (path TEXT PRIMARY KEY, ts REAL)")
-                conn.execute("INSERT OR REPLACE INTO main.thumb_neg_cache(path,ts) SELECT path,ts FROM old.thumb_neg_cache")
-                continue
-            conn.execute(ddl)
-            if kind == "table":
-                conn.execute("INSERT INTO main." + table + " SELECT * FROM old." + table)
-        conn.execute("INSERT INTO catalogue_imports VALUES ('nas_fast_index')")
-        conn.commit()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("CREATE TABLE IF NOT EXISTS catalogue_imports (source TEXT PRIMARY KEY)")
+            if conn.execute("SELECT 1 FROM catalogue_imports WHERE source='nas_fast_index'").fetchone():
+                conn.commit()
+                return
+            schema = conn.execute("SELECT type,name,tbl_name,sql FROM old.sqlite_master "
+                                  "WHERE sql IS NOT NULL AND name NOT GLOB 'sqlite_*' "
+                                  "ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END").fetchall()
+            if not any(name == "file_index" for _, name, _, _ in schema):
+                raise ValueError("Legacy catalogue lacks file_index")
+            for kind, name, table, ddl in schema:
+                if kind == "trigger" and table == "file_index" and name.startswith("storage_summary_"):
+                    continue  # Superseded by one catalogue revision per transaction.
+                if table not in tables or kind not in ("table", "index"):
+                    raise ValueError("Unknown legacy catalogue object: " + name)
+                if kind == "table" and table == "thumb_neg_cache":
+                    conn.execute("CREATE TABLE IF NOT EXISTS thumb_neg_cache (path TEXT PRIMARY KEY, ts REAL)")
+                    conn.execute("INSERT OR REPLACE INTO main.thumb_neg_cache(path,ts) SELECT path,ts FROM old.thumb_neg_cache")
+                    continue
+                if kind == "table":
+                    ddl_safe = ddl.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ").replace(
+                        "CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+                    conn.execute(ddl_safe)
+                    old_cols = [r[1] for r in conn.execute("PRAGMA old.table_info(" + table + ")").fetchall()]
+                    col_list = ",".join(old_cols)
+                    conn.execute("INSERT OR REPLACE INTO main." + table + "(" + col_list + ") SELECT " + col_list + " FROM old." + table)
+                elif kind == "index":
+                    ddl_safe = (ddl.replace("CREATE INDEX IF NOT EXISTS ", "CREATE INDEX ")
+                                   .replace("CREATE UNIQUE INDEX IF NOT EXISTS ", "CREATE UNIQUE INDEX ")
+                                   .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1)
+                                   .replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", 1))
+                    conn.execute(ddl_safe)
+            conn.execute("INSERT OR REPLACE INTO catalogue_imports VALUES ('nas_fast_index')")
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
     finally:
         conn.close()
 

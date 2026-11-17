@@ -403,15 +403,25 @@ class SmartToolsViewModel(
                     if (response.isSuccessful) {
                         val body = response.body?.string() ?: "{}"
                         val obj = org.json.JSONObject(body)
-                        val total = obj.optInt("total_media", 0)
-                        val generated = obj.optInt("generated", 0)
+                        // so thumbnail thuc te tren dia (khong phai con tro quet nen)
+                        val actualGenerated = obj.optInt("actual_generated", obj.optInt("generated", 0))
+                        val actualTotal = obj.optInt("actual_total", obj.optInt("total_media", 0))
+                        val actualMissing = obj.optInt("actual_missing",
+                            if (actualTotal > actualGenerated) actualTotal - actualGenerated else 0)
+                        // tien trinh quet nen (con tro quet), duoc liet ke roi bo qua neu da co thumb
+                        val scanProgress = obj.optInt("scan_cursor", 0)
+                        val scanTotal = obj.optInt("scan_total", 0)
+                        val actualStatus = obj.optString("actual_status", "")
                         _thumbnailAudit.value = ThumbnailAuditData(
-                            total = total,
-                            thumbnailed = generated,
-                            missing = if (total > generated) total - generated else 0,
+                            total = actualTotal,
+                            thumbnailed = actualGenerated,
+                            missing = actualMissing,
                             running = obj.optBoolean("running", false),
                             paused = obj.optBoolean("paused", false),
-                            errors = obj.optInt("errors", 0)
+                            errors = obj.optInt("errors", 0),
+                            scanProgress = scanProgress,
+                            scanTotal = scanTotal,
+                            actualStatus = actualStatus
                         )
                     }
                 }

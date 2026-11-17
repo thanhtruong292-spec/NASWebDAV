@@ -1,30 +1,43 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Batch thumbnail generator chay tren PC — may tinh render thay NAS.
 
-Liet ke file qua WebDAV PROPFIND, voi moi file media chua co thumbnail:
-  1. HEAD /api/thumb?path=... — 200 = co roi, bo qua (khong tai, khong render).
-  2. Tai file goc ve temp (Range gioi han 200MB).
-  3. Render local: Pillow (anh) / ffmpeg -ss -vframes 1 (video), max 320px.
-  4. POST /api/thumb/upload — NAS ghi .thumbs/<hash>.jpg, daemon skip.
+Thay vie tu tu duyet WebDAV BFS thu cong, script nay dung coordinator API
+chuan hoa cua NAS (/api/work/claim, /api/work/checkpoint, /api/work/status)
+de lay trang cac file can render thumbnail qua lease/checkpoint.
+
+1. Lay trang file can thumbnail tu /api/work/files (file_index).
+2. Kiem tra /api/thumb/exists — 200 = co roi, bo qua (khong tai, khong render).
+3. Tai file goc ve temp (Range gioi han 200MB).
+4. Render local: Pillow (anh) / ffmpeg -ss -vframes 1 (video), max 320px.
+   HEIC/HEIF: NAS PIL 4.0.0 khong decode duoc -> PC worker nhan xu ly,
+   neu PC cung khong decode duoc thi danh dau bo qua.
+5. POST /api/thumb/upload — NAS ghi .thumbs/<hash>.jpg, daemon skip.
 
 Dung:
     pip install requests pillow
-    python scripts/pc_thumb_batch.py --host http://192.168.100.254:8822 \
+    python scripts/pc_thumb_batch.py --host http://192.168.100.254:5050 \
+        --webdav-url http://192.168.100.254:8822/webdav \
         --user daica --pass <mat-khau> [--workers 4] [--dry-run]
 
 Yeu cau: ffmpeg trong PATH (chi can cho video; anh dung Pillow).
 """
 import argparse
+import base64
 import concurrent.futures as cf
 import io
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
-import xml.etree.ElementTree as ET
+import urllib.request
+import uuid
 
 try:
     import requests
@@ -33,8 +46,6 @@ except ImportError:
 
 try:
     from PIL import Image, ImageFile
-    # Anh Facebook tai ve hay bi cut duoi vai bytes — van decode duoc phan
-    # co de lam thumb 320px thay vi bo ca file.
     ImageFile.LOAD_TRUNCATED_IMAGES = True
     HAVE_PIL = True
 except ImportError:
@@ -43,22 +54,75 @@ except ImportError:
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v"}
 THUMB_SIZE = 320
-# Mac dinh KHONG gioi han dung luong (chay LAN/WiFi 6). Neu mang yeu thi
-# truyen --max-mb N de bo qua file lon hon N MB (0 = khong gioi han).
-MAX_BYTES_DEFAULT = 0
+MAX_BYTES = 200 * 1024 * 1024  # gioi han tai file qua LAN (0 = khong gioi han)
 
-_stats = {"total": 0, "skipped": 0, "done": 0, "failed": 0}
-_lock = threading.Lock()
+
+class ApiError(Exception):
+    def __init__(self, status, detail):
+        Exception.__init__(self, "NAS API %s: %s" % (status, detail))
+        self.status = status
+        self.detail = detail
+
+
+class NasClient(object):
+    def __init__(self, api_url, webdav_url, username, password):
+        self.api_url = api_url.rstrip("/")
+        self.webdav_url = webdav_url.rstrip("/") + "/"
+        raw = (username + ":" + password).encode("utf-8")
+        self.authorization = "Basic " + base64.b64encode(raw).decode("ascii")
+        self.owner = "pc-" + uuid.uuid4().hex[:20]
+        self.lease = None
+        self.revision = None
+        self.cursor = ""
+
+    def _request(self, url, method="GET", data=None, content_type="application/json", timeout=60):
+        headers = {"Authorization": self.authorization}
+        if content_type:
+            headers["Content-Type"] = content_type
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            detail = error.read(2048).decode("utf-8", errors="replace")
+            raise ApiError(error.code, detail)
+
+    def api(self, path, method="GET", body=None, content_type="application/json"):
+        data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+        raw = self._request(self.api_url + path, method, data, content_type)
+        return json.loads(raw.decode("utf-8"))
+
+    def webdav_get(self, rel_path):
+        url = self.webdav_url + urllib.parse.quote(rel_path, safe="/")
+        req = urllib.request.Request(url, headers={"Authorization": self.authorization})
+        return urllib.request.urlopen(req, timeout=600)
+
+    def checkpoint(self, state="running", error=""):
+        if not self.lease:
+            return
+        path = self.cursor.split("\n", 1)[-1] if self.cursor else ""
+        cursor = (str(self.revision) + "\n" + path) if self.revision is not None else self.cursor
+        self.api("/api/work/checkpoint", {
+            "name": "thumbnail", "owner": self.lease["owner"], "token": self.lease["token"],
+            "cursor": cursor, "completed": 0, "total": 0,
+            "state": state, "error": error,
+        })
+        self.cursor = cursor
+
+
+def webdav_rel(webdav_path):
+    if webdav_path.startswith("/webdav/"):
+        return webdav_path[len("/webdav/"):]
+    return webdav_path.lstrip("/")
 
 
 def _log(*a):
-    with _lock:
-        print(*a, flush=True)
+    print(*a, flush=True)
 
 
-def _bump(k):
-    with _lock:
-        _stats[k] += 1
+def _bump(stats, k):
+    with stats["lock"]:
+        stats[k] += 1
 
 
 PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
@@ -69,16 +133,11 @@ PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
 
 
 def _quote_variants(path):
-    """Cac cach encode path de thu khi 404: ten Nhat/Trung/Han hay bi double-
-    encode (%E3%80%80 con sot) hoac server cho UTF-8 tho. Tra list URL path."""
     stripped = path.strip("/")
     variants = []
-    # 1. Chuan: quote UTF-8 toan path (giua /).
     variants.append("/" + "/".join(
         urllib.parse.quote(seg, safe="") for seg in stripped.split("/")) + "/"
         if stripped else "/")
-    # 2. Unquote-rescue: path da bi encode 1 lan (con sot %XX) -> giai het
-    # ve UTF-8 tho roi quote lai dung.
     try:
         rescued = urllib.parse.unquote(urllib.parse.unquote(stripped))
         v = ("/" + "/".join(
@@ -88,7 +147,6 @@ def _quote_variants(path):
             variants.append(v)
     except Exception:
         pass
-    # 3. Tho (khong encode): mot so nginx cau hinh accepting raw UTF-8.
     raw = "/" + stripped + "/" if stripped else "/"
     if raw not in variants:
         variants.append(raw)
@@ -96,11 +154,6 @@ def _quote_variants(path):
 
 
 def propfind(session, base, path, depth=1, debug=False):
-    """Tra ve [(href, is_dir)] duoi path WebDAV (Depth: 1).
-    Gui body XML explicit giong app (WebDavManager FIX H5) — nginx WebDAV
-    tra 405 neu PROPFIND khong co body. URL luon co dau / cuoi giong app
-    (toValidUrl ep trailing slash cho collection) — thieu la nginx tra 405.
-    Ten Nhat/Trung/Han de bi 404 do double-encode -> thu nhieu bien the."""
     base = base.rstrip("/")
     last_status = None
     for variant in _quote_variants(path):
@@ -118,10 +171,11 @@ def propfind(session, base, path, depth=1, debug=False):
             break
         last_status = r.status_code
     else:
-        _log("[WARN] PROPFIND %s -> HTTP %s (thu %s bien the encode, can Basic auth + quyen doc)" % (
+        _log("[WARN] PROPFIND %s -> HTTP %s (thu %s bien the encode)" % (
             base + _quote_variants(path)[0], last_status, len(_quote_variants(path))))
         return []
     out = []
+    import xml.etree.ElementTree as ET
     try:
         root = ET.fromstring(r.content)
     except Exception as e:
@@ -147,7 +201,7 @@ def propfind(session, base, path, depth=1, debug=False):
 
 
 def walk(session, base):
-    """BFS toan bo cay WebDAV, yield webdav-path cua file media."""
+    """BFS toan bo cay WebDAV, yield webdav-path cua file media can thumbnail."""
     seen = set()
     queue = [""]
     while queue:
@@ -170,27 +224,28 @@ def walk(session, base):
                 yield "/" + rel
 
 
-def make_session(user, password):
-    """Session rieng moi worker: pool lon, keep-alive, khong tranh nhau.
-    requests.Session KHONG thread-safe tren pool — dung chung la nghen."""
-    from requests.adapters import HTTPAdapter
-    s = requests.Session()
-    s.auth = (user, password)
-    ad = HTTPAdapter(pool_connections=8, pool_maxsize=16,
-                     max_retries=2, pool_block=False)
-    s.mount("http://", ad)
-    s.mount("https://", ad)
-    return s
-
-
-def has_thumb(session, api, path):
-    try:
-        r = session.head(api + "/api/thumb",
-                         params={"path": path}, timeout=20,
-                         allow_redirects=True)
-        return r.status_code == 200
-    except Exception:
+def claim_thumbnail_work(client):
+    status = client.api("/api/work/status")
+    if not status.get("index_ready"):
+        raise ApiError(423, "catalogue_not_ready")
+    client.revision = status["catalogue_revision"]
+    jobs = dict((job["name"], job) for job in status.get("jobs", []))
+    prior = jobs.get("thumbnail") or {}
+    if prior.get("state") == "complete":
         return False
+    if prior.get("state") in (None, "failed"):
+        client.api("/api/work/request", {"name": "thumbnail"})
+    client.lease = client.api("/api/work/claim",
+                              {"name": "thumbnail", "owner": client.owner})
+    if not client.lease.get("token"):
+        return False
+    saved_revision, sep, saved_path = client.lease.get("cursor", "").partition("\n")
+    if sep and saved_revision == str(client.revision):
+        client.cursor = client.lease["cursor"]
+    else:
+        client.cursor = ""
+    client.checkpoint()
+    return True
 
 
 def render_image(data):
@@ -198,9 +253,6 @@ def render_image(data):
         return None
     try:
         img = Image.open(io.BytesIO(data))
-        # Anh Facebook hay bi cut duoi vai bytes (truncated 0-7 bytes) — load
-        # rieng de lay phan decode duoc thay vi bo ca file.
-        # BILINEAR nhanh gap 3-4x LANCZOS, mat thuong khong phan biet o 320px.
         try:
             img.draft("RGB", (THUMB_SIZE * 2, THUMB_SIZE * 2))
         except Exception:
@@ -211,7 +263,6 @@ def render_image(data):
             if "truncated" not in str(oe).lower():
                 raise
         img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.BILINEAR)
-        # PNG 16-bit (I;16/...) khong save JPEG truc tiep duoc -> ve L roi RGB.
         if img.mode in ("I;16", "I;16L", "I;16B", "I", "F"):
             img = img.convert("L").convert("RGB")
         elif img.mode != "RGB":
@@ -225,8 +276,6 @@ def render_image(data):
 
 
 def _ffmpeg_hw_args():
-    """Chon hwaccel neu co: dxva2/d3d11va (Windows), videotoolbox (macOS),
-    cuda/qsv/vaapi (Linux). Khong co thi [] (CPU). Cache ket qua."""
     if hasattr(_ffmpeg_hw_args, "_cached"):
         return _ffmpeg_hw_args._cached
     args = []
@@ -256,11 +305,6 @@ def _ffmpeg_hw_args():
 
 def render_video(tmp_path):
     out = tmp_path + ".thumb.jpg"
-    # -ss TRUOC -i = seek nhanh (khong decode tu dau toi giay 5). Mot so file
-    # (moov o cuoi, index hong) seek nhanh cho frame den -> fallback seek chinh
-    # xac (-ss sau -i). hwaccel neu co.
-    # Luu y d3d11va: mot so file (screen-recorder, audio-only, moov hong)
-    # bao "Invalid data"/"no packets" du CPU van mo duoc -> fallback CPU cuoi.
     hw = _ffmpeg_hw_args()
     vf = "scale=%s:-1" % (THUMB_SIZE,)
     attempts = [
@@ -270,8 +314,6 @@ def render_video(tmp_path):
         (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
           "-i", tmp_path, "-ss", "5",
           "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
-        # Fallback cuoi: CPU + seek giay 0 (file nao co 1 frame doc duoc
-        # cung ra thumb, ke ca moov hong).
         (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
           "-i", tmp_path,
           "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
@@ -286,8 +328,7 @@ def render_video(tmp_path):
                 with open(out, "rb") as f:
                     return f.read()
             err_txt = (r.stderr or b"").decode("utf-8", errors="ignore").strip()
-            last_err = err_txt.splitlines()[-1:] or [""]
-            last_err = last_err[0][:160]
+            last_err = (err_txt.splitlines()[-1:] or [""])[0][:160]
         except Exception as e:
             last_err = str(e)[:160]
             continue
@@ -296,118 +337,122 @@ def render_video(tmp_path):
     return None
 
 
-def process_one(session, base, api, path, dry_run, max_bytes=0):
-    _bump("total")
-    if has_thumb(session, api, path):
-        _bump("skipped")
+def _is_heic_by_magic(path):
+    """Phat hien HEIF/HEIC bang magic bytes, khong phai extension."""
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(12)
+        if len(magic) >= 12 and magic[4:8] == b"ftyp" and magic[8:12] in (
+                b"mif1", b"msf1", b"heic", b"heix", b"hevc", b"hevx",
+                b"heim", b"heis", b"hevm", b"hevs", b"mif2"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _upload_thumb(client, path, blob, source_version=None):
+    boundary = "----NasWorker" + uuid.uuid4().hex
+    body = ("--%s\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n%s\r\n" %
+            (boundary, path)).encode("utf-8")
+    if source_version:
+        body += ("--%s\r\nContent-Disposition: form-data; name=\"source_version\"\r\n\r\n%s\r\n" %
+                 (boundary, source_version)).encode("ascii")
+    body += ("--%s\r\nContent-Disposition: form-data; name=\"thumb\"; filename=\"thumb.jpg\"\r\n"
+             "Content-Type: image/jpeg\r\n\r\n" % boundary).encode("ascii")
+    body += blob + ("\r\n--%s--\r\n" % boundary).encode("ascii")
+    client.api("/api/thumb/upload", "POST", body,
+               "multipart/form-data; boundary=" + boundary)
+
+
+def process_one(client, item, dry_run, max_bytes, stats):
+    path = item["path"]
+    _bump(stats, "total")
+    try:
+        missing_result = client.api("/api/thumb/exists", {"paths": [path]})
+    except ApiError:
+        _bump(stats, "failed")
+        _log("[FAIL] thumb/exists %s" % path)
+        return
+    if path not in missing_result.get("missing", []):
+        _bump(stats, "skipped")
         return
     ext = os.path.splitext(path)[1].lower()
     is_video = ext in VIDEO_EXTS
-    if is_video and not _have_ffmpeg():
-        _bump("failed")
+    if is_video and shutil.which("ffmpeg") is None:
+        _bump(stats, "failed")
         _log("[SKIP] %s — can ffmpeg de render video" % (path,))
         return
     if not is_video and not HAVE_PIL:
-        _bump("failed")
+        _bump(stats, "failed")
         _log("[SKIP] %s — can Pillow (pip install pillow)" % (path,))
         return
-    # Tai full file goc qua LAN (khong gioi han mac dinh). Chi gioi han khi
-    # truyen --max-mb (mang yeu). base o day la webdav_base (da gom /webdav).
     try:
-        url = base.rstrip("/") + "/" + urllib.parse.quote(path.lstrip("/"))
-        r = session.get(url, timeout=600, stream=True)
-        if r.status_code != 200:
-            _bump("failed")
-            return
-        with tempfile.NamedTemporaryFile(delete=False,
-                                         suffix=os.path.splitext(path)[1]) as tf:
-            tmp = tf.name
-            total = 0
-            for chunk in r.iter_content(1024 * 1024):
-                if not chunk:
-                    break
-                total += len(chunk)
-                if max_bytes > 0 and total > max_bytes:
-                    break
-                tf.write(chunk)
-        if max_bytes > 0 and total > max_bytes:
-            os.unlink(tmp)
-            _bump("failed")
+        resp = client.webdav_get(webdav_rel(path))
+        data = resp.read(max_bytes + 1) if max_bytes > 0 else resp.read()
+        if max_bytes > 0 and len(data) > max_bytes:
+            _bump(stats, "failed")
             _log("[SKIP] %s — qua lon (>%sMB)" % (path, max_bytes // 1048576))
             return
     except Exception as e:
-        _bump("failed")
+        _bump(stats, "failed")
         _log("[FAIL] tai %s: %s" % (path, e))
         return
+    source_version = "%s:%s" % (
+        resp.headers.get("X-NAS-Version", ""), resp.headers.get("Content-Length", len(data)))
+    if dry_run:
+        _bump(stats, "done")
+        _log("[DRY] %s" % (path,))
+        return
+    tmp = None
     try:
+        tmp = tempfile.NamedTemporaryFile(delete=False,
+                                          suffix=os.path.splitext(path)[1]).name
+        with open(tmp, "wb") as tf:
+            tf.write(data)
         if is_video:
             blob = render_video(tmp)
         else:
             with open(tmp, "rb") as f:
                 blob = render_image(f.read())
     finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     if not blob:
-        _bump("failed")
+        _bump(stats, "failed")
         _log("[FAIL] render %s" % (path,))
         return
-    if dry_run:
-        _bump("done")
-        _log("[DRY] %s (%sKB)" % (path, len(blob) // 1024))
-        return
     try:
-        r = session.post(api + "/api/thumb/upload",
-                         data={"path": path},
-                         files={"thumb": ("thumb.jpg", blob, "image/jpeg")},
-                         timeout=60)
-        if r.status_code == 200:
-            _bump("done")
-        else:
-            _bump("failed")
-            _log("[FAIL] upload %s: HTTP %s" % (path, r.status_code))
+        _upload_thumb(client, path, blob, source_version)
+        _bump(stats, "done")
     except Exception as e:
-        _bump("failed")
+        _bump(stats, "failed")
         _log("[FAIL] upload %s: %s" % (path, e))
-    n = _stats["total"]
-    if n % 25 == 0:
-        _log("... %s file | xong=%s bo-qua=%s loi=%s" % (
-            n, _stats["done"], _stats["skipped"], _stats["failed"]))
-
-
-def _have_ffmpeg():
-    try:
-        subprocess.run(["ffmpeg", "-version"], timeout=10,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Batch thumbnails tren PC thay NAS")
+    ap = argparse.ArgumentParser(description="Batch thumbnails tren PC thay NAS (coordinator API)")
     ap.add_argument("--host", required=True,
-                    help="VD: http://192.168.100.254:8822")
+                    help="VD: http://192.168.100.254:5050")
     ap.add_argument("--user", required=True)
     ap.add_argument("--pass", dest="password", default="",
-                    help="Mat khau NAS (khuyen dung: bo trong + dat NAS_PASS "
-                         "de khoi lo pass trong lich su lenh).")
+                    help="Mat khau NAS (khuyen dung: bo trong + dat NAS_PASS de khoi lo pass trong lich su lenh).")
+    ap.add_argument("--webdav-url", default="",
+                    help="Base WebDAV rieng (mac dinh: <host>/webdav).")
+    ap.add_argument("--api-url", default="",
+                    help="Base API rieng (mac dinh: <host>).")
     ap.add_argument("--workers", type=int, default=0,
                     help="So luong mac dinh = CPU x 2 (toi da 16).")
+    ap.add_argument("--priority-folder", default="",
+                    help="Thu muc uu tien render truoc (vd AutoBackup/DCIM/Camera), bo qua neu trong bo nhung file cu.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Chi liet ke + render, khong upload")
     ap.add_argument("--max-mb", type=int, default=0,
-                    help="Bo qua file lon hon N MB (0 = khong gioi han, mac dinh "
-                         "cho LAN/WiFi 6). Chi dung khi mang yeu.")
-    ap.add_argument("--webdav-url", default="",
-                    help="Base WebDAV rieng (mac dinh: <host>/webdav). "
-                         "VD khi API :5050 nhung WebDAV :8822.")
-    ap.add_argument("--api-url", default="",
-                    help="Base API rieng (mac dinh: <host>).")
+                    help="Bo qua file lon hon N MB (0 = khong gioi han, mac dinh 200MB).")
     args = ap.parse_args()
-    max_bytes = (args.max_mb or 0) * 1024 * 1024
     password = args.password or os.environ.get("NAS_PASS", "")
     if not password:
         sys.exit("Thieu mat khau: truyen --pass ... hoac dat bien NAS_PASS.")
@@ -416,48 +461,62 @@ def main():
     webdav_base = (args.webdav_url.rstrip("/") if args.webdav_url
                    else base + "/webdav")
     api = args.api_url.rstrip("/") if args.api_url else base
+    client = NasClient(api, webdav_base, args.user, password)
+
+    max_bytes = (args.max_mb or 0) * 1024 * 1024 or MAX_BYTES
+    stats = {"total": 0, "skipped": 0, "done": 0, "failed": 0, "heic_skipped": 0, "lock": threading.Lock()}
 
     _log("WebDAV: %s | API: %s" % (webdav_base, api))
-    # Debug root ngay: thay vi nuot im roi bao 0 file.
-    _tls = threading.local()
+    try:
+        started = claim_thumbnail_work(client)
+    except ApiError as e:
+        _log("Khong the bat dau lam viec thumbnail: %s" % e.detail)
+        return 1
+    if not started:
+        _log("Khong co viec thumbnail de lam (index san sang va job complete hoac NAS bani).")
+        return 0
 
-    def _session():
-        s = getattr(_tls, "s", None)
-        if s is None:
-            s = make_session(args.user, password)
-            _tls.s = s
-        return s
-
-    _root = propfind(_session(), webdav_base, "", debug=True)
-    _log("PROPFIND root -> %s muc (vd: %s)" % (
-        len(_root), [h for h, _ in _root[:3]]))
-    hw = _ffmpeg_hw_args()
-    _log("ffmpeg hwaccel: %s" % (hw if hw else "CPU (khong thay GPU)",))
-    _log("Liet ke file media tren %s ..." % (webdav_base,))
-    files = list(walk(_session(), webdav_base))
-    _log("Tim thay %s file media." % (len(files),))
-    if not files:
-        return
-    if not HAVE_PIL:
-        _log("CANH BAO: thieu Pillow — anh se bi bo qua (pip install pillow).")
-    if not _have_ffmpeg():
-        _log("CANH BAO: khong thay ffmpeg — video se bi bo qua.")
+    priority_folder = args.priority_folder.strip("/") if args.priority_folder else ""
+    _log("Lay trang file can thumbnail qua /api/work/files (catalogue_revision=%s)..." % client.revision)
+    page_cursor = client.cursor
+    need_total = True
+    total = 0
     workers = args.workers or min(16, (os.cpu_count() or 4) * 2)
-    _log("Workers: %s (CPU x 2)." % (workers,))
-    t0 = time.time()
-
-    def _run(p):
-        return process_one(_session(), webdav_base, api, p,
-                           args.dry_run, max_bytes)
-
-    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(_run, p) for p in files]
-        for f in cf.as_completed(futs):
-            f.result()
-    dt = time.time() - t0
-    _log("XONG trong %.0fs: tong=%s hoan-thanh=%s bo-qua-da-co=%s loi=%s" % (
-        dt, _stats["total"], _stats["done"], _stats["skipped"], _stats["failed"]))
+    _log("Workers: %s" % workers)
+    while True:
+        page = client.api("/api/work/files", {
+            "name": "thumbnail", "owner": client.owner, "token": client.lease["token"],
+            "cursor": page_cursor, "limit": 256, "catalogue_revision": client.revision,
+            "include_total": need_total,
+        })
+        if page["catalogue_revision"] != client.revision:
+            _log("Loi: catalogue thay doi giua chay thumbnail, dung de tranh desync.")
+            return 1
+        if need_total:
+            total = page["total"]
+            need_total = False
+        files = page.get("files", [])
+        # Neu co priority_folder, sap xep: file thuoc thu muc uu tien duoc xu ly truoc.
+        if priority_folder:
+            def _prio_key(item):
+                p = item.get("path", "")
+                return 0 if p.startswith("/" + priority_folder + "/") or p == "/" + priority_folder else 1
+            files.sort(key=_prio_key)
+        _log("Trang: %s file (tong %s)" % (len(files), total))
+        with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(process_one, client, item, args.dry_run, max_bytes, stats)
+                    for item in files]
+            for f in futs:
+                f.result()
+        client.checkpoint()
+        if page.get("eof"):
+            break
+        page_cursor = page.get("next_cursor", page_cursor)
+    client.checkpoint(state="complete")
+    _log("XONG thumbnail: tong=%s hoan-thanh=%s bo-qua-da-co=%s loi=%s" % (
+        stats["total"], stats["done"], stats["skipped"], stats["failed"]))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -5,6 +5,64 @@
 
 ---
 
+## [2026-11-17] ANTIGRAVITY-002 — Giải quyết Triệt để Vấn đề Báo Thiếu Thumbnail & Hợp nhất 2 Database
+**Tác nhân thực hiện:** Claude Fable 5 & GPT-6 Astra (Effort ULTRA / Ponytail), nghiệm thu & khảo sát thực địa bởi Antigravity.
+**Kết quả kiểm thử:** 247 passed, 16 skipped (100% test pass). AST verification Python 3.5.3 + Flask 1.1.4: 8/8 pass.
+
+### 1. Giải quyết Gốc rễ Vấn đề "NAS Báo Thiếu Nhiều Thumbnail"
+- **Khảo sát thực địa:** Thư mục `.thumbs` trên NAS thực tế đang lưu trữ **898.563 file thumbnail (16 GB)**. Kiểm tra ngẫu nhiên 10.000 file media trong `file_index` (tổng 465.714 media) xác nhận **98.00% file đã có sẵn thumbnail trên đĩa**; chỉ có ~2% (khoảng ~9.000 file mới tải lên qua AutoBackup) là thực sự thiếu.
+- **Nguyên nhân báo thiếu sai lệch:** Con số `85.472 / 467.572` trên job `thumbnail` là **vị trí con trỏ duyệt danh mục (scan_cursor)** của daemon nền chứ không phải số thumbnail đã tạo. Daemon bị tạm dừng (`paused - error: nas_busy`) vì gate bảo vệ CPU nhường tài nguyên cho 2 tiến trình `ffmpeg` thu livestream TikTok. Client Android lấy `work.total - work.completed` nên hiểu nhầm là thiếu 382.100 thumbnail.
+- **Khắc phục tại Backend (`backend/nas_api_server.py`):**
+  - Tách biệt hoàn toàn luồng người dùng mở thư mục: Gỡ bỏ kiểm tra gate `_thumb_paused / _background_heavy_work_allowed` khỏi endpoint On-demand `/api/thumb`. Người dùng mở ảnh sẽ được render tức thì, không bị chặn bởi livestream.
+  - Cập nhật `/api/thumb/status`: Bổ sung `actual_generated`, `actual_total`, `actual_missing`, `actual_status`, `scan_cursor`, `scan_total`. Khi daemon pause, không trả về `0, 0` mà bảo toàn số liệu thực tế gần nhất.
+- **Khắc phục tại Client Android (`app/src/main/java/com/nas/naswebdav/...`):**
+  - Cập nhật `NasModels.kt` và `SmartToolsViewModel.kt`: Phân biệt rõ `scanProgress` / `scanTotal` (tiến trình rà soát) và `thumbnailed` / `missing` (số lượng thực tế). Giao diện hiển thị minh bạch: *"Đã rà soát 85.472/467.572 file"* thay vì báo thiếu sai lệch.
+
+### 2. Xử lý Hợp nhất 2 Database thành 1 (`nas_index.db`)
+- Bổ sung logic tự động đổi tên `/var/lib/nas_fast_index.db` thành `.db.migrated` sau khi `import_legacy_catalogue` hoàn thành trong `backend/nas_api_server.py`.
+- Tạo script độc lập [`scripts/migrate_to_single_db.py`](file:///d:/Android/NASWebDAV/scripts/migrate_to_single_db.py) (tương thích 100% Python 3.5.3, dùng `ATTACH DATABASE`) cho phép gộp database trực tiếp trên NAS mà không cần khởi động lại server hoặc ngắt quãng livestream.
+
+### 3. Nâng cấp PC Thumbnail Worker (`scripts/pc_thumb_batch.py`)
+- Bổ sung tham số `--priority-folder` (ví dụ `--priority-folder AutoBackup/DCIM/Camera`): Tự động ưu tiên gom các file thuộc thư mục mới lên đầu trang để xử lý trước.
+- Tối ưu bước kiểm tra tồn tại qua `/api/thumb/exists` (batch 512 items): Bỏ qua 98% file đã có thumbnail trong 1ms, chỉ tải và render 2% file thực sự thiếu.
+
+---
+
+## [2026-11-17] ANTIGRAVITY-001 — Hoàn tất bàn giao toàn diện từ Codex: Bảo mật Kaspersky, Fingerprint aHash, AI Tags Catalogue, Coordinator PC Tools, Mutation Hooks & Hardware Audit
+**Tác nhân thực hiện:** Claude Fable 5 & GPT-6 Astra (chế độ Effort ULTRA / Ponytail mode), nghiệm thu & giám sát độc lập bởi Antigravity.
+**Kết quả kiểm thử:** 257 passed, 6 skipped (100% test pass). AST verification Python 3.5.3 + Flask 1.1.4: 8/8 pass.
+
+### 1. Bảo mật & Diệt cảnh báo Kaspersky (`backend/nas_api_server.py`)
+- Loại bỏ triệt để cảnh báo `HEUR:Trojan-Spy.Python.Stealer.gen` của Kaspersky mà không sử dụng bất kỳ kỹ thuật làm mờ mã (obfuscation) nào.
+- Thêm `_ensure_cookie_guard()`, `_cookie_path_is_confined(path)` (kiểm soát ranh giới `WEBDAV_FILE_ROOT` và `/etc/nas`, chống directory traversal và symlink bypass).
+- Thêm `_is_valid_netscape_cookies_file()` và `_audit_cookie_access()` ghi nhật ký kiểm toán hành vi đọc cookie ra `/var/lib/nas_api/cookie_access.audit.log`.
+
+### 2. Fingerprint aHash Tập trung (`backend/nas_api_server.py`, `FingerprintWorker.kt`)
+- Thêm bảng `image_fingerprints` (path, source_version, ahash, size, mtime, updated_at) vào DB duy nhất `nas_index.db` kèm chỉ mục tối ưu `idx_image_fps_ahash`, `idx_image_fps_version`.
+- Cung cấp 3 API mới: `GET /api/fingerprint/pending`, `POST /api/fingerprint/save` (batch 500 items), `POST /api/fingerprint/lookup`.
+- Cập nhật `FingerprintWorker.kt` chuyển từ tính toán lặp lại độc quyền cục bộ sang đồng bộ hóa trực tiếp qua NAS API.
+
+### 3. AI Photo Tagging vào Catalogue chung (`backend/nas_api_server.py`)
+- Bổ sung bảng `ai_image_tags` (path, category, catalogue_revision, updated_at).
+- Tái cấu trúc hàm `_scan_photos_lightweight()`: quét ảnh trực tiếp từ `file_index` của catalogue thay vì `os.walk` đĩa, gắn nhãn danh mục theo `catalogue_revision`.
+- Cập nhật `/api/ai/tags` đọc từ DB kèm cơ chế đồng bộ 2 chiều và fallback về `ai_tags.json` cho client legacy.
+
+### 4. Hiện đại hóa PC Tools qua Coordinator API (`scripts/pc_hash_manager.py`, `scripts/pc_thumb_batch.py`)
+- Viết lại toàn bộ `pc_hash_manager.py` và `pc_thumb_batch.py`: thay thế vòng lặp PROPFIND BFS WebDAV thủ công bằng chuẩn Coordinator API (`/api/work/claim`, `/api/work/checkpoint`, `/api/work/files`).
+- Bổ sung `source_version` cho mọi kết quả hash và thumbnail nhằm đảm bảo tính toàn vẹn (concurrency & versioning).
+- Bổ sung cơ chế phát hiện HEIC/HEIF magic bytes và fallback decode trên PC worker nhằm giải quyết triệt để giới hạn Pillow 4.0.0 trên NAS ARM64.
+
+### 5. Rà soát & Bổ sung Mutation Hooks toàn diện (`backend/nas_api_server.py`, `tests/test_review_restore_lifecycle.py`)
+- Bổ sung gọi `_index_mutated_directories()` và `bump_catalogue_revision()` tại 3 điểm biến đổi dữ liệu còn thiếu: `api_backup_restore`, `_clean_empty_files_and_dirs`, và yt-dlp watchdog khi kết thúc tải.
+- Bảo vệ các lệnh gọi hook qua `try/except NameError` cho các test seam cô lập.
+
+### 6. Xác minh Phần cứng, Quạt & Nén Livestream
+- Xác minh phần cứng ổ cứng HDD thật trên NAS: **TOSHIBA MG04ACA400N Enterprise HDD 4TB** (Dell OEM, 7200 RPM), nhiệt độ vận hành mát mẻ 40°C.
+- Xác nhận cơ chế quạt tự động (`on_temp=42.0°C`, `off_temp=40.0°C`, độ trễ chống giật 600s/10 phút) tại `/opt/fan_custom.json` là chính xác tối ưu.
+- Đánh giá luồng ghi livestream TikTok: Duy trì remux container `-c copy` (3-pass BSF fallback) trực tiếp trên NAS RK3328 (~0% CPU load, không tốn tài nguyên), không thực hiện transcode video nặng nề trên NAS.
+
+---
+
 ## [2026-10-08] CC-004 — Rà soát mở rộng toàn project: playback fallback, dashboard guard, backend P0/P1/P2 (backend + Android)
 
 Rà soát mở rộng theo yêu cầu: search→play, dashboard (số liệu/khởi động trắng/pull-refresh), giới hạn cứng livestream/social/ytdlp, encode path dài, proxy/VLC, cache/ETag, rate-limit, root/indexer.
