@@ -317,7 +317,7 @@ internal fun DashboardSystemOverviewCard(
                         icon = Icons.Default.HealthAndSafety,
                         gradientColors = smartColors,
                         modifier = Modifier.fillMaxWidth(0.48f),
-                        overridePercent = null,
+                        overridePercent = if (isSmartOk || isSmartEmmc || isSmartFailed) 100f else 0f,
                         onClick = onOpenSmartDetails
                     )
                 }
