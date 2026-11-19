@@ -129,6 +129,31 @@ fun NasNavHost(
         },
     ) { innerPadding ->
         val mContext = androidx.compose.ui.platform.LocalContext.current
+        val toolboxHost = com.nas.naswebdav.ui.html5.rememberNasToolboxHost(
+            context = mContext,
+            onOpenFiles = {
+                domainProvider.fileBrowser.resetToDefaultMode()
+                navController.navigate(NasRoutes.FILES)
+            },
+            onOpenLatestPhotos = {
+                domainProvider.fileBrowser.showLatestPhotos()
+                navController.navigate(NasRoutes.FILES)
+            },
+            onOpenRecentVideos = {
+                domainProvider.fileBrowser.showRecentVideos()
+                navController.navigate(NasRoutes.FILES)
+            },
+            onOpenTrash = {
+                val trashUrl = buildWebDavTrashTargetUrl(
+                    WebDavManager.currentBaseUrl,
+                    domainProvider.fileBrowser.currentUrl.ifBlank { WebDavManager.currentBaseUrl },
+                    "",
+                    false
+                )
+                domainProvider.fileBrowser.openSpecificUrl(trashUrl, "Thùng rác")
+                navController.navigate(NasRoutes.FILES)
+            }
+        )
 
         NavHost(
             navController = navController,
@@ -211,7 +236,10 @@ fun NasNavHost(
                         "guest" -> navController.navigate(NasRoutes.GUEST_PASS)
                         "social" -> navController.navigate(NasRoutes.SOCIAL_EXTRACTOR)
                         "screenRecord" -> onStartScreenRecord()
-                        "toolbox" -> navController.navigate(NasRoutes.SYSTEM)
+                        "toolbox", "livestream", "stream", "backup", "sync",
+                        "duplicate", "usbImport", "smb", "nasBackup",
+                        "sleepSchedule", "bandwidth", "download", "lanWhitelist",
+                        "logs", "failedUploads", "docker" -> toolboxHost.dispatch(act)
                         "diskProfile", "smartDetails", "procCpu", "procMem" -> navController.navigate(NasRoutes.PERFORMANCE)
                     }
                 }
@@ -226,16 +254,18 @@ fun NasNavHost(
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "apps",
                     onAction = { act, _ ->
-                        when (act) {
-                            "organizer" -> navController.navigate(NasRoutes.SMART_ORGANIZER)
-                            "guest" -> navController.navigate(NasRoutes.GUEST_PASS)
-                            "social" -> navController.navigate(NasRoutes.SOCIAL_EXTRACTOR)
-                            "screenRecord" -> onStartScreenRecord()
-                            "files" -> {
-                                domainProvider.fileBrowser.resetToDefaultMode()
-                                navController.navigate(NasRoutes.FILES)
+                        if (!toolboxHost.dispatch(act)) {
+                            when (act) {
+                                "organizer" -> navController.navigate(NasRoutes.SMART_ORGANIZER)
+                                "guest" -> navController.navigate(NasRoutes.GUEST_PASS)
+                                "social" -> navController.navigate(NasRoutes.SOCIAL_EXTRACTOR)
+                                "screenRecord" -> onStartScreenRecord()
+                                "files" -> {
+                                    domainProvider.fileBrowser.resetToDefaultMode()
+                                    navController.navigate(NasRoutes.FILES)
+                                }
+                                "performance" -> navController.navigate(NasRoutes.PERFORMANCE)
                             }
-                            "performance" -> navController.navigate(NasRoutes.PERFORMANCE)
                         }
                     }
                 )
@@ -291,9 +321,10 @@ fun NasNavHost(
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "system",
                     onAction = { act, _ ->
-                        when (act) {
-                            "performance", "diskProfile", "smartDetails" -> navController.navigate(NasRoutes.PERFORMANCE)
-                            "toolbox" -> navController.navigate(NasRoutes.APPS)
+                        if (!toolboxHost.dispatch(act)) {
+                            when (act) {
+                                "performance", "diskProfile", "smartDetails" -> navController.navigate(NasRoutes.PERFORMANCE)
+                            }
                         }
                     }
                 )

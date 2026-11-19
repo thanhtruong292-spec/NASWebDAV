@@ -178,6 +178,26 @@
         <div class="app-tile-title">Tải Video MXH</div>
         <div class="app-tile-sub">TikTok, Douyin, YouTube, FB</div>
       </div>
+      <div class="app-tile" data-action="livestream">
+        <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg></div>
+        <div class="app-tile-title">Ghi Live TikTok</div>
+        <div class="app-tile-sub">Ghi hình trực tuyến</div>
+      </div>
+      <div class="app-tile" data-action="backup">
+        <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg></div>
+        <div class="app-tile-title">Đồng bộ File</div>
+        <div class="app-tile-sub">Auto Backup lên NAS</div>
+      </div>
+      <div class="app-tile" data-action="duplicate">
+        <div class="qa-ico-box" style="color:var(--ux-purple);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></div>
+        <div class="app-tile-title">Quét Trùng Lặp</div>
+        <div class="app-tile-sub">Tìm &amp; dọn ảnh/video trùng</div>
+      </div>
+      <div class="app-tile" data-action="usbImport">
+        <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2v14"/><polyline points="8 6 12 2 16 6"/><rect x="6" y="16" width="12" height="5" rx="2"/></svg></div>
+        <div class="app-tile-title">Nhập từ USB</div>
+        <div class="app-tile-sub">Chép dữ liệu USB vào NAS</div>
+      </div>
       <div class="app-tile" data-action="guest">
         <div class="qa-ico-box" style="color:var(--ux-yellow);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></div>
         <div class="app-tile-title">Khách WebDAV</div>
@@ -193,10 +213,10 @@
         <div class="app-tile-title">Quản lý Tệp</div>
         <div class="app-tile-sub">Duyệt, phát video &amp; ảnh Native</div>
       </div>
-      <div class="app-tile" data-action="performance">
-        <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-        <div class="app-tile-title">Hiệu năng &amp; Mạng</div>
-        <div class="app-tile-sub">Đo tốc độ LAN / Tailscale</div>
+      <div class="app-tile" data-action="toolbox">
+        <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
+        <div class="app-tile-title">Hộp công cụ NAS</div>
+        <div class="app-tile-sub">Samba, Docker, Lịch ngủ, Log</div>
       </div>
     </div>
   </section>
@@ -221,7 +241,7 @@
       <div class="card-header">
         <span class="card-title">TIẾN TRÌNH &amp; DỊCH VỤ NAS</span>
       </div>
-      <div class="list-item" data-action="toolbox">
+      <div class="list-item" data-action="backup">
         <div>
           <div class="list-title">Auto Backup &amp; Đồng bộ</div>
           <div class="list-sub" id="backupStatusSub">Đang chạy ngầm qua WorkManager Native</div>
@@ -241,6 +261,34 @@
           <div class="list-sub" id="sysOmvLine">--</div>
         </div>
         <span class="badge">Xem ▸</span>
+      </div>
+      <div class="list-item" data-action="smb">
+        <div>
+          <div class="list-title">Chia sẻ Samba (SMB)</div>
+          <div class="list-sub">Quản lý chia sẻ mạng nội bộ</div>
+        </div>
+        <span class="badge">Mở ▸</span>
+      </div>
+      <div class="list-item" data-action="docker">
+        <div>
+          <div class="list-title">Docker &amp; Container</div>
+          <div class="list-sub">Trạng thái container trên NAS</div>
+        </div>
+        <span class="badge">Xem ▸</span>
+      </div>
+      <div class="list-item" data-action="logs">
+        <div>
+          <div class="list-title">Nhật ký Hệ thống NAS</div>
+          <div class="list-sub">Log sự kiện, cảnh báo &amp; lỗi</div>
+        </div>
+        <span class="badge">Xem ▸</span>
+      </div>
+      <div class="list-item" data-action="toolbox">
+        <div>
+          <div class="list-title">Hộp công cụ NAS đầy đủ</div>
+          <div class="list-sub">Lịch ngủ, Băng thông, Sao lưu cấu hình, USB</div>
+        </div>
+        <span class="badge">Mở ▸</span>
       </div>
     </div>
 
