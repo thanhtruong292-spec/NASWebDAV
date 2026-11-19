@@ -540,6 +540,60 @@
     </div>
   </div>
 
+  <!-- LIVESTREAM RECORD MODAL -->
+  <div class="ux-modal-backdrop hidden" id="livestreamModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;flex-wrap:nowrap;">
+        <span class="card-title" style="white-space:nowrap;">LIVESTREAM</span>
+        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
+          <button class="zoom-btn active" id="liveTabRecordBtn">Ghi link</button>
+          <button class="zoom-btn" id="liveTabWatchBtn">Theo dõi</button>
+          <button class="zoom-btn" id="liveRefreshBtn">↻</button>
+          <button class="zoom-btn" id="liveCloseBtn">✕</button>
+        </div>
+      </div>
+
+      <div id="liveRecordPane">
+        <input class="ux-input" style="margin:0 0 8px;" id="liveUrlInput" type="url" placeholder="Dán link TikTok / Facebook / YouTube Live..." />
+        <div id="liveDetectedLine" class="hidden" style="font-size:11.5px;color:var(--ux-cyan);font-weight:700;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <button class="chip active" data-lqual="best">Tốt nhất</button>
+          <button class="chip" data-lqual="720p">720p</button>
+          <button class="chip" data-lqual="audio">Chỉ âm thanh</button>
+        </div>
+        <button class="btn-pill primary" id="liveStartBtn" style="width:100%;height:42px;font-size:13px;" disabled>BẮT ĐẦU GHI</button>
+        <div id="liveMsgBox" class="hidden" style="margin-top:8px;font-size:12px;text-align:center;"></div>
+        <div id="liveMaxStreamActions" class="hidden" style="display:flex;gap:6px;margin-top:8px;">
+          <button class="btn-pill" id="liveQueueBtn" style="flex:1;">Cho vào hàng đợi</button>
+          <button class="btn-pill" id="liveTry720Btn" style="flex:1;">Thử 720p</button>
+        </div>
+        <div id="liveQueueContainer" style="margin-top:8px;"></div>
+        <div id="liveActiveContainer" style="margin-top:10px;"></div>
+      </div>
+
+      <div id="liveWatchPane" class="hidden">
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <input class="ux-input" style="margin:0;flex:1;" id="liveWatchInput" type="text" placeholder="@username TikTok..." />
+          <button class="btn-pill primary" id="liveWatchAddBtn">Thêm</button>
+        </div>
+        <div id="liveWatchMeta" style="font-size:11.5px;color:var(--ux-text-2);margin-bottom:8px;">--</div>
+        <div class="list-item" style="padding:8px 0;">
+          <div style="flex:1;min-width:0;">
+            <div class="list-title" style="font-size:12px;">Khung giờ nghỉ (không tự ghi)</div>
+            <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+              <input id="liveExStart" type="text" value="23:00" class="ux-input alert-num" style="width:68px;padding:4px;" />
+              <span style="color:var(--ux-text-3);">–</span>
+              <input id="liveExEnd" type="text" value="07:00" class="ux-input alert-num" style="width:68px;padding:4px;" />
+              <button class="zoom-btn" id="liveExSaveBtn">Lưu</button>
+            </div>
+          </div>
+          <input type="checkbox" id="liveExChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" />
+        </div>
+        <div id="liveWatchListContainer"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="ux-toast" id="uxToast"></div>
   <script src="app.js"></script>
 </body>

@@ -50,6 +50,7 @@ fun NasHtmlDashboardScreen(
     val smartToolsVM = LocalSmartToolsVM.current
     val autoBackupVM = LocalAutoBackupVM.current
     val fileBrowserVM = LocalFileBrowserVM.current
+    val liveVM = LocalLivestreamVM.current
     val authVM = LocalAuthSessionVM.current
     val connStatus by SharedStateHolder.connectionStatus.collectAsState()
     val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
@@ -140,6 +141,7 @@ fun NasHtmlDashboardScreen(
                 deviceVM = deviceVM,
                 autoBackupVM = autoBackupVM,
                 fileBrowserVM = fileBrowserVM,
+                liveVM = liveVM,
                 fileSort = fileSort,
                 thumbAudit = thumbAudit,
                 connStatus = connStatus.message
@@ -163,7 +165,11 @@ fun NasHtmlDashboardScreen(
         fileSort,
         sysMonitorVM.systemProcesses,
         thumbAudit,
-        connStatus
+        connStatus,
+        liveVM.activeLivestreams.size,
+        liveVM.livestreamMessage,
+        liveVM.isStartingLivestream,
+        liveVM.tiktokLiveWatchUsers
     ) {
         if (!pageLoaded) return@LaunchedEffect
         val payload = buildHtml5StateJson(
@@ -172,6 +178,7 @@ fun NasHtmlDashboardScreen(
             deviceVM = deviceVM,
             autoBackupVM = autoBackupVM,
             fileBrowserVM = fileBrowserVM,
+            liveVM = liveVM,
             fileSort = fileSort,
             thumbAudit = thumbAudit,
             connStatus = connStatus.message
@@ -569,6 +576,74 @@ fun NasHtmlDashboardScreen(
                     fun fetchLogs() {
                         post { deviceVM.loadSystemLogs(minIntervalMs = 0L) }
                     }
+
+                    @JavascriptInterface
+                    fun refreshLivestream() {
+                        post {
+                            liveVM.refreshLivestreamState(context)
+                            liveVM.fetchTikTokLiveWatch(context)
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun clearLivestreamMessage() {
+                        post { liveVM.clearLivestreamMessage() }
+                    }
+
+                    @JavascriptInterface
+                    fun startLivestream(rawUrl: String, quality: String) {
+                        post {
+                            val clean = rawUrl.trim()
+                            if (clean.isBlank()) return@post
+                            val lower = clean.lowercase()
+                            val isVod = clean.contains("/video/") || clean.contains("watch?v=") ||
+                                (clean.contains("youtu.be") && !lower.contains("/live")) ||
+                                lower.contains("/reel") || lower.contains("/shorts/")
+                            if (isVod) {
+                                liveVM.requestSocialDownload(clean, AppConfig.LIVESTREAM_FOLDER)
+                                Toast.makeText(context, "Đã chuyển video sang tải xuống vào Livestream/", Toast.LENGTH_SHORT).show()
+                            } else {
+                                liveVM.startLivestreamRecord(clean, quality.ifBlank { "best" })
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun stopLivestream(jobId: String) {
+                        post { liveVM.stopLivestreamRecord(jobId) }
+                    }
+
+                    @JavascriptInterface
+                    fun enqueueLivestream(url: String, quality: String, watchUser: String) {
+                        post { liveVM.enqueueLivestreamQueue(url.trim(), quality.ifBlank { "best" }, watchUser) }
+                    }
+
+                    @JavascriptInterface
+                    fun cancelLivestreamQueue(queueId: String) {
+                        post { liveVM.cancelLivestreamQueue(queueId) }
+                    }
+
+                    @JavascriptInterface
+                    fun addTikTokWatch(username: String) {
+                        val clean = username.trim().removePrefix("@")
+                        if (clean.isNotBlank()) post { liveVM.addTikTokLiveWatchUser(clean) }
+                    }
+
+                    @JavascriptInterface
+                    fun removeTikTokWatch(username: String) {
+                        post { liveVM.removeTikTokLiveWatchUser(username) }
+                    }
+
+                    @JavascriptInterface
+                    fun saveTikTokWatchSchedule(enabled: Boolean, start: String, end: String) {
+                        post { liveVM.updateTikTokLiveWatchSettings(enabled, start, end) }
+                    }
+
+                    @JavascriptInterface
+                    fun getClipboardText(): String {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        return cm?.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -604,6 +679,7 @@ private fun buildHtml5StateJson(
     deviceVM: com.nas.naswebdav.device.DeviceManagementViewModel,
     autoBackupVM: com.nas.naswebdav.backup.AutoBackupViewModel,
     fileBrowserVM: com.nas.naswebdav.browser.FileBrowserViewModel,
+    liveVM: com.nas.naswebdav.livestream.LivestreamViewModel,
     fileSort: String,
     thumbAudit: ThumbnailAuditData,
     connStatus: String
@@ -797,6 +873,53 @@ private fun buildHtml5StateJson(
         })
     }
     root.put("logs", lArr)
+
+    val activeJobs = JSONArray()
+    liveVM.activeLivestreams.forEach { job ->
+        activeJobs.put(JSONObject().apply {
+            put("jobId", job.jobId)
+            put("platform", job.platform)
+            put("duration", job.durationSeconds)
+            put("speed", job.speed)
+            put("fileSize", job.fileSize)
+            put("outputFile", job.outputFile)
+        })
+    }
+    val queueArr = JSONArray()
+    liveVM.livestreamQueue.forEach { q ->
+        queueArr.put(JSONObject().apply {
+            put("queueId", q.queueId)
+            put("position", q.position)
+            put("url", q.url)
+        })
+    }
+    val watchArr = JSONArray()
+    liveVM.tiktokLiveWatchUsers.forEach { u ->
+        watchArr.put(JSONObject().apply {
+            put("username", u.username)
+            put("status", u.status)
+            put("lastCheck", u.lastCheck)
+            put("lastLive", u.lastLive)
+            put("lastError", u.lastError)
+        })
+    }
+    root.put("livestream", JSONObject().apply {
+        put("starting", liveVM.isStartingLivestream)
+        put("message", liveVM.livestreamMessage)
+        put("isError", liveVM.isLivestreamError)
+        put("errorCode", liveVM.livestreamErrorCode)
+        put("activeCount", liveVM.serverLivestreamActive)
+        put("cap", liveVM.serverLivestreamCap)
+        put("jobs", activeJobs)
+        put("queue", queueArr)
+        put("watchUsers", watchArr)
+        put("daemonRunning", liveVM.tiktokWatchDaemonRunning)
+        put("daemonSummary", liveVM.tiktokWatchDaemonSummary)
+        put("excludeEnabled", liveVM.tiktokExcludeEnabled)
+        put("excludeStart", liveVM.tiktokExcludeStart)
+        put("excludeEnd", liveVM.tiktokExcludeEnd)
+        put("cookiesStatus", liveVM.tiktokCookiesStatus)
+    })
 
     return root.toString()
 }

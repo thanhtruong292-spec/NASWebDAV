@@ -11,6 +11,8 @@
   var activeModalFile = null;
   var procSortBy = "cpu"; // cpu | mem
   var smartTab = "summary"; // summary | raw
+  var liveTab = "record"; // record | watch
+  var liveQuality = "best";
   var selectMode = false;
   var selectedPaths = {};
   var timelineData = null;
@@ -28,10 +30,11 @@
     return window.NasBridge || null;
   }
 
-  function callBridge(fn, arg, arg2) {
+  function callBridge(fn, arg, arg2, arg3) {
     var b = bridge();
     if (!b || typeof b[fn] !== "function") return;
-    if (arg2 !== undefined) b[fn](arg, arg2);
+    if (arg3 !== undefined) b[fn](arg, arg2, arg3);
+    else if (arg2 !== undefined) b[fn](arg, arg2);
     else if (arg !== undefined) b[fn](arg);
     else b[fn]();
   }
@@ -276,6 +279,9 @@
     }
     if (!document.getElementById("logsModal").classList.contains("hidden")) {
       renderLogsModal();
+    }
+    if (!document.getElementById("livestreamModal").classList.contains("hidden")) {
+      renderLivestreamModal();
     }
 
     // Range & tab UI
@@ -670,6 +676,120 @@
     c.innerHTML = html;
   }
 
+  function openLivestreamModal() {
+    callBridge("refreshLivestream");
+    var urlEl = document.getElementById("liveUrlInput");
+    if (urlEl && !urlEl.value) {
+      var b = bridge();
+      if (b && typeof b.getClipboardText === "function") {
+        var clip = String(b.getClipboardText() || "").trim();
+        if (/tiktok|facebook|fb\.watch|youtube|youtu\.be|shopee/i.test(clip)) {
+          urlEl.value = clip.replace(/[\u200B\u200C\u200D\uFEFF\u200E\u200F\r\n]/g, "");
+        }
+      }
+    }
+    var wp = document.getElementById("liveWatchPane");
+    if (wp) wp.removeAttribute("data-dirty");
+    renderLivestreamModal();
+    document.getElementById("livestreamModal").classList.remove("hidden");
+  }
+
+  function renderLivestreamModal() {
+    document.getElementById("liveTabRecordBtn").classList.toggle("active", liveTab === "record");
+    document.getElementById("liveTabWatchBtn").classList.toggle("active", liveTab === "watch");
+    document.getElementById("liveRecordPane").classList.toggle("hidden", liveTab !== "record");
+    document.getElementById("liveWatchPane").classList.toggle("hidden", liveTab !== "watch");
+
+    var lv = (state && state.livestream) || {};
+    var urlVal = (document.getElementById("liveUrlInput").value || "").trim();
+    var detEl = document.getElementById("liveDetectedLine");
+    if (urlVal) {
+      var plat = /tiktok/i.test(urlVal) ? "TikTok Live" : (/facebook|fb\.watch/i.test(urlVal) ? "Facebook Live" : (/youtube|youtu\.be/i.test(urlVal) ? "YouTube Live" : (/shopee/i.test(urlVal) ? "Shopee Live" : "Livestream")));
+      detEl.textContent = "Đã nhận diện: " + plat;
+      detEl.classList.remove("hidden");
+    } else {
+      detEl.classList.add("hidden");
+    }
+    var startBtn = document.getElementById("liveStartBtn");
+    startBtn.disabled = !urlVal || !!lv.starting;
+    startBtn.textContent = lv.starting ? "ĐANG KẾT NỐI LUỒNG LIVE..." : "BẮT ĐẦU GHI";
+
+    var msgBox = document.getElementById("liveMsgBox");
+    if (lv.message) {
+      msgBox.textContent = lv.message;
+      msgBox.style.color = lv.isError ? COLOR_RED : "var(--ux-text-2)";
+      msgBox.classList.remove("hidden");
+    } else {
+      msgBox.classList.add("hidden");
+    }
+    document.getElementById("liveMaxStreamActions").classList.toggle("hidden", !(lv.isError && lv.errorCode === "MAX_STREAMS"));
+
+    // Queue
+    var qHtml = "";
+    (lv.queue || []).forEach(function (q, i) {
+      qHtml += '<div class="list-item" style="padding:6px 0;"><span class="list-sub" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">#' + (q.position || (i + 1)) + ' ' + String(q.url || "").replace(/</g, "&lt;") + '</span>' +
+        (q.queueId ? ('<button class="zoom-btn" data-lqcancel="' + String(q.queueId).replace(/"/g, "&quot;") + '" style="color:var(--ux-red);">Hủy</button>') : '') + '</div>';
+    });
+    var qCont = document.getElementById("liveQueueContainer");
+    qCont.innerHTML = qHtml;
+    qCont.querySelectorAll("[data-lqcancel]").forEach(function (btn) {
+      btn.addEventListener("click", function () { callBridge("cancelLivestreamQueue", btn.getAttribute("data-lqcancel")); });
+    });
+
+    // Active jobs
+    var jobs = lv.jobs || [];
+    var aHtml = jobs.length ? ('<div class="card-title" style="margin-bottom:6px;color:' + COLOR_RED + ';">ĐANG GHI HÌNH (' + jobs.length + ')</div>') : "";
+    jobs.forEach(function (j) {
+      var s = Number(j.duration || 0);
+      var dur = Math.floor(s / 3600) + "h" + String(Math.floor((s % 3600) / 60)).padStart(2, "0") + "m" + String(s % 60).padStart(2, "0") + "s";
+      aHtml += '<div class="list-item" style="padding:9px 0;align-items:center;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div class="list-title" style="font-size:12.5px;color:' + COLOR_RED + ';">● ' + String(j.platform || "LIVE").toUpperCase() + ' • ' + dur + '</div>' +
+          '<div class="list-sub">' + (j.speed || "—") + ' • ' + (j.fileSize || "0 B") + (j.outputFile ? (' • ' + String(j.outputFile).replace(/</g, "&lt;")) : '') + '</div>' +
+        '</div>' +
+        '<button class="btn-pill danger" data-lstop="' + String(j.jobId || "").replace(/"/g, "&quot;") + '" style="padding:5px 10px;font-size:11px;">Dừng</button>' +
+      '</div>';
+    });
+    var aCont = document.getElementById("liveActiveContainer");
+    aCont.innerHTML = aHtml;
+    aCont.querySelectorAll("[data-lstop]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        callBridge("stopLivestream", btn.getAttribute("data-lstop"));
+        showToast("Đang dừng ghi hình...");
+      });
+    });
+
+    // Watch tab
+    var wp = document.getElementById("liveWatchPane");
+    if (wp && !wp.getAttribute("data-dirty")) {
+      document.getElementById("liveExChk").checked = !!lv.excludeEnabled;
+      document.getElementById("liveExStart").value = lv.excludeStart || "23:00";
+      document.getElementById("liveExEnd").value = lv.excludeEnd || "07:00";
+    }
+    document.getElementById("liveWatchMeta").textContent = (lv.daemonRunning ? "Watchdog: Đang chạy" : "Watchdog: Tạm dừng") + " • Cookies: " + (lv.cookiesStatus || "unknown");
+    var users = lv.watchUsers || [];
+    var wHtml = users.length ? "" : '<div class="list-sub" style="padding:10px 0;">Chưa theo dõi người dùng TikTok nào.</div>';
+    users.forEach(function (u) {
+      var st = String(u.status || "");
+      var isLive = st.toLowerCase().indexOf("live") >= 0 || st.toLowerCase().indexOf("record") >= 0;
+      wHtml += '<div class="list-item" style="padding:8px 0;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div class="list-title" style="font-size:12.5px;">@' + String(u.username || "").replace(/</g, "&lt;") + ' <span class="badge" style="color:' + (isLive ? COLOR_RED : COLOR_GREEN) + ';">' + (st || "Chờ") + '</span></div>' +
+          '<div class="list-sub">' + (u.lastCheck ? ("Kiểm tra: " + u.lastCheck) : (u.lastError || "")) + '</div>' +
+        '</div>' +
+        '<button class="zoom-btn" data-wdel="' + String(u.username || "").replace(/"/g, "&quot;") + '" style="color:var(--ux-red);">✕</button>' +
+      '</div>';
+    });
+    var wCont = document.getElementById("liveWatchListContainer");
+    wCont.innerHTML = wHtml;
+    wCont.querySelectorAll("[data-wdel]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        callBridge("removeTikTokWatch", btn.getAttribute("data-wdel"));
+        showToast("Đã xóa @" + btn.getAttribute("data-wdel"));
+      });
+    });
+  }
+
   function openProcessModal(sortMode) {
     procSortBy = sortMode || "cpu";
     callBridge("fetchProcesses");
@@ -972,6 +1092,7 @@
       else if (act === "smb") openSmbModal();
       else if (act === "docker") openDockerModal();
       else if (act === "logs") openLogsModal();
+      else if (act === "livestream" || act === "stream") openLivestreamModal();
       else callBridge("action", act);
     }
 
@@ -1019,6 +1140,43 @@
     document.getElementById("dockerRefreshBtn").addEventListener("click", function () { callBridge("fetchDocker"); showToast("Đang tải Docker..."); });
     document.getElementById("logsCloseBtn").addEventListener("click", function () { document.getElementById("logsModal").classList.add("hidden"); });
     document.getElementById("logsRefreshBtn").addEventListener("click", function () { callBridge("fetchLogs"); showToast("Đang tải nhật ký..."); });
+    document.getElementById("liveCloseBtn").addEventListener("click", function () { document.getElementById("livestreamModal").classList.add("hidden"); });
+    document.getElementById("liveRefreshBtn").addEventListener("click", function () { callBridge("refreshLivestream"); showToast("Đang cập nhật Livestream..."); });
+    document.getElementById("liveTabRecordBtn").addEventListener("click", function () { liveTab = "record"; renderLivestreamModal(); });
+    document.getElementById("liveTabWatchBtn").addEventListener("click", function () { liveTab = "watch"; renderLivestreamModal(); });
+    document.getElementById("liveUrlInput").addEventListener("input", function () { callBridge("clearLivestreamMessage"); renderLivestreamModal(); });
+    document.querySelectorAll("[data-lqual]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        liveQuality = btn.getAttribute("data-lqual");
+        document.querySelectorAll("[data-lqual]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+      });
+    });
+    document.getElementById("liveStartBtn").addEventListener("click", function () {
+      var u = (document.getElementById("liveUrlInput").value || "").trim();
+      if (u) callBridge("startLivestream", u, liveQuality);
+    });
+    document.getElementById("liveQueueBtn").addEventListener("click", function () {
+      var u = (document.getElementById("liveUrlInput").value || "").trim();
+      if (u) callBridge("enqueueLivestream", u, liveQuality, "");
+    });
+    document.getElementById("liveTry720Btn").addEventListener("click", function () {
+      var u = (document.getElementById("liveUrlInput").value || "").trim();
+      liveQuality = "720p";
+      if (u) callBridge("startLivestream", u, "720p");
+    });
+    document.getElementById("liveWatchAddBtn").addEventListener("click", function () {
+      var inp = document.getElementById("liveWatchInput");
+      var u = (inp.value || "").trim().replace(/^@+/, "");
+      if (u) { callBridge("addTikTokWatch", u); inp.value = ""; showToast("Đã thêm @" + u); }
+    });
+    ["liveExChk", "liveExStart", "liveExEnd"].forEach(function (id) {
+      document.getElementById(id).addEventListener("change", function () { document.getElementById("liveWatchPane").setAttribute("data-dirty", "1"); });
+    });
+    document.getElementById("liveExSaveBtn").addEventListener("click", function () {
+      document.getElementById("liveWatchPane").removeAttribute("data-dirty");
+      callBridge("saveTikTokWatchSchedule", !!document.getElementById("liveExChk").checked, document.getElementById("liveExStart").value || "23:00", document.getElementById("liveExEnd").value || "07:00");
+      showToast("Đã lưu lịch nghỉ theo dõi TikTok");
+    });
 
     document.getElementById("procSortCpuBtn").addEventListener("click", function () { procSortBy = "cpu"; renderProcesses(); });
     document.getElementById("procSortMemBtn").addEventListener("click", function () { procSortBy = "mem"; renderProcesses(); });
