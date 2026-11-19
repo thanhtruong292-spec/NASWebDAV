@@ -477,6 +477,98 @@ fun NasHtmlDashboardScreen(
                             scheduleNasAlertWorker(context)
                         }
                     }
+
+                    @JavascriptInterface
+                    fun setBiometric(enabled: Boolean) {
+                        post {
+                            com.nas.naswebdav.utils.PreferencesRepository.get(context).setBiometricEnabled(enabled)
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun saveAutoBackup(enabled: Boolean, deleteAfter: Boolean) {
+                        post {
+                            val prefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+                            if (enabled) {
+                                if (!com.nas.naswebdav.utils.MediaPermissionHelper.canRunPeriodicBackup(context)) {
+                                    Toast.makeText(context, "Chưa cấp quyền toàn bộ Ảnh/Video trong Cài đặt Android!", Toast.LENGTH_LONG).show()
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(
+                                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                android.net.Uri.fromParts("package", context.packageName, null)
+                                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                    return@post
+                                }
+                                prefs.setAutoBackupFlag(true)
+                                prefs.setDeleteAfterBackup(deleteAfter)
+                                val constraints = androidx.work.Constraints.Builder()
+                                    .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+                                    .setRequiresCharging(true)
+                                    .build()
+                                val req = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(12, java.util.concurrent.TimeUnit.HOURS)
+                                    .setConstraints(constraints)
+                                    .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30L, java.util.concurrent.TimeUnit.SECONDS)
+                                    .addTag("com.nas.naswebdav.AutoBackupWorker")
+                                    .build()
+                                androidx.work.WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                                    "AutoBackupWork",
+                                    androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+                                    req
+                                )
+                                Toast.makeText(context, "Đã lưu lịch Auto-Backup!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                prefs.setAutoBackupFlag(false)
+                                prefs.setDeleteAfterBackup(deleteAfter)
+                                androidx.work.WorkManager.getInstance(context).cancelUniqueWork("AutoBackupWork")
+                                Toast.makeText(context, "Đã tắt Auto-Backup", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun triggerAutoBackup() {
+                        post {
+                            autoBackupVM.triggerManualBackup(context) { msg ->
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun cancelAutoBackup() {
+                        post {
+                            autoBackupVM.cancelAutoBackup(context)
+                            Toast.makeText(context, "Đã gửi lệnh hủy đồng bộ", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchSmb() {
+                        post { deviceVM.fetchSmbStatus() }
+                    }
+
+                    @JavascriptInterface
+                    fun toggleSmb(enabled: Boolean) {
+                        post { deviceVM.toggleSmb(context, enabled) }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchDocker() {
+                        post { deviceVM.loadDockerContainers() }
+                    }
+
+                    @JavascriptInterface
+                    fun controlDocker(act: String, name: String) {
+                        post { deviceVM.controlDockerContainer(act, name) }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchLogs() {
+                        post { deviceVM.loadSystemLogs(minIntervalMs = 0L) }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -672,6 +764,39 @@ private fun buildHtml5StateJson(
         })
     }
     root.put("processes", pArr)
+
+    val prefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+    root.put("toolbox", JSONObject().apply {
+        put("biometric", prefs.isBiometricEnabled())
+        put("autoBackup", prefs.isAutoBackupFlag())
+        put("deleteAfter", prefs.isDeleteAfterBackup())
+        put("autoBackupRunning", autoBackupVM.isAutoBackupRunning)
+        put("autoBackupFile", autoBackupVM.autoBackupCurrentFile)
+        put("smbEnabled", deviceVM.isSmbEnabled)
+        put("smbLoading", deviceVM.isLoadingSmb)
+    })
+
+    val dArr = JSONArray()
+    deviceVM.dockerContainers.forEach { d ->
+        dArr.put(JSONObject().apply {
+            put("id", d.id)
+            put("name", d.name)
+            put("status", d.status)
+        })
+    }
+    root.put("docker", dArr)
+
+    val lArr = JSONArray()
+    val timeFmt = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.getDefault())
+    deviceVM.systemLogs.take(60).forEach { l ->
+        lArr.put(JSONObject().apply {
+            put("type", l.type)
+            put("module", l.module)
+            put("message", l.message)
+            put("time", timeFmt.format(java.util.Date(l.timestamp)))
+        })
+    }
+    root.put("logs", lArr)
 
     return root.toString()
 }

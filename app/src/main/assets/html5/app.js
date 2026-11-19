@@ -262,6 +262,21 @@
     if (!document.getElementById("smartModal").classList.contains("hidden")) {
       renderSmartModal();
     }
+    if (!document.getElementById("toolboxModal").classList.contains("hidden")) {
+      renderToolboxModal();
+    }
+    if (!document.getElementById("autoBackupModal").classList.contains("hidden")) {
+      renderAutoBackupModal();
+    }
+    if (!document.getElementById("smbModal").classList.contains("hidden")) {
+      renderSmbModal();
+    }
+    if (!document.getElementById("dockerModal").classList.contains("hidden")) {
+      renderDockerModal();
+    }
+    if (!document.getElementById("logsModal").classList.contains("hidden")) {
+      renderLogsModal();
+    }
 
     // Range & tab UI
     document.querySelectorAll("[data-range]").forEach(function (btn) {
@@ -545,6 +560,114 @@
           String(raw || "Chưa có nhật ký S.M.A.R.T.").replace(/</g, "&lt;") + '</pre>';
       }
     }
+  }
+
+  function openToolboxModal() {
+    renderToolboxModal();
+    document.getElementById("toolboxModal").classList.remove("hidden");
+  }
+  function renderToolboxModal() {
+    var tb = (state && state.toolbox) || {};
+    var bio = document.getElementById("tbBioChk");
+    if (bio) bio.checked = !!tb.biometric;
+  }
+
+  function openAutoBackupModal() {
+    var m = document.getElementById("autoBackupModal");
+    if (m) m.removeAttribute("data-dirty");
+    renderAutoBackupModal();
+    m.classList.remove("hidden");
+  }
+  function renderAutoBackupModal() {
+    var tb = (state && state.toolbox) || {};
+    var m = document.getElementById("autoBackupModal");
+    if (m && !m.getAttribute("data-dirty")) {
+      document.getElementById("abEnabledChk").checked = !!tb.autoBackup;
+      document.getElementById("abDeleteChk").checked = !!tb.deleteAfter;
+    }
+    var stEl = document.getElementById("abStatusLine");
+    if (stEl) {
+      stEl.textContent = tb.autoBackupRunning
+        ? ("Đang đồng bộ: " + (tb.autoBackupFile || "đang quét tệp..."))
+        : (tb.autoBackup ? "Lịch tự động: Đang bật (12h)" : "Trạng thái: Sẵn sàng");
+    }
+    var cBtn = document.getElementById("abCancelBtn");
+    if (cBtn) cBtn.classList.toggle("hidden", !tb.autoBackupRunning);
+  }
+
+  function openSmbModal() {
+    callBridge("fetchSmb");
+    renderSmbModal();
+    document.getElementById("smbModal").classList.remove("hidden");
+  }
+  function renderSmbModal() {
+    var tb = (state && state.toolbox) || {};
+    var on = !!tb.smbEnabled;
+    document.getElementById("smbBadge").textContent = tb.smbLoading ? "..." : (on ? "ĐANG BẬT" : "ĐANG TẮT");
+    document.getElementById("smbBadge").style.color = on ? COLOR_GREEN : "var(--ux-text-2)";
+    document.getElementById("smbSubText").textContent = on ? "Máy tính Windows/Mac có thể truy cập qua mạng LAN" : "Dịch vụ chia sẻ Samba đang tắt";
+    document.getElementById("smbToggleBtn").textContent = on ? "Tắt Samba" : "Bật Samba";
+  }
+
+  function openDockerModal() {
+    callBridge("fetchDocker");
+    renderDockerModal();
+    document.getElementById("dockerModal").classList.remove("hidden");
+  }
+  function renderDockerModal() {
+    var c = document.getElementById("dockerListContainer");
+    if (!c) return;
+    var list = (state && state.docker) || [];
+    if (!list.length) {
+      c.innerHTML = '<div class="list-sub" style="padding:12px 0;">Không có container Docker nào (hoặc đang tải)...</div>';
+      return;
+    }
+    var html = "";
+    list.forEach(function (d) {
+      var up = String(d.status || "").toLowerCase().indexOf("running") >= 0 || String(d.status || "").toLowerCase().indexOf("up") >= 0;
+      var safeName = String(d.name || "").replace(/</g, "&lt;");
+      var attrName = String(d.name || "").replace(/"/g, "&quot;");
+      html += '<div class="list-item" style="padding:9px 0;">' +
+        '<div style="flex:1;min-width:0;"><div class="list-title" style="font-size:12.5px;">' + safeName + '</div>' +
+          '<div class="list-sub" style="color:' + (up ? COLOR_GREEN : COLOR_YELLOW) + ';">' + String(d.status || "").replace(/</g, "&lt;") + '</div></div>' +
+        '<div style="display:flex;gap:4px;">' +
+          (up ? ('<button class="zoom-btn" data-dact="stop" data-dname="' + attrName + '">Stop</button>') : ('<button class="zoom-btn" data-dact="start" data-dname="' + attrName + '">Start</button>')) +
+          '<button class="zoom-btn" data-dact="restart" data-dname="' + attrName + '">↻</button>' +
+        '</div></div>';
+    });
+    c.innerHTML = html;
+    c.querySelectorAll("[data-dact]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        callBridge("controlDocker", btn.getAttribute("data-dact"), btn.getAttribute("data-dname"));
+        showToast("Đang gửi lệnh Docker...");
+      });
+    });
+  }
+
+  function openLogsModal() {
+    callBridge("fetchLogs");
+    renderLogsModal();
+    document.getElementById("logsModal").classList.remove("hidden");
+  }
+  function renderLogsModal() {
+    var c = document.getElementById("logsListContainer");
+    if (!c) return;
+    var list = (state && state.logs) || [];
+    if (!list.length) {
+      c.innerHTML = '<div class="list-sub" style="padding:12px 0;">Chưa có nhật ký hệ thống...</div>';
+      return;
+    }
+    var html = "";
+    list.forEach(function (l) {
+      var t = String(l.type || "INFO").toUpperCase();
+      var col = t === "ERROR" ? COLOR_RED : (t === "WARNING" ? COLOR_YELLOW : (t === "SUCCESS" ? COLOR_GREEN : COLOR_BLUE));
+      html += '<div class="list-item" style="padding:8px 0;align-items:flex-start;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div class="list-title" style="font-size:11.5px;color:' + col + ';">[' + t + '] ' + String(l.module || "").replace(/</g, "&lt;") + ' <span style="color:var(--ux-text-3);font-weight:400;">• ' + (l.time || "") + '</span></div>' +
+          '<div class="list-sub" style="white-space:normal;word-break:break-word;">' + String(l.message || "").replace(/</g, "&lt;") + '</div>' +
+        '</div></div>';
+    });
+    c.innerHTML = html;
   }
 
   function openProcessModal(sortMode) {
@@ -840,15 +963,62 @@
       showToast("Đang làm mới thống kê lưu trữ...");
     });
 
+    function dispatchHtml5OrNativeAction(act) {
+      if (act === "procCpu") openProcessModal("cpu");
+      else if (act === "procMem") openProcessModal("mem");
+      else if (act === "smartDetails" || act === "diskProfile") openSmartModal();
+      else if (act === "toolbox") openToolboxModal();
+      else if (act === "backup" || act === "sync") openAutoBackupModal();
+      else if (act === "smb") openSmbModal();
+      else if (act === "docker") openDockerModal();
+      else if (act === "logs") openLogsModal();
+      else callBridge("action", act);
+    }
+
     document.querySelectorAll("[data-action]").forEach(function (el) {
       el.addEventListener("click", function () {
-        var act = el.getAttribute("data-action");
-        if (act === "procCpu") openProcessModal("cpu");
-        else if (act === "procMem") openProcessModal("mem");
-        else if (act === "smartDetails" || act === "diskProfile") openSmartModal();
-        else callBridge("action", act);
+        dispatchHtml5OrNativeAction(el.getAttribute("data-action"));
       });
     });
+
+    document.getElementById("toolboxCloseBtn").addEventListener("click", function () { document.getElementById("toolboxModal").classList.add("hidden"); });
+    document.getElementById("tbBioChk").addEventListener("change", function (e) {
+      callBridge("setBiometric", !!e.target.checked);
+      showToast(e.target.checked ? "Đã bật khóa vân tay" : "Đã tắt khóa vân tay");
+    });
+    document.querySelectorAll("[data-tbact]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        document.getElementById("toolboxModal").classList.add("hidden");
+        dispatchHtml5OrNativeAction(el.getAttribute("data-tbact"));
+      });
+    });
+    document.getElementById("abCloseBtn").addEventListener("click", function () { document.getElementById("autoBackupModal").classList.add("hidden"); });
+    document.getElementById("abEnabledChk").addEventListener("change", function () { document.getElementById("autoBackupModal").setAttribute("data-dirty", "1"); });
+    document.getElementById("abDeleteChk").addEventListener("change", function () { document.getElementById("autoBackupModal").setAttribute("data-dirty", "1"); });
+    document.getElementById("abSaveBtn").addEventListener("click", function () {
+      document.getElementById("autoBackupModal").removeAttribute("data-dirty");
+      callBridge("saveAutoBackup", !!document.getElementById("abEnabledChk").checked, !!document.getElementById("abDeleteChk").checked);
+      document.getElementById("autoBackupModal").classList.add("hidden");
+    });
+    document.getElementById("abSyncNowBtn").addEventListener("click", function () {
+      callBridge("triggerAutoBackup");
+      document.getElementById("autoBackupModal").classList.add("hidden");
+      showToast("Đang bắt đầu đồng bộ lên NAS...");
+    });
+    document.getElementById("abCancelBtn").addEventListener("click", function () {
+      callBridge("cancelAutoBackup");
+      document.getElementById("autoBackupModal").classList.add("hidden");
+    });
+    document.getElementById("smbCloseBtn").addEventListener("click", function () { document.getElementById("smbModal").classList.add("hidden"); });
+    document.getElementById("smbToggleBtn").addEventListener("click", function () {
+      var tb = (state && state.toolbox) || {};
+      callBridge("toggleSmb", !tb.smbEnabled);
+      showToast("Đang chuyển trạng thái Samba...");
+    });
+    document.getElementById("dockerCloseBtn").addEventListener("click", function () { document.getElementById("dockerModal").classList.add("hidden"); });
+    document.getElementById("dockerRefreshBtn").addEventListener("click", function () { callBridge("fetchDocker"); showToast("Đang tải Docker..."); });
+    document.getElementById("logsCloseBtn").addEventListener("click", function () { document.getElementById("logsModal").classList.add("hidden"); });
+    document.getElementById("logsRefreshBtn").addEventListener("click", function () { callBridge("fetchLogs"); showToast("Đang tải nhật ký..."); });
 
     document.getElementById("procSortCpuBtn").addEventListener("click", function () { procSortBy = "cpu"; renderProcesses(); });
     document.getElementById("procSortMemBtn").addEventListener("click", function () { procSortBy = "mem"; renderProcesses(); });

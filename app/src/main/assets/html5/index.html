@@ -441,6 +441,105 @@
     </div>
   </div>
 
+  <!-- TOOLBOX MODAL -->
+  <div class="ux-modal-backdrop hidden" id="toolboxModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">HỘP CÔNG CỤ NAS</span>
+        <button class="zoom-btn" id="toolboxCloseBtn">✕</button>
+      </div>
+      <div class="list-item">
+        <div><div class="list-title">Khóa vân tay / Sinh trắc học</div><div class="list-sub">Đăng nhập nhanh không cần nhập mật khẩu</div></div>
+        <input type="checkbox" id="tbBioChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" />
+      </div>
+      <div class="list-item" data-tbact="backup"><div><div class="list-title">Auto Backup &amp; Đồng bộ</div><div class="list-sub">Sao lưu ảnh/video từ điện thoại lên NAS</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="livestream"><div><div class="list-title">Ghi Live TikTok / YouTube</div><div class="list-sub">Quản lý phiên ghi hình trực tuyến</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="duplicate"><div><div class="list-title">Quét &amp; Dọn Trùng Lặp</div><div class="list-sub">Tìm ảnh/video giống nhau tiết kiệm ổ</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="usbImport"><div><div class="list-title">Nhập dữ liệu từ USB</div><div class="list-sub">Chép trực tiếp USB cắm trên NAS</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="smb"><div><div class="list-title">Chia sẻ Samba (SMB)</div><div class="list-sub">Bật/tắt chia sẻ mạng nội bộ Windows/Mac</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="docker"><div><div class="list-title">Docker &amp; Container</div><div class="list-sub">Start / Stop / Restart container</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="logs"><div><div class="list-title">Nhật ký Hệ thống NAS</div><div class="list-sub">Log sự kiện, cảnh báo &amp; lỗi</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="nasBackup"><div><div class="list-title">Sao lưu Cấu hình NAS</div><div class="list-sub">Backup &amp; khôi phục cấu hình hệ thống</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="sleepSchedule"><div><div class="list-title">Lịch ngủ tiết kiệm điện</div><div class="list-sub">Hẹn giờ tắt/ngủ NAS ban đêm</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="bandwidth"><div><div class="list-title">Giới hạn Băng thông Upload</div><div class="list-sub">Điều chỉnh tốc độ đồng bộ tối đa</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="download"><div><div class="list-title">Tải xuống / qBittorrent</div><div class="list-sub">Gửi link hoặc file .torrent về NAS</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="lanWhitelist"><div><div class="list-title">LAN Whitelist</div><div class="list-sub">Quản lý dải IP tin cậy</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="failedUploads"><div><div class="list-title">Tệp tải lên lỗi</div><div class="list-sub">Thử lại các tệp đồng bộ thất bại</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="photos"><div><div class="list-title">Ảnh mới nhất</div><div class="list-sub">Xem nhanh ảnh vừa tải lên</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="videos"><div><div class="list-title">Video gần đây</div><div class="list-sub">Xem nhanh video trên NAS</div></div><span class="badge">Mở ▸</span></div>
+      <div class="list-item" data-tbact="trash"><div><div class="list-title">Thùng rác</div><div class="list-sub">Khôi phục hoặc xóa vĩnh viễn</div></div><span class="badge">Mở ▸</span></div>
+    </div>
+  </div>
+
+  <!-- AUTO BACKUP MODAL -->
+  <div class="ux-modal-backdrop hidden" id="autoBackupModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">AUTO BACKUP &amp; ĐỒNG BỘ</span>
+        <button class="zoom-btn" id="abCloseBtn">✕</button>
+      </div>
+      <div class="list-item">
+        <div><div class="list-title">Tự động sao lưu định kỳ (12h)</div><div class="list-sub">Chạy ngầm khi sạc &amp; kết nối Wi-Fi</div></div>
+        <input type="checkbox" id="abEnabledChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" />
+      </div>
+      <div class="list-item">
+        <div><div class="list-title">Xóa tệp trên máy sau khi sao lưu</div><div class="list-sub">Giải phóng bộ nhớ điện thoại</div></div>
+        <input type="checkbox" id="abDeleteChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" />
+      </div>
+      <div id="abStatusLine" style="font-size:12px;color:var(--ux-text-2);padding:10px 0;">Trạng thái: Sẵn sàng</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="btn-pill danger hidden" id="abCancelBtn">Hủy đồng bộ</button>
+        <button class="btn-pill" id="abSyncNowBtn">Đồng bộ ngay</button>
+        <button class="btn-pill primary" id="abSaveBtn">Lưu lịch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SAMBA MODAL -->
+  <div class="ux-modal-backdrop hidden" id="smbModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">CHIA SẺ SAMBA (SMB)</span>
+        <button class="zoom-btn" id="smbCloseBtn">✕</button>
+      </div>
+      <div class="list-item">
+        <div><div class="list-title">Trạng thái dịch vụ Samba</div><div class="list-sub" id="smbSubText">Đang kiểm tra...</div></div>
+        <span class="badge" id="smbBadge">--</span>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="btn-pill primary" id="smbToggleBtn">Bật / Tắt Samba</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOCKER MODAL -->
+  <div class="ux-modal-backdrop hidden" id="dockerModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">DOCKER &amp; CONTAINER</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="zoom-btn" id="dockerRefreshBtn">↻</button>
+          <button class="zoom-btn" id="dockerCloseBtn">✕</button>
+        </div>
+      </div>
+      <div id="dockerListContainer"></div>
+    </div>
+  </div>
+
+  <!-- SYSTEM LOGS MODAL -->
+  <div class="ux-modal-backdrop hidden" id="logsModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">NHẬT KÝ HỆ THỐNG NAS</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="zoom-btn" id="logsRefreshBtn">↻</button>
+          <button class="zoom-btn" id="logsCloseBtn">✕</button>
+        </div>
+      </div>
+      <div id="logsListContainer"></div>
+    </div>
+  </div>
+
   <div class="ux-toast" id="uxToast"></div>
   <script src="app.js"></script>
 </body>
