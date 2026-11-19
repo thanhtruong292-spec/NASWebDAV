@@ -193,7 +193,12 @@ fun NasHtmlDashboardScreen(
         liveVM.activeLivestreams.size,
         liveVM.livestreamMessage,
         liveVM.isStartingLivestream,
-        liveVM.tiktokLiveWatchUsers
+        liveVM.tiktokLiveWatchUsers,
+        autoBackupVM.isAutoBackupRunning,
+        autoBackupVM.autoBackupProcessedCount,
+        autoBackupVM.autoBackupCurrentFile,
+        autoBackupVM.autoBackupProgress,
+        autoBackupVM.autoBackupIsPaused
     ) {
         if (!pageLoaded) return@LaunchedEffect
         val payload = buildHtml5StateJson(
@@ -836,6 +841,14 @@ fun NasHtmlDashboardScreen(
                     fun cancelUsbImport() {
                         post { deviceVM.cancelUsbImport() }
                     }
+
+                    @JavascriptInterface
+                    fun toggleAutoBackupPause() {
+                        post {
+                            com.nas.naswebdav.AutoBackupState.isPaused.value =
+                                !com.nas.naswebdav.AutoBackupState.isPaused.value
+                        }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -1073,6 +1086,7 @@ private fun buildHtml5StateJson(
         activeJobs.put(JSONObject().apply {
             put("jobId", job.jobId)
             put("platform", job.platform)
+            put("watchUsername", job.watchUsername)
             put("duration", job.durationSeconds)
             put("speed", job.speed)
             put("fileSize", job.fileSize)
@@ -1244,10 +1258,15 @@ private fun buildHtml5StateJson(
         put("backup", JSONObject().apply {
             put("active", autoBackupVM.isAutoBackupRunning)
             put("currentFile", autoBackupVM.autoBackupCurrentFile)
+            put("sourcePath", autoBackupVM.autoBackupSourcePath)
+            put("destPath", autoBackupVM.autoBackupDestPath)
             put("progress", autoBackupVM.autoBackupProgress.toDouble())
             put("processed", autoBackupVM.autoBackupProcessedCount)
             put("total", autoBackupVM.autoBackupTotalCount)
             put("speedBps", autoBackupVM.autoBackupUploadSpeedBps)
+            put("bytesWritten", autoBackupVM.autoBackupFileBytesWritten)
+            put("bytesTotal", autoBackupVM.autoBackupFileBytesTotal)
+            put("isPaused", autoBackupVM.autoBackupIsPaused)
         })
     })
 

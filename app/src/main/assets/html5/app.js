@@ -596,6 +596,8 @@
   }
   function renderAutoBackupModal() {
     var tb = (state && state.toolbox) || {};
+    var bak = (state && state.bgTasks && state.bgTasks.backup) || {};
+    var running = !!(tb.autoBackupRunning || bak.active);
     var m = document.getElementById("autoBackupModal");
     if (m && !m.getAttribute("data-dirty")) {
       document.getElementById("abEnabledChk").checked = !!tb.autoBackup;
@@ -603,12 +605,43 @@
     }
     var stEl = document.getElementById("abStatusLine");
     if (stEl) {
-      stEl.textContent = tb.autoBackupRunning
-        ? ("Đang đồng bộ: " + (tb.autoBackupFile || "đang quét tệp..."))
+      stEl.textContent = running
+        ? (bak.isPaused ? "⏸ Tiến trình đồng bộ đang tạm dừng" : "🟢 Đang đồng bộ dữ liệu lên NAS...")
         : (tb.autoBackup ? "Lịch tự động: Đang bật (12h)" : "Trạng thái: Sẵn sàng");
+      stEl.style.color = running ? (bak.isPaused ? COLOR_YELLOW : COLOR_GREEN) : "var(--ux-text-2)";
+    }
+    var pBox = document.getElementById("abProgressBox");
+    if (pBox) {
+      pBox.classList.toggle("hidden", !running);
+      if (running) {
+        var fEl = document.getElementById("abFileLine");
+        var sEl = document.getElementById("abSpeedBadge");
+        var pathEl = document.getElementById("abPathLine");
+        var fillEl = document.getElementById("abProgFill");
+        var cntEl = document.getElementById("abCountLine");
+        var pctEl = document.getElementById("abPctLine");
+        var pct = bak.total > 0 ? Math.min(100, (bak.processed * 100) / bak.total) : Math.min(100, Math.max(0, (bak.progress || 0) * 100));
+        if (fEl) fEl.textContent = "Tệp: " + (bak.currentFile || tb.autoBackupFile || "Đang quét tệp...");
+        if (sEl) sEl.textContent = bak.speedBps > 0 ? (fmtBytes(bak.speedBps) + "/s") : "Đang đối chiếu...";
+        if (pathEl) {
+          var src = (bak.sourcePath || "").split("0/").pop();
+          var dst = (bak.destPath || "").split("/webdav/").pop();
+          pathEl.textContent = (src ? ("Từ: /" + src.replace(/^\/+|\/+$/g, "")) : "") + (dst ? (" → /" + dst.replace(/^\/+|\/+$/g, "")) : "");
+        }
+        if (fillEl) fillEl.style.width = pct.toFixed(1) + "%";
+        if (cntEl) cntEl.textContent = "Tiến trình: " + (bak.processed || 0) + " / " + (bak.total || 0) + " tệp";
+        if (pctEl) pctEl.textContent = pct.toFixed(1) + "%";
+      }
+    }
+    var pBtn = document.getElementById("abPauseBtn");
+    if (pBtn) {
+      pBtn.classList.toggle("hidden", !running);
+      pBtn.textContent = bak.isPaused ? "Tiếp tục" : "Tạm dừng";
     }
     var cBtn = document.getElementById("abCancelBtn");
-    if (cBtn) cBtn.classList.toggle("hidden", !tb.autoBackupRunning);
+    if (cBtn) cBtn.classList.toggle("hidden", !running);
+    var sBtn = document.getElementById("abSyncNowBtn");
+    if (sBtn) sBtn.classList.toggle("hidden", running);
   }
 
   function openSmbModal() {
@@ -818,7 +851,7 @@
     var dup = bg.dup || {};
     var bak = bg.backup || {};
     var usb = s.usb || {};
-    var liveArr = (s.live && s.live.active) || [];
+    var liveArr = (s.livestream && s.livestream.jobs) || [];
 
     var count = (thumb.active ? 1 : 0) + (dup.active ? 1 : 0) + (bak.active ? 1 : 0) + (usb.running ? 1 : 0) + (liveArr.length ? 1 : 0);
     if (count === 0) {
@@ -883,10 +916,12 @@
       html += '<div id="bgLiveOpen" style="padding:8px 0;cursor:pointer;">' +
         '<div class="list-title">Ghi hình Livestream <span class="badge" style="color:var(--ux-orange);margin-left:4px;">🔴 ' + liveArr.length + ' kênh</span></div>';
       liveArr.forEach(function (j) {
-        var lbl = (j.platform || "Live") + (j.user ? (" • @" + j.user) : "");
+        var plat = j.platform === "tiktok" ? "TikTok" : (j.platform === "facebook" ? "Facebook" : (j.platform === "youtube" ? "YouTube" : (j.platform === "shopee" ? "Shopee" : (j.platform || "Livestream"))));
+        var lbl = j.watchUsername ? (plat + " • @" + j.watchUsername) : (plat + (j.jobId ? (" • " + String(j.jobId).slice(-6)) : ""));
+        var fName = (j.outputFile || "").split("/").pop() || "đang tạo file...";
         html += '<div style="margin-top:6px;padding-left:8px;border-left:2px solid var(--ux-orange);">' +
           '<div style="display:flex;justify-content:space-between;font-size:12px;"><b>' + String(lbl).replace(/</g, "&lt;") + '</b><span style="color:var(--ux-orange);">' + fmtDurSec(j.duration) + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>' + String(j.file || "đang tạo file...").replace(/</g, "&lt;") + '</span><span>' + (j.size || "0 B") + (j.speed ? (" • " + j.speed) : "") + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;">' + String(fName).replace(/</g, "&lt;") + '</span><span>' + (j.fileSize || "0 B") + (j.speed ? (" • " + j.speed) : "") + '</span></div>' +
         '</div>';
       });
       html += '</div>';
@@ -1476,12 +1511,14 @@
     });
     document.getElementById("abSyncNowBtn").addEventListener("click", function () {
       callBridge("triggerAutoBackup");
-      document.getElementById("autoBackupModal").classList.add("hidden");
       showToast("Đang bắt đầu đồng bộ lên NAS...");
+    });
+    document.getElementById("abPauseBtn").addEventListener("click", function () {
+      callBridge("toggleAutoBackupPause");
     });
     document.getElementById("abCancelBtn").addEventListener("click", function () {
       callBridge("cancelAutoBackup");
-      document.getElementById("autoBackupModal").classList.add("hidden");
+      showToast("Đang hủy tiến trình đồng bộ...");
     });
     document.getElementById("smbCloseBtn").addEventListener("click", function () { document.getElementById("smbModal").classList.add("hidden"); });
     document.getElementById("smbToggleBtn").addEventListener("click", function () {

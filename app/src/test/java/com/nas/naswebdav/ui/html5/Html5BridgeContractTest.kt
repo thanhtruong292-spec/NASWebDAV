@@ -63,7 +63,12 @@ class Html5BridgeContractTest {
         val js = readProjectFile("app/src/main/assets/html5/app.js")
 
         assertTrue("index.html must include #bgTasksCard on dashboard", html.contains("id=\"bgTasksCard\""))
+        assertTrue("index.html must include #abProgressBox in AutoBackup modal", html.contains("id=\"abProgressBox\""))
         assertTrue("app.js must define renderBgTasks()", js.contains("function renderBgTasks()"))
+        assertTrue(
+            "renderBgTasks must read s.livestream.jobs (matching NasHtmlDashboard JSON schema)",
+            js.contains("s.livestream && s.livestream.jobs")
+        )
         assertTrue(
             "renderSubUiModal must guard focused inputs during auto-refresh",
             js.contains("document.activeElement") && js.contains("bodyEl.contains(ae)")
