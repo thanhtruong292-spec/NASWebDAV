@@ -13,6 +13,7 @@ import sys
 import hashlib
 import ctypes
 import logging
+import subprocess
 
 log = logging.getLogger("nas_api.rust_bridge")
 
@@ -102,3 +103,110 @@ def compute_fast_md5_1mb(filepath):
     with open(filepath, "rb") as f:
         chunk = f.read(1048576)
         return hashlib.md5(chunk).hexdigest()
+
+
+def _find_indexer_binary():
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "rust_modules", "nas_indexer", "target", "release", "nas_indexer.exe"),
+        os.path.join(os.path.dirname(__file__), "rust_modules", "nas_indexer", "target", "release", "nas_indexer"),
+        "/usr/local/bin/nas_indexer",
+        "/opt/nas_hasher/nas_indexer",
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def is_indexer_accelerated():
+    """Kiểm tra xem module nas_indexer (Rust) có khả dụng hay không."""
+    return _find_indexer_binary() is not None
+
+
+class _RustIndexerStream(object):
+    """
+    Iterator đọc luồng JSON theo khối 64KB từ stdout của tiến trình nas_indexer.
+    Tương thích Python 3.5.3, dọn dẹp tiến trình an toàn khi kết thúc hoặc GeneratorExit.
+    """
+    def __init__(self, proc, first_chunk):
+        self._proc = proc
+        self._first_chunk = first_chunk
+        self._closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._closed:
+            raise StopIteration
+        if self._first_chunk is not None:
+            chunk = self._first_chunk
+            self._first_chunk = None
+            return chunk
+        raw = self._proc.stdout.read(65536)
+        if not raw:
+            self.close()
+            raise StopIteration
+        return raw.decode("utf-8", errors="ignore")
+
+    def next(self):
+        return self.__next__()
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            try:
+                self._proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                self._proc.stderr.close()
+            except Exception:
+                pass
+            if self._proc.poll() is None:
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
+
+
+def stream_fast_index(db_path):
+    """
+    Tạo stream JSON trực tiếp từ nas_indexer core (Rust).
+    Trả về _RustIndexerStream nếu đọc được chunk đầu hợp lệ;
+    Trả về None nếu không có binary hoặc lỗi đọc để tự động fallback về Python.
+    """
+    bin_path = _find_indexer_binary()
+    if not bin_path or not os.path.isfile(db_path):
+        return None
+
+    try:
+        stdin_dest = getattr(subprocess, "DEVNULL", None) or subprocess.PIPE
+        proc = subprocess.Popen(
+            [bin_path, "stream", db_path],
+            stdin=stdin_dest,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        first_raw = proc.stdout.read(65536)
+        if not first_raw:
+            err_raw = proc.stderr.read()
+            err_msg = err_raw.decode("utf-8", errors="ignore") if err_raw else ""
+            log.warning("Rust nas_indexer produced no data (code %s): %s", proc.poll(), err_msg)
+            try:
+                proc.stdout.close()
+                proc.stderr.close()
+            except Exception:
+                pass
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            return None
+
+        first_chunk = first_raw.decode("utf-8", errors="ignore")
+        return _RustIndexerStream(proc, first_chunk)
+    except Exception as e:
+        log.warning("Failed to start Rust nas_indexer: %s", e)
+        return None

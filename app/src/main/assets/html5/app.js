@@ -22,6 +22,9 @@
   var selectedPaths = {};
   var timelineData = null;
   var timelineLoading = false;
+  var lastDashLogsSignature = "";
+  var lastChartSignature = "";
+  var lastStorageSignature = "";
 
   var COLOR_GREEN = "#66bb6a";
   var COLOR_YELLOW = "#ffc400";
@@ -141,34 +144,38 @@
     document.getElementById("storageSummaryLine").textContent =
       "Đã quét " + fmtCount(st.totalFiles) + " tệp • " + (st.totalDirs || 0) + " thư mục • " + fmtBytes(st.totalBytes);
 
-    var catDefs = [
-      ["image", "Ảnh", COLOR_BLUE],
-      ["video", "Video", COLOR_ORANGE],
-      ["doc", "Tài liệu", COLOR_GREEN],
-      ["audio", "Nhạc", COLOR_PURPLE],
-      ["archive", "Nén", COLOR_YELLOW],
-      ["other", "Khác", "#94a3b8"]
-    ];
-    var totalB = Math.max(1, Number(st.totalBytes || 1));
-    var catsHtml = "";
-    catDefs.forEach(function (def) {
-      var item = (st.byType && st.byType[def[0]]) || { files: 0, bytes: 0 };
-      var wPct = Math.max(2, Math.min(100, (Number(item.bytes || 0) / totalB) * 100));
-      catsHtml +=
-        '<div class="cat-row">' +
-          '<div class="cat-name">' + def[1] + '</div>' +
-          '<div class="bar-track"><div class="bar-fill" style="width:' + wPct.toFixed(1) + '%;background:' + def[2] + '"></div></div>' +
-          '<div class="cat-meta">' + fmtCount(item.files) + ' • ' + fmtBytes(item.bytes) + '</div>' +
-        '</div>';
-    });
-    document.getElementById("storageCategories").innerHTML = catsHtml;
+    var stSig = [st.updatedAtMs, st.totalFiles, st.totalDirs, st.totalBytes].join("|");
+    if (stSig !== lastStorageSignature) {
+      lastStorageSignature = stSig;
+      var catDefs = [
+        ["image", "Ảnh", COLOR_BLUE],
+        ["video", "Video", COLOR_ORANGE],
+        ["doc", "Tài liệu", COLOR_GREEN],
+        ["audio", "Nhạc", COLOR_PURPLE],
+        ["archive", "Nén", COLOR_YELLOW],
+        ["other", "Khác", "#94a3b8"]
+      ];
+      var totalB = Math.max(1, Number(st.totalBytes || 1));
+      var catsHtml = "";
+      catDefs.forEach(function (def) {
+        var item = (st.byType && st.byType[def[0]]) || { files: 0, bytes: 0 };
+        var wPct = Math.max(2, Math.min(100, (Number(item.bytes || 0) / totalB) * 100));
+        catsHtml +=
+          '<div class="cat-row">' +
+            '<div class="cat-name">' + def[1] + '</div>' +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + wPct.toFixed(1) + '%;background:' + def[2] + '"></div></div>' +
+            '<div class="cat-meta">' + fmtCount(item.files) + ' • ' + fmtBytes(item.bytes) + '</div>' +
+          '</div>';
+      });
+      document.getElementById("storageCategories").innerHTML = catsHtml;
 
-    var largestHtml = "";
-    (st.largest || []).slice(0, 5).forEach(function (f) {
-      var name = String(f.path || "").split("/").pop();
-      largestHtml += '<div class="file-row"><span class="file-name">' + name + '</span><span class="file-size">' + fmtBytes(f.bytes) + '</span></div>';
-    });
-    document.getElementById("storageLargest").innerHTML = largestHtml || '<div class="list-sub">Chưa có dữ liệu</div>';
+      var largestHtml = "";
+      (st.largest || []).slice(0, 5).forEach(function (f) {
+        var name = String(f.path || "").split("/").pop();
+        largestHtml += '<div class="file-row"><span class="file-name">' + name + '</span><span class="file-size">' + fmtBytes(f.bytes) + '</span></div>';
+      });
+      document.getElementById("storageLargest").innerHTML = largestHtml || '<div class="list-sub">Chưa có dữ liệu</div>';
+    }
 
     // System Gauges
     var sys = state.system || {};
@@ -991,28 +998,38 @@
       return true;
     });
 
-    if (!filtered.length) {
-      listEl.innerHTML = '<div class="list-sub" style="padding:14px 0;text-align:center;">' +
-        (list.length ? "Không có nhật ký khớp với bộ lọc." : "Chưa có nhật ký hệ thống...") + '</div>';
-    } else {
-      var html = "";
-      filtered.slice(0, 30).forEach(function (l) {
-        var t = String(l.type || "INFO").toUpperCase();
-        var col = (t === "ERROR" || t === "CRASH") ? COLOR_RED : (t === "WARNING" ? COLOR_YELLOW : (t === "SUCCESS" ? COLOR_GREEN : COLOR_BLUE));
-        var bg = (t === "ERROR" || t === "CRASH") ? "rgba(239,83,80,0.12)" : ((t === "WARNING") ? "rgba(255,196,0,0.12)" : "rgba(148,163,184,0.06)");
-        var mod = String(l.module || "System").replace(/</g, "&lt;");
-        var msg = String(l.message || "").replace(/</g, "&lt;");
-        var tm = String(l.time || "");
+    var lastLog = list[0];
+    var logsSig = [
+      dashLogsExpanded,
+      dashLogsFilter,
+      filtered.length,
+      lastLog ? (lastLog.time + "|" + lastLog.message) : ""
+    ].join("|");
+    if (logsSig !== lastDashLogsSignature) {
+      lastDashLogsSignature = logsSig;
+      if (!filtered.length) {
+        listEl.innerHTML = '<div class="list-sub" style="padding:14px 0;text-align:center;">' +
+          (list.length ? "Không có nhật ký khớp với bộ lọc." : "Chưa có nhật ký hệ thống...") + '</div>';
+      } else {
+        var html = "";
+        filtered.slice(0, 30).forEach(function (l) {
+          var t = String(l.type || "INFO").toUpperCase();
+          var col = (t === "ERROR" || t === "CRASH") ? COLOR_RED : (t === "WARNING" ? COLOR_YELLOW : (t === "SUCCESS" ? COLOR_GREEN : COLOR_BLUE));
+          var bg = (t === "ERROR" || t === "CRASH") ? "rgba(239,83,80,0.12)" : ((t === "WARNING") ? "rgba(255,196,0,0.12)" : "rgba(148,163,184,0.06)");
+          var mod = String(l.module || "System").replace(/</g, "&lt;");
+          var msg = String(l.message || "").replace(/</g, "&lt;");
+          var tm = String(l.time || "");
 
-        html += '<div style="background:' + bg + ';border-radius:8px;padding:6px 9px;border:1px solid rgba(148,163,184,0.1);">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">' +
-            '<div style="font-size:11px;font-weight:700;color:' + col + ';">[' + t + '] ' + mod + '</div>' +
-            '<div style="font-size:10px;color:var(--ux-text-3);font-variant-numeric:tabular-nums;">' + tm + '</div>' +
-          '</div>' +
-          '<div style="font-size:11.5px;color:var(--ux-text);white-space:normal;word-break:break-word;line-height:1.35;">' + msg + '</div>' +
-        '</div>';
-      });
-      listEl.innerHTML = html;
+          html += '<div style="background:' + bg + ';border-radius:8px;padding:6px 9px;border:1px solid rgba(148,163,184,0.1);">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">' +
+              '<div style="font-size:11px;font-weight:700;color:' + col + ';">[' + t + '] ' + mod + '</div>' +
+              '<div style="font-size:10px;color:var(--ux-text-3);font-variant-numeric:tabular-nums;">' + tm + '</div>' +
+            '</div>' +
+            '<div style="font-size:11.5px;color:var(--ux-text);white-space:normal;word-break:break-word;line-height:1.35;">' + msg + '</div>' +
+          '</div>';
+        });
+        listEl.innerHTML = html;
+      }
     }
 
     if (foot) {
@@ -1309,6 +1326,16 @@
     var dpr = window.devicePixelRatio || 1;
     var rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
+
+    var lastPointTs = history.length > 0 ? (history[history.length - 1].ts || "") : "";
+    var chartSig = [
+      chartTab, chartRange, zoomScale.toFixed(2), panFraction.toFixed(2), touchedIdx,
+      Math.round(rect.width), Math.round(rect.height), history.length, lastPointTs,
+      state.metricsLoading ? "L" : (state.metricsError || "OK")
+    ].join("|");
+    if (chartSig === lastChartSignature) return;
+    lastChartSignature = chartSig;
+
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
     var ctx = canvas.getContext("2d");

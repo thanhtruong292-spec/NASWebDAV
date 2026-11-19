@@ -683,7 +683,8 @@ def _mark_file_index_unready(root, reason):
             conn.execute("UPDATE index_state SET ready=0,incomplete_reason=? WHERE id=1 AND root=?", (reason, root))
             conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _index_mutated_directories(directories):
@@ -769,7 +770,8 @@ def _refresh_file_index_for_search():
     try:
         row = conn.execute("SELECT root, scanned_at, built FROM index_state WHERE id=1").fetchone()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     # A first build/root migration belongs to the background watchdog, not an
     # API worker: the existing NAS tree can take minutes to enumerate initially.
     current_root = _get_webdav_public_dir()
@@ -949,7 +951,8 @@ def _scan_file_index_pass(search_root, work_lease=None, ignore_user_idle=False):
         result.update({"checked_dirs": checked, "enumerated_dirs": enumerated})
         return result
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 def _get_webdav_public_dir():
     import errno
@@ -1760,6 +1763,8 @@ def init_db():
         cur.execute('CREATE TABLE IF NOT EXISTS auth_attempts (ip TEXT PRIMARY KEY, count INTEGER)')
         cur.execute('CREATE TABLE IF NOT EXISTS authorized_ips (ip TEXT PRIMARY KEY, added_at DATETIME)')
         cur.execute('CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY, type TEXT, module TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_system_logs_id ON system_logs (id DESC)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_system_logs_type ON system_logs (type)')
         cur.execute('CREATE TABLE IF NOT EXISTS system_temperature_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, cpu_temp REAL, hdd_temp REAL)')
         cur.execute('''
             CREATE TABLE IF NOT EXISTS system_metrics_history (
@@ -5098,6 +5103,7 @@ def api_status():
 
     try:
         data["rust_accelerated"] = bool(rust_bridge and rust_bridge.is_rust_accelerated())
+        data["rust_indexer_accelerated"] = bool(rust_bridge and hasattr(rust_bridge, "is_indexer_accelerated") and rust_bridge.is_indexer_accelerated())
     except Exception:
         data["rust_accelerated"] = False
         
@@ -6414,7 +6420,8 @@ def api_auth_authorize():
         cur.execute('DELETE FROM auth_attempts WHERE ip=?', (ip,))
         conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     # B3: envelope mới cho route v1, shape cũ cho legacy (app cũ parse trực tiếp).
     if request.path.startswith("/api/v1/"):
@@ -6679,7 +6686,8 @@ def api_recent_media():
             items = [{"path": "/webdav/" + path, "name": name, "mtime": mtime, "size": size, "mime": mime}
                      for path, name, mtime, size, mime in rows]
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     if not ready:
         _refresh_file_index_for_search()
     return jsonify({"source": "file_index", "index_ready": ready, "items": items})
@@ -6731,7 +6739,8 @@ def api_photos_timeline():
                                 " ORDER BY mtime DESC,path LIMIT ? OFFSET ?", params + [limit, offset])
             items = [{"path": path, "mtime": mtime // 1000, "size": size} for path, mtime, size in rows]
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     if refresh and root:
         _refresh_file_index_for_search()
     return jsonify({"total": total, "offset": offset, "limit": limit, "items": items,
@@ -7845,7 +7854,8 @@ def _build_storage_summary(max_seconds=45, refresh=False):
             conn.commit()
         return result
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 
@@ -8022,7 +8032,8 @@ def _duplicate_lookup(info):
                 conn.commit()
         return row[0] if row else ''
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _duplicate_save_hash(relative, version, sha256):
@@ -8037,7 +8048,8 @@ def _duplicate_save_hash(relative, version, sha256):
                      (info['file_id'], info['version'], info['size'], sha256, time.time(), info['path']))
         conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     return info
 
 
@@ -8157,7 +8169,8 @@ def _duplicate_find_matches(sha256, size, after=''):
         ready = bool(state and public and state[0] == os.path.realpath(public) and state[1] and not _index_scan_lock.locked())
         rows = conn.execute('SELECT path FROM file_index WHERE is_dir=0 AND size=? AND path>? UNION SELECT path FROM verified_file_hashes WHERE sha256=? AND size=? AND path>? ORDER BY path LIMIT 64', (size,after,sha256,size,after)).fetchall()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     matches, unverified = [], []
     for row in rows:
         path = row[0]
@@ -11764,6 +11777,11 @@ def api_system_logs():
             cur = conn.cursor()
             cur.execute("SELECT id, type, module, message, timestamp FROM system_logs ORDER BY id DESC LIMIT 50")
             logs = [{"id": r[0], "type": r[1], "module": r[2], "message": normalize_vietnamese_message(r[3]), "timestamp": str(r[4])[:19]} for r in cur.fetchall()]
+            try:
+                cur.execute("DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)")
+                conn.commit()
+            except Exception:
+                pass
         finally:
             conn.close()
         return jsonify({"status": "success", "logs": logs})
@@ -13333,6 +13351,22 @@ def generate_fast_index(force=False):
         if time.time() - state[3] > 60:
             _refresh_file_index_for_search()
             raise ValueError('catalogue_refresh_pending')
+
+        # Ưu tiên streaming trực tiếp bằng Rust nas_indexer (5x throughput)
+        bridge = globals().get('rust_bridge')
+        if bridge and hasattr(bridge, 'stream_fast_index'):
+            rust_stream = bridge.stream_fast_index(INDEX_DB_PATH)
+            if rust_stream is not None:
+                try:
+                    conn.close()
+                    conn = None
+                    for chunk in rust_stream:
+                        yield chunk
+                    return
+                finally:
+                    if rust_stream is not None and hasattr(rust_stream, 'close'):
+                        rust_stream.close()
+
         total = conn.execute('SELECT COUNT(*) FROM file_index WHERE is_dir=0').fetchone()[0]
         metadata = {'catalogue_protocol': 1, 'source': 'file_index', 'index_ready': True,
                     'index_generation': state[1], 'catalogue_updated_at': state[3],
@@ -13355,7 +13389,8 @@ def generate_fast_index(force=False):
             yield ''.join(chunks)
         yield ']}'
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 @app.route("/api/disk/trash_batch", methods=["POST"])
 @requires_auth
@@ -13727,7 +13762,8 @@ def _verify_hash_row(webdav_path, expected_sha):
             "SELECT size, mtime FROM file_hashes WHERE path = ?",
             (webdav_path,)).fetchone()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     if not row:
         return None
     if int(row[0] or 0) != size or int(row[1] or 0) != mtime:
@@ -13748,7 +13784,8 @@ def _refresh_stale_rows(paths):
                          [(p,) for p in paths])
         conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 @app.route("/api/hash/lookup", methods=["GET"])
@@ -14434,7 +14471,8 @@ def _thumbnail_catalogue_page(after_path="", limit=512):
                 raise ValueError("Invalid indexed thumbnail path")
         return {"ready": True, "root": state[0], "revision": int(state[2] or 0), "rows": rows}
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _thumbnail_generator():
@@ -14876,7 +14914,8 @@ def api_thumb_exists():
             "SELECT path FROM file_index WHERE is_dir=0 AND path IN (" +
             ",".join("?" for _ in rel_paths) + ")", tuple(rel_paths))) if rel_paths else set()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     missing = []
     versions = {}
     root = os.path.realpath(root)
@@ -15006,7 +15045,8 @@ def api_nas_work_status():
     try:
         state = conn.execute("SELECT root,generation,ready,catalogue_revision,scanned_at FROM index_state WHERE id=1").fetchone()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     root = _get_webdav_public_dir()
     index_ready = bool(state and root and state[0] == os.path.realpath(root) and state[2] and not _index_scan_lock.locked())
     jobs = []
@@ -15057,7 +15097,8 @@ def api_nas_work_claim():
     try:
         state = conn.execute("SELECT root,ready,scanned_at,catalogue_revision FROM index_state WHERE id=1").fetchone()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     root = _get_webdav_public_dir()
     stale = bool(state and state[1] and time.time() - float(state[2] or 0) > FILE_INDEX_FRESHNESS_SECONDS)
     if not state or not root or state[0] != os.path.realpath(root) or not state[1] or stale or _index_scan_lock.locked():
@@ -15165,7 +15206,8 @@ def api_nas_work_files():
                         "next_cursor": rows[-1][0] if rows else cursor,
                         "eof": len(rows) < limit})
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 # ============================================================================
@@ -15206,7 +15248,8 @@ def _image_fingerprint_is_stale(path, size, mtime):
     try:
         row = conn.execute("SELECT size,mtime FROM image_fingerprints WHERE path=?", (path,)).fetchone()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     if not row:
         return True  # chua co -> can tinh
     return int(row[0]) != int(size or 0) or int(row[1]) != int(mtime or 0)
@@ -15252,7 +15295,8 @@ def api_fingerprint_pending():
         return jsonify({"source": "file_index", "catalogue_revision": state[3],
                         "source_version": source_version, "total": len(files), "files": files})
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 @app.route("/api/fingerprint/save", methods=["POST"])
@@ -15305,7 +15349,8 @@ def api_fingerprint_save():
         log.error("[Fingerprint] save error: %s", e)
         return jsonify({"error": str(e)}), 500
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     return jsonify({"result": "ok", "saved": saved})
 
 
@@ -15334,7 +15379,8 @@ def api_fingerprint_lookup():
             except Exception:
                 continue
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     return jsonify({"result": "ok", "results": results})
 
 @app.route("/api/process_state", methods=["GET"])

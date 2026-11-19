@@ -773,6 +773,16 @@ class DeviceManagementViewModel(
             try {
                 val db = NasApplication.instance.database
                 db.logDao().clearAllLogs()
+                if (WebDavManager.currentBaseUrl.isNotEmpty()) {
+                    try {
+                        val req = okhttp3.Request.Builder()
+                            .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/system_logs/clear")
+                            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                            .let(WebDavManager::tagCurrentAuth)
+                            .build()
+                        NasApplication.instance.fastApiClient.newCall(req).execute().close()
+                    } catch (_: Exception) {}
+                }
                 withContext(Dispatchers.Main) {
                     systemLogsList = emptyList()
                     systemLogs = emptyList()
