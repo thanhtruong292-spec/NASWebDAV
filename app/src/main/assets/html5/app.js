@@ -847,13 +847,12 @@
     if (!card || !body) return;
     var s = state || {};
     var bg = s.bgTasks || {};
-    var thumb = bg.thumb || {};
     var dup = bg.dup || {};
     var bak = bg.backup || {};
     var usb = s.usb || {};
     var liveArr = (s.livestream && s.livestream.jobs) || [];
 
-    var count = (thumb.active ? 1 : 0) + (dup.active ? 1 : 0) + (bak.active ? 1 : 0) + (usb.running ? 1 : 0) + (liveArr.length ? 1 : 0);
+    var count = (dup.active ? 1 : 0) + (bak.active ? 1 : 0) + (usb.running ? 1 : 0) + (liveArr.length ? 1 : 0);
     if (count === 0) {
       card.classList.add("hidden");
       return;
@@ -865,18 +864,6 @@
     if (!bgTasksExpanded) return;
 
     var html = "";
-    if (thumb.active) {
-      var tp = thumb.total > 0 ? Math.min(100, (thumb.generated * 100) / thumb.total) : 0;
-      html += '<div style="padding:8px 0;border-bottom:1px solid rgba(148,163,184,0.12);">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
-          '<div><div class="list-title">Tạo ảnh thu nhỏ</div><div class="list-sub" style="color:' + (thumb.paused ? COLOR_RED : COLOR_GREEN) + ';">' + (thumb.paused ? "⏸ Tạm dừng" : "▶ Đang tạo thumbnail") + '</div></div>' +
-          '<div style="display:flex;gap:4px;"><button class="zoom-btn" id="bgThumbPauseBtn">' + (thumb.paused ? "▶" : "⏸") + '</button><button class="zoom-btn" id="bgThumbRefBtn">↻</button></div>' +
-        '</div>' +
-        (thumb.lastFile ? '<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Tệp: ' + String(thumb.lastFile).replace(/</g, "&lt;") + '</div>' : '') +
-        '<div class="bar-track" style="margin:6px 0;"><div class="bar-fill" style="width:' + tp.toFixed(1) + '%;background:var(--ux-cyan);"></div></div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>Đã tạo: ' + (thumb.generated || 0) + ' / ' + (thumb.total || 0) + '</span><b>' + tp.toFixed(1) + '%</b></div>' +
-      '</div>';
-    }
     if (dup.active) {
       var dp = Math.min(100, Math.max(0, (dup.percent || 0) * 100));
       var dLbl = dup.resultCount > 0 ? ("✅ Tìm thấy " + dup.resultCount + " nhóm trùng") : (dup.paused ? "⏸ Đã tạm dừng" : ("🟢 Đang quét — Bước " + (dup.stageNum || 1) + "/" + (dup.totalStages || 1)));
@@ -929,8 +916,6 @@
 
     body.innerHTML = html;
     var el;
-    if ((el = document.getElementById("bgThumbPauseBtn"))) el.addEventListener("click", function () { callBridge("toggleThumbPause"); });
-    if ((el = document.getElementById("bgThumbRefBtn"))) el.addEventListener("click", function () { callBridge("refreshThumbStatus"); });
     if ((el = document.getElementById("bgDupOpen"))) el.addEventListener("click", function () { openSubUiModal("duplicate"); });
     if ((el = document.getElementById("bgDupPauseBtn"))) el.addEventListener("click", function () { callBridge("togglePauseDuplicateScan"); });
     if ((el = document.getElementById("bgDupCancelBtn"))) el.addEventListener("click", function () { callBridge("cancelDuplicateScan"); });
