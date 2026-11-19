@@ -60,6 +60,15 @@ fun NasHtmlDashboardScreen(
     var pageLoaded by remember { mutableStateOf(false) }
     val uiScope = rememberCoroutineScope()
 
+    val torrentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            uploadTorrentFileToNas(uiScope, context, uri)
+            Toast.makeText(context, "Đang gửi file .torrent lên NAS...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val uploadPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -143,6 +152,7 @@ fun NasHtmlDashboardScreen(
                 autoBackupVM = autoBackupVM,
                 fileBrowserVM = fileBrowserVM,
                 liveVM = liveVM,
+                smartToolsVM = smartToolsVM,
                 fileSort = fileSort,
                 thumbAudit = thumbAudit,
                 connStatus = connStatus.message
@@ -181,6 +191,7 @@ fun NasHtmlDashboardScreen(
             autoBackupVM = autoBackupVM,
             fileBrowserVM = fileBrowserVM,
             liveVM = liveVM,
+            smartToolsVM = smartToolsVM,
             fileSort = fileSort,
             thumbAudit = thumbAudit,
             connStatus = connStatus.message
@@ -738,6 +749,50 @@ fun NasHtmlDashboardScreen(
                     fun fetchUsbImport() {
                         post { deviceVM.fetchUsbImportStatus() }
                     }
+
+                    @JavascriptInterface
+                    fun fetchSleepSchedule() {
+                        post { autoBackupVM.fetchSleepSchedule() }
+                    }
+
+                    @JavascriptInterface
+                    fun saveSleepSchedule(enabled: Boolean, mode: String, startHour: Int, endHour: Int, idleOnly: Boolean) {
+                        post {
+                            autoBackupVM.saveSleepSchedule(
+                                SleepSchedule(
+                                    enabled = enabled,
+                                    mode = mode.ifBlank { "spindown" },
+                                    startHour = startHour.coerceIn(0, 23),
+                                    endHour = endHour.coerceIn(0, 23),
+                                    idleOnly = idleOnly
+                                )
+                            )
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun sendDownloadLink(url: String) {
+                        val clean = url.trim()
+                        if (clean.isNotBlank()) {
+                            post {
+                                sendDownloadLinkToQbittorrent(uiScope, clean)
+                                Toast.makeText(context, "Đã gửi link tải xuống tới qBittorrent", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun pickTorrentFile() {
+                        post { torrentPickerLauncher.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")) }
+                    }
+
+                    @JavascriptInterface
+                    fun startDuplicateScan(forceRestart: Boolean, lightningMode: Boolean) {
+                        post {
+                            smartToolsVM.startBackgroundDuplicateScan(context, forceRestart = forceRestart, lightningMode = lightningMode)
+                            smartToolsVM.isScanningDuplicates = true
+                        }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -775,6 +830,7 @@ private fun buildHtml5StateJson(
     autoBackupVM: com.nas.naswebdav.backup.AutoBackupViewModel,
     fileBrowserVM: com.nas.naswebdav.browser.FileBrowserViewModel,
     liveVM: com.nas.naswebdav.livestream.LivestreamViewModel,
+    smartToolsVM: com.nas.naswebdav.smarttools.SmartToolsViewModel,
     fileSort: String,
     thumbAudit: ThumbnailAuditData,
     connStatus: String
@@ -1086,6 +1142,21 @@ private fun buildHtml5StateJson(
         put("message", deviceVM.usbImportMessage.ifBlank { deviceVM.usbImportState.message })
         put("running", deviceVM.usbImportState.status.equals("running", ignoreCase = true))
         put("phase", deviceVM.usbImportState.status)
+    })
+    val sl = autoBackupVM.sleepSchedule
+    root.put("sleep", JSONObject().apply {
+        put("enabled", sl.enabled)
+        put("mode", sl.mode)
+        put("startHour", sl.startHour)
+        put("endHour", sl.endHour)
+        put("idleOnly", sl.idleOnly)
+        put("hddState", sl.currentHddState)
+        put("inWindow", sl.inWindowNow)
+        put("message", autoBackupVM.sleepScheduleMessage)
+    })
+    root.put("duplicate", JSONObject().apply {
+        put("scanning", smartToolsVM.isScanningDuplicates || smartToolsVM.isWorkerRunning)
+        put("count", smartToolsVM.duplicateFilesList.size)
     })
 
     return root.toString()

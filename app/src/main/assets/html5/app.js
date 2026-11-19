@@ -31,10 +31,12 @@
     return window.NasBridge || null;
   }
 
-  function callBridge(fn, arg, arg2, arg3) {
+  function callBridge(fn, arg, arg2, arg3, arg4, arg5) {
     var b = bridge();
     if (!b || typeof b[fn] !== "function") return;
-    if (arg3 !== undefined) b[fn](arg, arg2, arg3);
+    if (arg5 !== undefined) b[fn](arg, arg2, arg3, arg4, arg5);
+    else if (arg4 !== undefined) b[fn](arg, arg2, arg3, arg4);
+    else if (arg3 !== undefined) b[fn](arg, arg2, arg3);
     else if (arg2 !== undefined) b[fn](arg, arg2);
     else if (arg !== undefined) b[fn](arg);
     else b[fn]();
@@ -796,12 +798,15 @@
 
   function openSubUiModal(kind) {
     activeSubUi = kind;
+    var modal = document.getElementById("subUiModal");
+    if (modal) modal.removeAttribute("data-dirty");
     if (kind === "lanWhitelist") callBridge("fetchLanWhitelist");
     else if (kind === "nasBackup") callBridge("fetchNasBackups");
     else if (kind === "failedUploads") callBridge("fetchFailedUploads");
     else if (kind === "usbImport") callBridge("fetchUsbImport");
+    else if (kind === "sleepSchedule") callBridge("fetchSleepSchedule");
     renderSubUiModal();
-    document.getElementById("subUiModal").classList.remove("hidden");
+    modal.classList.remove("hidden");
   }
 
   function renderSubUiModal() {
@@ -927,6 +932,72 @@
       var usb = s.usb || {};
       html += '<div class="list-item"><div class="list-title">Trạng thái</div><span class="badge">' + (usb.running ? "Đang chép" : (usb.phase || "Sẵn sàng")) + '</span></div>' +
         '<div class="list-sub" style="padding:8px 0;">' + (usb.message || "Cắm USB vào cổng USB trên NAS để kiểm tra.") + '</div>';
+      bodyEl.innerHTML = html;
+    } else if (activeSubUi === "sleepSchedule") {
+      titleEl.textContent = "LỊCH NGỦ TIẾT KIỆM ĐIỆN";
+      var sl = s.sleep || {};
+      var modal = document.getElementById("subUiModal");
+      var dirty = modal && modal.getAttribute("data-dirty");
+      var curMode = dirty ? ((document.getElementById("slModeSel") && document.getElementById("slModeSel").value) || "spindown") : (sl.mode || "spindown");
+      var curEn = dirty ? (document.getElementById("slEnChk") && document.getElementById("slEnChk").checked) : !!sl.enabled;
+      var curIdle = dirty ? (document.getElementById("slIdleChk") && document.getElementById("slIdleChk").checked) : (sl.idleOnly !== false);
+      var curStart = dirty ? Number((document.getElementById("slStartInp") && document.getElementById("slStartInp").value) || 23) : (sl.startHour !== undefined ? sl.startHour : 23);
+      var curEnd = dirty ? Number((document.getElementById("slEndInp") && document.getElementById("slEndInp").value) || 7) : (sl.endHour !== undefined ? sl.endHour : 7);
+      html += '<div class="list-item"><div class="list-title">Trạng thái ổ cứng</div><span class="badge">' + (sl.hddState || "unknown") + '</span></div>' +
+        '<div class="list-item"><div class="list-title">Bật lịch ngủ tự động</div><input type="checkbox" id="slEnChk" ' + (curEn ? "checked" : "") + ' style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
+        '<div class="list-item"><div class="list-title">Chế độ</div><select id="slModeSel" class="ux-input" style="width:auto;margin:0;padding:6px 10px;"><option value="spindown"' + (curMode === "spindown" ? " selected" : "") + '>Ngủ ổ cứng (Spindown)</option><option value="suspend"' + (curMode === "suspend" ? " selected" : "") + '>Ngủ toàn hệ thống</option></select></div>' +
+        '<div class="list-item"><div class="list-title">Khung giờ (giờ)</div><div style="display:flex;gap:6px;align-items:center;"><input id="slStartInp" type="number" min="0" max="23" value="' + curStart + '" class="ux-input alert-num" style="width:54px;" /><span>–</span><input id="slEndInp" type="number" min="0" max="23" value="' + curEnd + '" class="ux-input alert-num" style="width:54px;" /></div></div>' +
+        '<div class="list-item"><div class="list-title">Chỉ ngủ khi NAS rảnh</div><input type="checkbox" id="slIdleChk" ' + (curIdle ? "checked" : "") + ' style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
+        (sl.message ? ('<div class="list-sub" style="padding:6px 0;color:var(--ux-cyan);">' + String(sl.message).replace(/</g, "&lt;") + '</div>') : '') +
+        '<button class="btn-pill primary" id="slSaveBtn" style="width:100%;margin-top:10px;">Lưu lịch ngủ NAS</button>';
+      bodyEl.innerHTML = html;
+      ["slEnChk", "slModeSel", "slStartInp", "slEndInp", "slIdleChk"].forEach(function (id) {
+        document.getElementById(id).addEventListener("change", function () { modal.setAttribute("data-dirty", "1"); });
+      });
+      document.getElementById("slSaveBtn").addEventListener("click", function () {
+        modal.removeAttribute("data-dirty");
+        callBridge("saveSleepSchedule", !!document.getElementById("slEnChk").checked, document.getElementById("slModeSel").value, Number(document.getElementById("slStartInp").value || 23), Number(document.getElementById("slEndInp").value || 7), !!document.getElementById("slIdleChk").checked);
+        showToast("Đã gửi cấu hình lịch ngủ NAS");
+      });
+    } else if (activeSubUi === "download") {
+      titleEl.textContent = "TẢI XUỐNG / QBITTORRENT";
+      var oldDl = (document.getElementById("dlLinkInp") && document.getElementById("dlLinkInp").value) || "";
+      html += '<input class="ux-input" style="margin:0 0 10px;" id="dlLinkInp" placeholder="Dán link Magnet hoặc HTTP/HTTPS..." value="' + oldDl.replace(/"/g, "&quot;") + '" />' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn-pill" id="dlPickBtn" style="flex:1;">Chọn file .torrent</button>' +
+          '<button class="btn-pill primary" id="dlSendBtn" style="flex:1;">Tải về NAS</button>' +
+        '</div>';
+      bodyEl.innerHTML = html;
+      document.getElementById("dlPickBtn").addEventListener("click", function () { callBridge("pickTorrentFile"); });
+      document.getElementById("dlSendBtn").addEventListener("click", function () {
+        var u = (document.getElementById("dlLinkInp").value || "").trim();
+        if (u) { callBridge("sendDownloadLink", u); document.getElementById("subUiModal").classList.add("hidden"); }
+      });
+    } else if (activeSubUi === "duplicate") {
+      titleEl.textContent = "QUÉT & DỌN TRÙNG LẶP";
+      var dup = s.duplicate || {};
+      html += '<div class="list-item"><div class="list-title">Trạng thái</div><span class="badge" style="color:' + (dup.scanning ? COLOR_YELLOW : COLOR_GREEN) + ';">' + (dup.scanning ? "Đang quét..." : ("Tìm thấy " + (dup.count || 0) + " tệp")) + '</span></div>' +
+        '<div class="list-item"><div class="list-title">Quét siêu tốc (Lightning)</div><input type="checkbox" id="dupLightChk" checked style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
+        '<div class="list-item"><div class="list-title">Quét lại từ đầu</div><input type="checkbox" id="dupForceChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px;">' +
+          '<button class="btn-pill primary" id="dupStartBtn" style="flex:1;">Bắt đầu quét</button>' +
+          '<button class="btn-pill" id="dupOpenNativeBtn" style="flex:1;">Xem chi tiết</button>' +
+        '</div>';
+      bodyEl.innerHTML = html;
+      document.getElementById("dupStartBtn").addEventListener("click", function () {
+        callBridge("startDuplicateScan", !!document.getElementById("dupForceChk").checked, !!document.getElementById("dupLightChk").checked);
+        showToast("Đã bắt đầu quét trùng lặp ngầm...");
+      });
+      document.getElementById("dupOpenNativeBtn").addEventListener("click", function () {
+        document.getElementById("subUiModal").classList.add("hidden");
+        callBridge("action", "duplicate");
+      });
+    } else if (activeSubUi === "about") {
+      titleEl.textContent = "GIỚI THIỆU ỨNG DỤNG";
+      html += '<div class="list-item"><div class="list-title">Ứng dụng</div><span class="badge">NAS WebDAV</span></div>' +
+        '<div class="list-item"><div class="list-title">Phiên bản</div><span class="badge">' + (s.versionName || "1.0") + '</span></div>' +
+        '<div class="list-item"><div class="list-title">Máy chủ</div><span class="badge">' + (s.connLabel || "NAS") + '</span></div>' +
+        '<div class="list-sub" style="padding:10px 0;">Ứng dụng quản lý NAS Chainedbox L1 Pro qua WebDAV &amp; API đồng bộ HTML5 + Native.</div>';
       bodyEl.innerHTML = html;
     }
   }
@@ -1234,7 +1305,7 @@
       else if (act === "docker") openDockerModal();
       else if (act === "logs") openLogsModal();
       else if (act === "livestream" || act === "stream") openLivestreamModal();
-      else if (act === "guest" || act === "social" || act === "performance" || act === "lanWhitelist" || act === "bandwidth" || act === "nasBackup" || act === "failedUploads" || act === "usbImport") openSubUiModal(act);
+      else if (act === "guest" || act === "social" || act === "performance" || act === "lanWhitelist" || act === "bandwidth" || act === "nasBackup" || act === "failedUploads" || act === "usbImport" || act === "sleepSchedule" || act === "download" || act === "duplicate" || act === "about") openSubUiModal(act);
       else callBridge("action", act);
     }
 
