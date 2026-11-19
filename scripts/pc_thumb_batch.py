@@ -102,7 +102,7 @@ class NasClient(object):
             return
         path = self.cursor.split("\n", 1)[-1] if self.cursor else ""
         cursor = (str(self.revision) + "\n" + path) if self.revision is not None else self.cursor
-        self.api("/api/work/checkpoint", {
+        self.api("/api/work/checkpoint", "POST", {
             "name": "thumbnail", "owner": self.lease["owner"], "token": self.lease["token"],
             "cursor": cursor, "completed": 0, "total": 0,
             "state": state, "error": error,
@@ -234,8 +234,8 @@ def claim_thumbnail_work(client):
     if prior.get("state") == "complete":
         return False
     if prior.get("state") in (None, "failed"):
-        client.api("/api/work/request", {"name": "thumbnail"})
-    client.lease = client.api("/api/work/claim",
+        client.api("/api/work/request", "POST", {"name": "thumbnail"})
+    client.lease = client.api("/api/work/claim", "POST",
                               {"name": "thumbnail", "owner": client.owner})
     if not client.lease.get("token"):
         return False
@@ -369,7 +369,7 @@ def process_one(client, item, dry_run, max_bytes, stats):
     path = item["path"]
     _bump(stats, "total")
     try:
-        missing_result = client.api("/api/thumb/exists", {"paths": [path]})
+        missing_result = client.api("/api/thumb/exists", "POST", {"paths": [path]})
     except ApiError:
         _bump(stats, "failed")
         _log("[FAIL] thumb/exists %s" % path)
@@ -484,7 +484,7 @@ def main():
     workers = args.workers or min(16, (os.cpu_count() or 4) * 2)
     _log("Workers: %s" % workers)
     while True:
-        page = client.api("/api/work/files", {
+        page = client.api("/api/work/files", "POST", {
             "name": "thumbnail", "owner": client.owner, "token": client.lease["token"],
             "cursor": page_cursor, "limit": 256, "catalogue_revision": client.revision,
             "include_total": need_total,

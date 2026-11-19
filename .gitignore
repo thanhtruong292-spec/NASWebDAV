@@ -36,6 +36,13 @@ claude-code-map/
 .tools/
 .windsurf/
 
+# Rust build artifacts
+target/
+**/target/
+*.dylib
+*.so
+*.dll
+
 # Scratch & temp files
 scratch/
 *.tmp

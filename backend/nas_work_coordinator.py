@@ -112,9 +112,10 @@ def bump_catalogue_revision(conn):
     row = conn.execute("SELECT catalogue_revision FROM index_state WHERE id=1").fetchone()
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='nas_work_jobs'").fetchone():
         now = time.time()
+        # CLIENT-FIRST: thumbnail does not reset from scratch on catalogue bump. It runs on daily idle timer or explicit request.
         conn.execute("""UPDATE nas_work_jobs SET state='queued',cursor='',completed=0,total=0,
                      revision=revision+1,requested_at=?,updated_at=?,error='catalogue_changed'
-                     WHERE name IN ('thumbnail','duplicates','fingerprint','hash') AND state='complete'""",
+                     WHERE name IN ('duplicates','fingerprint','hash') AND state='complete'""",
                      (now, now))
     return row[0] if row else 0
 
@@ -241,7 +242,7 @@ def checkpoint(db_path, name, owner, token, cursor, completed, total, state="run
         if lease is None or lease[0] <= now:
             conn.rollback()
             return False
-        changed = (state == "complete" and name in ("thumbnail", "duplicates", "fingerprint", "hash")
+        changed = (state == "complete" and name in ("duplicates", "fingerprint", "hash")
                    and lease[1] != catalogue_revision(conn))
         if changed:
             state, cursor, completed, total, error = "retry", "", 0, 0, "catalogue_changed"

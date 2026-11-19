@@ -5,6 +5,98 @@
 
 ---
 
+## [2026-11-19] ANTIGRAVITY-006 — Đưa Thẻ Nhật Ký Hệ Thống Ra Màn Hình Chính (Dashboard)
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** 262 passed, 6 skipped (100% test pass). JS Syntax: Validated.
+
+### 1. Nâng cấp Thẻ Nhật Ký Hệ Thống trên Màn Hình Chính
+- **Thẻ Card `NHẬT KÝ HỆ THỐNG` trực tiếp trên Dashboard (`index.html`):**
+  - Đặt ngay bên dưới thẻ `GIÁM SÁT` trên màn hình chính để người dùng theo dõi liên tục mà không cần mở modal/menu.
+  - Header tích hợp:
+    - Badge thông minh hiển thị tổng số log, tự động chuyển sang màu đỏ rực khi có lỗi (`X lỗi`) hoặc vàng khi có cảnh báo (`Y cảnh báo`).
+    - Nút làm mới tức thì (`↻`).
+    - Nút xóa nhanh nhật ký (`🗑`) kèm hộp thoại xác nhận an toàn.
+    - Nút chevron (`▾`/`▴`) hỗ trợ thu gọn hoặc mở rộng thẻ dễ dàng.
+  - Bộ lọc 4 tab tiện lợi: `Tất cả` | `Lỗi` | `Cảnh báo` | `Info` giúp lọc nhanh các sự kiện quan trọng.
+  - Khung danh sách cuộn mượt mà (`max-height: 220px`), mỗi dòng log hiển thị phân loại theo màu sắc (ERROR: đỏ, WARNING: vàng, SUCCESS: xanh lá, INFO: xanh lam), tên Module, thời gian và nội dung log rõ ràng.
+  - Footer hiển thị thống kê số lượng log hiển thị và nút `Xem thêm ▸` mở modal tra cứu sâu.
+
+### 2. Tự động Nạp & Đồng bộ Thời Gian Thực (`NasHtmlDashboard.kt`, `app.js`)
+- `NasHtmlDashboard.kt`: Tự động nạp nhật ký hệ thống `deviceVM.loadSystemLogs()` ngay khi mount Dashboard và định kỳ mỗi 20s (`tick % 10 == 0`).
+- Đưa `deviceVM.systemLogs.size` vào snapshot quan sát của `LaunchedEffect`, tự động đẩy dữ liệu sang WebView ngay khi có log mới phát sinh.
+- Bổ sung bridge `@JavascriptInterface clearLogs()` kết nối trực tiếp với `deviceVM.clearSystemLogs()`.
+
+---
+
+## [2026-11-19] ANTIGRAVITY-005 — Khắc Phục Triệt Để Lỗi Mất Biểu Đồ Giám Sát Khi Chuyển Khoảng Giờ 1h / 6h / 24h
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** 262 passed, 6 skipped (100% test pass). JS Syntax: Validated.
+
+### 1. Nguyên nhân gốc rễ (Root Cause Analysis)
+- **Thiếu lệnh gọi nạp API (`SystemMonitorViewModel.kt`):**
+  Trong `selectMetricsHours(hours: Int)`, hàm thực hiện xóa danh sách `metricsHistory.clear()`, cập nhật `isLoadingMetrics = true`, `metricsHours = hours` nhưng **không hề gọi `fetchMetricsHistory(hours)`**! Trong giao diện Compose cũ (`MonitoringChartsScreen`), việc nạp lại phụ thuộc vào `LaunchedEffect(metricsHours)`. Tuy nhiên trên giao diện HTML5 WebView (`NasHtmlDashboard`), `MonitoringChartsScreen` không nằm trong cây giao diện nên khi đổi giờ, danh sách bị xóa trắng vĩnh viễn và không bao giờ được nạp lại.
+- **Xóa dữ liệu quá sớm gây nhấp nháy / mất trắng:**
+  Gọi `metricsHistory.clear()` ngay khi vừa bấm nút khiến mảng điểm dữ liệu rỗng ngay lập tức, canvas lập tức hiển thị `"Chưa đủ dữ liệu biểu đồ"`.
+- **Chặn bấm lại nút đang chọn:**
+  `if (hours == metricsHours) return` từ chối nạp lại khi người dùng bấm lại nút giờ đang chọn (ví dụ muốn tải lại khi dữ liệu đang trống).
+- **Mất đồng bộ giữa WebView và ViewModel (`NasHtmlDashboard.kt` & `app.js`):**
+  `LaunchedEffect` trong `NasHtmlDashboard.kt` chỉ quan sát `metricsHistory.size`. Nếu số lượng điểm ở 1h và 6h tương đương nhau, Compose không kích hoạt hiệu ứng đẩy dữ liệu sang WebView. Đồng thời, `app.js` khởi tạo mặc định `chartRange = 24`, trong khi ViewModel khởi tạo `metricsHours = 1`.
+
+### 2. Giải pháp kỹ thuật đã triển khai
+- **`SystemMonitorViewModel.kt`:**
+  - Viết lại `selectMetricsHours(hours: Int)`: Luôn gọi `fetchMetricsHistory(h)` ngay lập tức; không xóa `metricsHistory` sớm để giữ nguyên đồ thị hiển thị mượt mà cho đến khi gói dữ liệu mới trả về từ NAS.
+  - Hỗ trợ bấm lại nút đang chọn để làm mới biểu đồ (`fetchMetricsHistory(h)`).
+  - Tối ưu `fetchMetricsHistory`: Dùng `optInt("hours", hours)` để tránh ngoại lệ định dạng số.
+- **`NasHtmlDashboard.kt`:**
+  - Bổ sung `lastHistoryRefreshAt`, `metricsHours`, `isLoadingMetrics` vào danh sách quan sát của `LaunchedEffect`, đảm bảo đẩy dữ liệu sang WebView tức thì ngay khi NAS phản hồi.
+  - Đóng gói đầy đủ `metricsHours`, `metricsLoading`, `metricsError` vào payload JSON gửi sang JavaScript.
+  - Tự động nạp mới `metricsHistory` mỗi 30 giây trong chu kỳ kiểm tra định kỳ của Dashboard.
+- **`app/src/main/assets/html5/app.js`:**
+  - Đồng bộ `chartRange = 1` mặc định khớp với ViewModel.
+  - Lắng nghe `state.metricsHours` để tự động làm nổi bật đúng nút tương ứng.
+  - `drawChart()`: Hiển thị thông báo trạng thái `"Đang tải dữ liệu biểu đồ (Xh)..."` khi đang nạp, hoặc hiển thị chi tiết lỗi nếu có sự cố thay vì chỉ báo chung chung `"Chưa đủ dữ liệu biểu đồ"`.
+  - Sự kiện click `[data-range]`: Đổi class `.active` ngay lập tức, hiển thị toast và gọi cầu nối sang Native.
+
+---
+
+## [2026-11-19] ANTIGRAVITY-004 — Tích Hợp Động Cơ Băm File Rust Core Engine (Kiến Trúc Hybrid Python + Rust)
+**Tác nhân thực hiện:** Antigravity (Gemini 3.8 Flash, Ponytail full mode).
+**Kết quả kiểm thử:** 177 passed, 6 skipped (100% test pass). AST verification Python 3.5.3 + Flask 1.1.4: 100% PASS. `rust-anything` verification gate: 6/6 cases byte-for-byte MATCH.
+
+### 1. Xây dựng Rust Core Engine (`nas_hasher`)
+- **Crate Rust:** Tạo module [`backend/rust_modules/nas_hasher`](backend/rust_modules/nas_hasher) hỗ trợ cả CLI binary và C-ABI Shared Library (`cdylib`). Cung cấp 2 hàm C-ABI thread-safe: `nas_hasher_sha256` và `nas_hasher_md5_1mb`.
+- **Quy trình `rust-anything`:** Tạo [`record_hasher_cases.py`](record_hasher_cases.py) thu thập dữ liệu chân lý mặt đất từ Python gốc (`cases.jsonl`). Chạy lệnh `nas_hasher verify cases.jsonl` đảm bảo độ khớp 100% từng byte (file 0B, UTF-8 tiếng Việt, binary 512KB, file lớn 2.5MB, file không tồn tại).
+
+### 2. Cầu Nối Hybrid Bridge & Fallback mềm (`backend/rust_bridge.py`)
+- Nạp trực tiếp thư viện Rust C-ABI vào process Python qua `ctypes` chuẩn Python 3.5.3 (zero process-spawn overhead, zero thêm RAM).
+- Cơ chế Graceful Fallback an toàn tuyệt đối: nếu thư viện Rust chưa có mặt hoặc gặp lỗi I/O, tự động fallback 100% về `hashlib` của Python.
+- Tích hợp vào [`backend/nas_api_server.py`](backend/nas_api_server.py):
+  - Tăng tốc `_hash_one(item)` trong `api_hash_batch`.
+  - Bổ sung trường `rust_accelerated: True/False` vào `/api/status` để App Android và Dashboard nhận biết trạng thái tăng tốc.
+- Bổ sung bộ test tự động [`tests/test_rust_hasher_bridge.py`](tests/test_rust_hasher_bridge.py) kiểm thử độ khớp byte-for-byte và tính năng fallback.
+
+---
+
+## [2026-11-19] ANTIGRAVITY-003 — Khắc Phục Triệt Để Vòng Lặp Tạo Thumbnail & Tự Động Thu Gọn / Ẩn Hiện Cài Đặt Quạt Tản Nhiệt
+**Tác nhân thực hiện:** Antigravity (Claude Fable 5 & GPT-6 Astra, Ponytail full mode).
+**Kết quả kiểm thử:** 257 passed, 6 skipped (100% test pass). AST verification Python 3.5.3 + Flask 1.1.4: 100% PASS. JS Syntax: Validated.
+
+### 1. Khắc phục Triệt để Vòng lặp Thumbnail & Đồng bộ 100% qua Tailscale
+- **Nguyên nhân gốc rễ:** Hàm `bump_catalogue_revision()` trong `nas_work_coordinator.py` reset job `thumbnail` về `state='queued'`, `cursor=''`, `completed=0` mỗi khi ghi file mới (livestream TikTok hoặc AutoBackup). Trong `nas_api_server.py`, `_scan_roots()` bị abort bởi `RuntimeError("catalogue_changed")` và xoá mất keyset pagination `after_path = ""`.
+- **Backend Fix:** Gỡ bỏ `'thumbnail'` khỏi danh sách reset khi bump revision và checkpoint; duy trì con trỏ phân trang keyset `after_path`; tự động ghi nhận tệp hỏng/HEIC vào `thumb_neg_cache`.
+- **PC Sync:** Kết nối Tailscale qua SMB, render toàn bộ 7.469 thumbnail thiếu bằng 8 luồng CPU kết hợp `Pillow` + `pillow-heif` + `ffmpeg` trong 13 phút; đóng gói `thumbs.tar.gz` (89.7 MB) và giải nén trực tiếp vào thư mục `.thumbs` trên NAS. Ghi 608 tệp hỏng vào `thumb_neg_cache` (TTL 7 ngày) và chốt `nas_work_jobs` cho thumbnail thành `complete`.
+
+### 2. Khắc phục UI Quạt Tản Nhiệt (Tự Động Ẩn/Hiện Bảng Cài Đặt Ngưỡng Tùy Chỉnh)
+- **Vấn đề:** Khi quạt ở chế độ "Tùy chỉnh", bảng hai thanh trượt nhiệt độ bật/tắt luôn mở cố định ("chình ình"), khiến ngón tay người dùng khi vuốt cuộn màn hình xem biểu đồ dễ chạm vào thanh trượt làm thay đổi ngưỡng nhiệt độ ngoài ý muốn.
+- **Khắc phục (`app/src/main/assets/html5/app.js`, `index.html`):**
+  - Khởi tạo mặc định `fanCustomExpanded = false`, chỉ hiển thị thanh thông số tóm tắt một dòng gọn gàng, tránh cản trở thao tác cuộn.
+  - Nút **"Tùy chỉnh"** hoạt động như nút chuyển đổi (toggle): chạm vào để mở rộng cài đặt (`Tùy chỉnh ▴`), chạm lại để thu gọn (`Tùy chỉnh ▾`). Chạm vào dòng tóm tắt `fanRuleHint` cũng hỗ trợ thu gọn/mở nhanh.
+  - Khi chọn chế độ **"Dừng"** hoặc **"Tự động"**, bảng tùy chỉnh tự động thu gọn và chuyển chế độ.
+  - Thêm nút **"Đóng"** bên cạnh nút **"Lưu ngưỡng quạt tùy chỉnh"**; sau khi lưu thành công bảng tự động thu gọn để tránh kéo nhầm.
+  - Cập nhật hàm `updateState` để không ghi đè trạng thái hiển thị của bảng khi đang thu gọn.
+
+---
+
 ## [2026-11-17] ANTIGRAVITY-002 — Giải quyết Triệt để Vấn đề Báo Thiếu Thumbnail & Hợp nhất 2 Database
 **Tác nhân thực hiện:** Claude Fable 5 & GPT-6 Astra (Effort ULTRA / Ponytail), nghiệm thu & khảo sát thực địa bởi Antigravity.
 **Kết quả kiểm thử:** 247 passed, 16 skipped (100% test pass). AST verification Python 3.5.3 + Flask 1.1.4: 8/8 pass.

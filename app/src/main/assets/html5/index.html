@@ -142,7 +142,10 @@
           <b id="fanOffVal" style="color:var(--ux-green);font-variant-numeric:tabular-nums;">40°C</b>
         </div>
         <input id="fanOffSlider" type="range" min="28" max="55" step="1" value="40" style="width:100%;accent-color:var(--ux-green);" />
-        <button class="btn-pill primary" id="fanApplyCustomBtn" style="width:100%;margin-top:2px;">Lưu ngưỡng quạt tùy chỉnh</button>
+        <div style="display:flex;gap:6px;margin-top:2px;">
+          <button class="btn-pill primary" id="fanApplyCustomBtn" style="flex:1;">Lưu ngưỡng quạt tùy chỉnh</button>
+          <button class="btn-pill" id="fanCloseCustomBtn" style="padding:0 14px;" title="Thu gọn">Đóng</button>
+        </div>
       </div>
     </div>
 
@@ -174,6 +177,35 @@
 
       <canvas id="metricsCanvas"></canvas>
       <div style="text-align:right;font-size:11px;color:var(--ux-text-3);margin-top:4px;" id="chartTimeFoot">--</div>
+    </div>
+
+    <!-- System Logs Card (NHẬT KÝ HỆ THỐNG TRÊN MÀN HÌNH CHÍNH) -->
+    <div class="card" id="dashLogsCard">
+      <div class="card-header" id="dashLogsHeader" style="cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-cyan);" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          <span class="card-title">NHẬT KÝ HỆ THỐNG</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="badge" id="dashLogsBadge">0 log</span>
+          <button class="zoom-btn" id="dashLogsRefreshBtn" title="Làm mới">↻</button>
+          <button class="zoom-btn" id="dashLogsClearBtn" title="Xóa nhật ký">🗑</button>
+          <span id="dashLogsChevron" style="color:var(--ux-text-2);font-size:12px;padding:0 2px;">▾</span>
+        </div>
+      </div>
+      <div id="dashLogsBody">
+        <div id="dashLogsFilterRow" style="display:flex;gap:4px;margin-bottom:8px;">
+          <button class="seg-btn active" data-log-filter="all" style="padding:4px 8px;font-size:11px;">Tất cả</button>
+          <button class="seg-btn" data-log-filter="error" style="padding:4px 8px;font-size:11px;color:var(--ux-red);">Lỗi</button>
+          <button class="seg-btn" data-log-filter="warning" style="padding:4px 8px;font-size:11px;color:var(--ux-yellow);">Cảnh báo</button>
+          <button class="seg-btn" data-log-filter="info" style="padding:4px 8px;font-size:11px;color:var(--ux-blue);">Info</button>
+        </div>
+        <div id="dashLogsList" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.12);font-size:11px;color:var(--ux-text-3);">
+          <span id="dashLogsTimeFoot">--</span>
+          <span style="color:var(--ux-cyan);cursor:pointer;font-weight:700;" id="dashLogsOpenModalBtn">Xem thêm ▸</span>
+        </div>
+      </div>
     </div>
   </section>
 

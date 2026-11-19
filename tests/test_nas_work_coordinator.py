@@ -69,7 +69,7 @@ class NasWorkCoordinatorTests(unittest.TestCase):
                              (name, "/webdav", now, now))
             self.assertEqual(1, work.bump_catalogue_revision(conn))
             states = dict(conn.execute("SELECT name,state FROM nas_work_jobs"))
-            self.assertEqual("queued", states["thumbnail"])
+            self.assertEqual("complete", states["thumbnail"])
             self.assertEqual("queued", states["duplicates"])
             self.assertEqual("complete", states["thumbnail_on_demand"])
         finally:

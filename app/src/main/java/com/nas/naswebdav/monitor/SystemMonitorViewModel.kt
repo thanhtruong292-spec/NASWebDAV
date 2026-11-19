@@ -386,13 +386,16 @@ class SystemMonitorViewModel(
     private var metricsFetchJob: kotlinx.coroutines.Job? = null
 
     fun selectMetricsHours(hours: Int) {
-        if (hours == metricsHours) return
+        val h = hours.coerceIn(1, 24)
+        if (h == metricsHours && metricsHistory.isNotEmpty() && !isLoadingMetrics) {
+            fetchMetricsHistory(h)
+            return
+        }
         metricsFetchJob?.cancel()
-        metricsHistory.clear()
         metricsError = null
-        lastHistoryRefreshAt = 0L
         isLoadingMetrics = true
-        metricsHours = hours
+        metricsHours = h
+        fetchMetricsHistory(h)
     }
 
     fun fetchMetricsHistory(hours: Int = metricsHours) {
@@ -407,7 +410,7 @@ class SystemMonitorViewModel(
                     if (!resp.isSuccessful) throw java.io.IOException("NAS trả về HTTP " + resp.code)
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
-                    require(json.getInt("hours") == hours) { "NAS trả về sai khoảng giờ" }
+                    require(json.optInt("hours", hours) == hours) { "NAS trả về sai khoảng giờ" }
                     val timestamps = json.getJSONArray("timestamps")
                     val cpuArr     = json.optJSONArray("cpu_percent")
                     val ramArr     = json.optJSONArray("ram_percent")

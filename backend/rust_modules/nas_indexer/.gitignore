@@ -1,0 +1,4 @@
+/target
+sample_index.db
+ground_truth.json
+Cargo.lock

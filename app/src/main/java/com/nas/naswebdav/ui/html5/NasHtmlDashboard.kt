@@ -126,6 +126,7 @@ fun NasHtmlDashboardScreen(
         sysMonitorVM.fetchStorageSummary()
         sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
         deviceVM.fetchSmartData()
+        deviceVM.loadSystemLogs()
         smartToolsVM.fetchThumbnailAudit()
         if (viewName == "dashboard" || viewName == "system") {
             sysMonitorVM.fetchSystemProcesses(context)
@@ -154,8 +155,12 @@ fun NasHtmlDashboardScreen(
             if (usbStatus == "copying" || usbStatus == "cancelling" || tick % 5 == 0) {
                 deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
             }
+            if (tick % 10 == 0) {
+                deviceVM.loadSystemLogs()
+            }
             if (tick % 15 == 0) {
                 smartToolsVM.fetchThumbnailAudit()
+                sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
             }
             val payload = buildHtml5StateJson(
                 context = context,
@@ -182,6 +187,10 @@ fun NasHtmlDashboardScreen(
         sysMonitorVM.systemStatus,
         sysMonitorVM.storageSummary,
         sysMonitorVM.metricsHistory.size,
+        sysMonitorVM.lastHistoryRefreshAt,
+        sysMonitorVM.metricsHours,
+        sysMonitorVM.isLoadingMetrics,
+        deviceVM.systemLogs.size,
         deviceVM.smartInfo,
         fileBrowserVM.fileList,
         fileBrowserVM.currentUrl,
@@ -609,6 +618,11 @@ fun NasHtmlDashboardScreen(
                     }
 
                     @JavascriptInterface
+                    fun clearLogs() {
+                        post { deviceVM.clearSystemLogs() }
+                    }
+
+                    @JavascriptInterface
                     fun refreshLivestream() {
                         post {
                             liveVM.refreshLivestreamState(context)
@@ -985,6 +999,9 @@ private fun buildHtml5StateJson(
         })
     }
     root.put("metrics", mArr)
+    root.put("metricsHours", sysMonitorVM.metricsHours)
+    root.put("metricsLoading", sysMonitorVM.isLoadingMetrics)
+    root.put("metricsError", sysMonitorVM.metricsError ?: "")
 
     // File Browser snapshot
     val sortedFiles = when (fileSort) {

@@ -2,7 +2,7 @@
   var state = null;
   var currentView = "dashboard";
   var chartTab = 0; // 0: Temp, 1: Resource, 2: Net
-  var chartRange = 24;
+  var chartRange = 1;
   var zoomScale = 1.0;
   var panFraction = 1.0;
   var touchedIdx = -1;
@@ -15,6 +15,9 @@
   var liveQuality = "best";
   var activeSubUi = ""; // guest | social | performance | lanWhitelist | bandwidth | nasBackup | failedUploads | usbImport | sleepSchedule | download | duplicate | about
   var bgTasksExpanded = true;
+  var dashLogsExpanded = true;
+  var dashLogsFilter = "all";
+  var fanCustomExpanded = false;
   var selectMode = false;
   var selectedPaths = {};
   var timelineData = null;
@@ -205,8 +208,13 @@
 
     // Fan
     document.getElementById("fanStatusText").textContent = sys.fanStatus || "--";
+    var isCustom = sys.fanMode === "custom";
     document.querySelectorAll("[data-fan]").forEach(function (btn) {
-      btn.classList.toggle("active", btn.getAttribute("data-fan") === sys.fanMode);
+      var bMode = btn.getAttribute("data-fan");
+      btn.classList.toggle("active", bMode === sys.fanMode);
+      if (bMode === "custom") {
+        btn.textContent = isCustom ? (fanCustomExpanded ? "Tùy chỉnh ▴" : "Tùy chỉnh ▾") : "Tùy chỉnh";
+      }
     });
     var onT = Math.round(Number(sys.fanOnTemp || 42));
     var offT = Math.round(Number(sys.fanOffTemp || 40));
@@ -214,21 +222,28 @@
     if (ruleHint) {
       if (sys.fanMode === "auto") {
         ruleHint.textContent = "Tự động (theo HDD): ≥42°C chạy 30% • ≥47°C 60% • ≥52°C 100% • ≤40°C dừng (CPU≥75°C / HDD≥60°C ép 100%)";
+        ruleHint.style.cursor = "default";
       } else if (sys.fanMode === "custom") {
         ruleHint.textContent = "Tùy chỉnh (theo HDD): Bật ≥ " + onT + "°C • Tắt ≤ " + offT + "°C (+5°C/+10°C tăng tốc 60%/100%)";
+        ruleHint.style.cursor = "pointer";
       } else {
         ruleHint.textContent = "Quạt đang tắt thủ công (chỉ ép chạy nếu quá nhiệt khẩn cấp).";
+        ruleHint.style.cursor = "default";
       }
     }
     var customBox = document.getElementById("fanCustomBox");
     if (customBox) {
-      var isCustom = sys.fanMode === "custom";
-      customBox.classList.toggle("hidden", !isCustom);
-      if (isCustom && !customBox.getAttribute("data-dirty")) {
-        var onSl = document.getElementById("fanOnSlider");
-        var offSl = document.getElementById("fanOffSlider");
-        if (onSl) { onSl.value = onT; document.getElementById("fanOnVal").textContent = onT + "°C"; }
-        if (offSl) { offSl.value = offT; document.getElementById("fanOffVal").textContent = offT + "°C"; }
+      if (!isCustom) {
+        fanCustomExpanded = false;
+        customBox.classList.add("hidden");
+      } else {
+        customBox.classList.toggle("hidden", !fanCustomExpanded);
+        if (fanCustomExpanded && !customBox.getAttribute("data-dirty")) {
+          var onSl = document.getElementById("fanOnSlider");
+          var offSl = document.getElementById("fanOffSlider");
+          if (onSl) { onSl.value = onT; document.getElementById("fanOnVal").textContent = onT + "°C"; }
+          if (offSl) { offSl.value = offT; document.getElementById("fanOffVal").textContent = offT + "°C"; }
+        }
       }
     }
 
@@ -256,6 +271,7 @@
 
     // Background tasks panel on Dashboard
     renderBgTasks();
+    renderDashLogs();
 
     // More tab
     document.getElementById("moreUser").textContent = state.user || "admin";
@@ -295,6 +311,9 @@
     }
 
     // Range & tab UI
+    if (state && typeof state.metricsHours === "number" && (state.metricsHours === 1 || state.metricsHours === 6 || state.metricsHours === 24)) {
+      chartRange = state.metricsHours;
+    }
     document.querySelectorAll("[data-range]").forEach(function (btn) {
       btn.classList.toggle("active", Number(btn.getAttribute("data-range")) === chartRange);
     });
@@ -925,6 +944,82 @@
     if ((el = document.getElementById("bgLiveOpen"))) el.addEventListener("click", function () { openLivestreamModal(); });
   }
 
+  function renderDashLogs() {
+    var card = document.getElementById("dashLogsCard");
+    var body = document.getElementById("dashLogsBody");
+    var listEl = document.getElementById("dashLogsList");
+    var badge = document.getElementById("dashLogsBadge");
+    var chev = document.getElementById("dashLogsChevron");
+    var foot = document.getElementById("dashLogsTimeFoot");
+    if (!card || !body || !listEl) return;
+
+    var list = (state && state.logs) || [];
+    var errCount = 0;
+    var warnCount = 0;
+    list.forEach(function (l) {
+      var t = String(l.type || "").toUpperCase();
+      if (t === "ERROR" || t === "CRASH") errCount++;
+      else if (t === "WARNING") warnCount++;
+    });
+
+    if (badge) {
+      if (errCount > 0) {
+        badge.textContent = errCount + " lỗi" + (warnCount > 0 ? " • " + warnCount + " cảnh báo" : "");
+        badge.style.color = COLOR_RED;
+      } else if (warnCount > 0) {
+        badge.textContent = warnCount + " cảnh báo";
+        badge.style.color = COLOR_YELLOW;
+      } else {
+        badge.textContent = list.length + " log";
+        badge.style.color = list.length > 0 ? COLOR_GREEN : "var(--ux-text-2)";
+      }
+    }
+
+    if (chev) chev.textContent = dashLogsExpanded ? "▴" : "▾";
+    body.classList.toggle("hidden", !dashLogsExpanded);
+    if (!dashLogsExpanded) return;
+
+    document.querySelectorAll("[data-log-filter]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-log-filter") === dashLogsFilter);
+    });
+
+    var filtered = list.filter(function (l) {
+      var t = String(l.type || "INFO").toLowerCase();
+      if (dashLogsFilter === "error") return t === "error" || t === "crash";
+      if (dashLogsFilter === "warning") return t === "warning";
+      if (dashLogsFilter === "info") return t === "info" || t === "success";
+      return true;
+    });
+
+    if (!filtered.length) {
+      listEl.innerHTML = '<div class="list-sub" style="padding:14px 0;text-align:center;">' +
+        (list.length ? "Không có nhật ký khớp với bộ lọc." : "Chưa có nhật ký hệ thống...") + '</div>';
+    } else {
+      var html = "";
+      filtered.slice(0, 30).forEach(function (l) {
+        var t = String(l.type || "INFO").toUpperCase();
+        var col = (t === "ERROR" || t === "CRASH") ? COLOR_RED : (t === "WARNING" ? COLOR_YELLOW : (t === "SUCCESS" ? COLOR_GREEN : COLOR_BLUE));
+        var bg = (t === "ERROR" || t === "CRASH") ? "rgba(239,83,80,0.12)" : ((t === "WARNING") ? "rgba(255,196,0,0.12)" : "rgba(148,163,184,0.06)");
+        var mod = String(l.module || "System").replace(/</g, "&lt;");
+        var msg = String(l.message || "").replace(/</g, "&lt;");
+        var tm = String(l.time || "");
+
+        html += '<div style="background:' + bg + ';border-radius:8px;padding:6px 9px;border:1px solid rgba(148,163,184,0.1);">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">' +
+            '<div style="font-size:11px;font-weight:700;color:' + col + ';">[' + t + '] ' + mod + '</div>' +
+            '<div style="font-size:10px;color:var(--ux-text-3);font-variant-numeric:tabular-nums;">' + tm + '</div>' +
+          '</div>' +
+          '<div style="font-size:11.5px;color:var(--ux-text);white-space:normal;word-break:break-word;line-height:1.35;">' + msg + '</div>' +
+        '</div>';
+      });
+      listEl.innerHTML = html;
+    }
+
+    if (foot) {
+      foot.textContent = "Hiển thị " + Math.min(filtered.length, 30) + "/" + list.length + " log";
+    }
+  }
+
   function openSubUiModal(kind) {
     activeSubUi = kind;
     var modal = document.getElementById("subUiModal");
@@ -1224,10 +1319,13 @@
     ctx.clearRect(0, 0, w, h);
 
     if (history.length < 2) {
-      ctx.fillStyle = "#64748b";
+      ctx.fillStyle = (state && state.metricsLoading) ? "#38bdf8" : "#64748b";
       ctx.font = "12px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("Chưa đủ dữ liệu biểu đồ", w / 2, h / 2);
+      var msg = (state && state.metricsLoading)
+        ? "Đang tải dữ liệu biểu đồ (" + chartRange + "h)..."
+        : ((state && state.metricsError) ? ("Lỗi tải biểu đồ: " + state.metricsError) : "Chưa đủ dữ liệu biểu đồ");
+      ctx.fillText(msg, w / 2, h / 2);
       return;
     }
 
@@ -1455,6 +1553,44 @@
       });
     }
 
+    var dlHdr = document.getElementById("dashLogsHeader");
+    if (dlHdr) {
+      dlHdr.addEventListener("click", function (e) {
+        if (e.target && e.target.closest("button")) return;
+        dashLogsExpanded = !dashLogsExpanded;
+        renderDashLogs();
+      });
+    }
+    var dlRef = document.getElementById("dashLogsRefreshBtn");
+    if (dlRef) {
+      dlRef.addEventListener("click", function (e) {
+        e.stopPropagation();
+        callBridge("fetchLogs");
+        showToast("Đang tải nhật ký...");
+      });
+    }
+    var dlClr = document.getElementById("dashLogsClearBtn");
+    if (dlClr) {
+      dlClr.addEventListener("click", function (e) {
+        e.stopPropagation();
+        callBridge("clearLogs");
+        showToast("Đã xóa nhật ký hệ thống");
+      });
+    }
+    var dlOpen = document.getElementById("dashLogsOpenModalBtn");
+    if (dlOpen) {
+      dlOpen.addEventListener("click", function () {
+        openLogsModal();
+      });
+    }
+    document.querySelectorAll("[data-log-filter]").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        dashLogsFilter = btn.getAttribute("data-log-filter") || "all";
+        renderDashLogs();
+      });
+    });
+
     function dispatchHtml5OrNativeAction(act) {
       if (act === "procCpu") openProcessModal("cpu");
       else if (act === "procMem") openProcessModal("mem");
@@ -1567,14 +1703,61 @@
       el.addEventListener("click", function () {
         var mode = el.getAttribute("data-fan");
         var customBox = document.getElementById("fanCustomBox");
-        if (customBox) customBox.removeAttribute("data-dirty");
-        if (mode === "custom" && customBox) {
-          customBox.classList.remove("hidden");
+        var customBtn = document.querySelector('[data-fan="custom"]');
+        var curMode = (state && state.system && state.system.fanMode) || "";
+
+        if (mode === "custom") {
+          if (curMode !== "custom") {
+            fanCustomExpanded = true;
+            if (customBox) {
+              customBox.removeAttribute("data-dirty");
+              customBox.classList.remove("hidden");
+            }
+            if (customBtn) customBtn.textContent = "Tùy chỉnh ▴";
+            callBridge("setFanMode", "custom");
+            showToast("Đã chuyển chế độ quạt: Tùy chỉnh (chạm lại để ẩn/hiện)");
+          } else {
+            // Đã ở chế độ Tùy chỉnh: chạm vào nút để ẩn/hiện bảng cài đặt ngưỡng
+            fanCustomExpanded = !fanCustomExpanded;
+            if (customBox) {
+              customBox.removeAttribute("data-dirty");
+              customBox.classList.toggle("hidden", !fanCustomExpanded);
+            }
+            if (customBtn) {
+              customBtn.textContent = fanCustomExpanded ? "Tùy chỉnh ▴" : "Tùy chỉnh ▾";
+            }
+            showToast(fanCustomExpanded ? "Đã mở cài đặt ngưỡng quạt" : "Đã thu gọn cài đặt ngưỡng quạt");
+          }
+        } else {
+          fanCustomExpanded = false;
+          if (customBox) {
+            customBox.removeAttribute("data-dirty");
+            customBox.classList.add("hidden");
+          }
+          if (customBtn) customBtn.textContent = "Tùy chỉnh";
+          callBridge("setFanMode", mode);
+          showToast("Đã chuyển chế độ quạt: " + (mode === "auto" ? "Tự động" : "Dừng"));
         }
-        callBridge("setFanMode", mode);
-        showToast("Đã chuyển chế độ quạt: " + (mode === "auto" ? "Tự động" : (mode === "custom" ? "Tùy chỉnh" : "Dừng")));
       });
     });
+    var ruleHintEl = document.getElementById("fanRuleHint");
+    if (ruleHintEl) {
+      ruleHintEl.addEventListener("click", function () {
+        var curMode = (state && state.system && state.system.fanMode) || "";
+        if (curMode === "custom") {
+          fanCustomExpanded = !fanCustomExpanded;
+          var customBox = document.getElementById("fanCustomBox");
+          if (customBox) {
+            customBox.removeAttribute("data-dirty");
+            customBox.classList.toggle("hidden", !fanCustomExpanded);
+          }
+          var customBtn = document.querySelector('[data-fan="custom"]');
+          if (customBtn) {
+            customBtn.textContent = fanCustomExpanded ? "Tùy chỉnh ▴" : "Tùy chỉnh ▾";
+          }
+        }
+      });
+    }
     var fanOnSl = document.getElementById("fanOnSlider");
     var fanOffSl = document.getElementById("fanOffSlider");
     if (fanOnSl && fanOffSl) {
@@ -1602,9 +1785,34 @@
       applyFanBtn.addEventListener("click", function () {
         var onV = Number(fanOnSl.value);
         var offV = Number(fanOffSl.value);
-        document.getElementById("fanCustomBox").removeAttribute("data-dirty");
+        var customBox = document.getElementById("fanCustomBox");
+        if (customBox) {
+          customBox.removeAttribute("data-dirty");
+          // Tự động thu gọn sau khi lưu để tránh chạm kéo nhầm khi cuộn
+          fanCustomExpanded = false;
+          customBox.classList.add("hidden");
+        }
+        var customBtn = document.querySelector('[data-fan="custom"]');
+        if (customBtn) {
+          customBtn.textContent = "Tùy chỉnh ▾";
+        }
         callBridge("setFanCustom", onV, offV);
         showToast("Đã lưu ngưỡng quạt: Bật ≥ " + onV + "°C • Tắt ≤ " + offV + "°C");
+      });
+    }
+    var closeFanBtn = document.getElementById("fanCloseCustomBtn");
+    if (closeFanBtn) {
+      closeFanBtn.addEventListener("click", function () {
+        fanCustomExpanded = false;
+        var customBox = document.getElementById("fanCustomBox");
+        if (customBox) {
+          customBox.removeAttribute("data-dirty");
+          customBox.classList.add("hidden");
+        }
+        var customBtn = document.querySelector('[data-fan="custom"]');
+        if (customBtn) {
+          customBtn.textContent = "Tùy chỉnh ▾";
+        }
       });
     }
     document.querySelectorAll("[data-thumb]").forEach(function (el) {
@@ -1616,8 +1824,14 @@
     });
     document.querySelectorAll("[data-range]").forEach(function (el) {
       el.addEventListener("click", function () {
-        chartRange = Number(el.getAttribute("data-range"));
+        var newRange = Number(el.getAttribute("data-range"));
+        chartRange = newRange;
+        touchedIdx = -1;
+        document.querySelectorAll("[data-range]").forEach(function (btn) {
+          btn.classList.toggle("active", Number(btn.getAttribute("data-range")) === chartRange);
+        });
         callBridge("setMetricsRange", chartRange);
+        showToast("Đang tải biểu đồ " + chartRange + "h...");
         renderState();
       });
     });

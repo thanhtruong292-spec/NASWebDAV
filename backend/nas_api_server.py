@@ -476,6 +476,14 @@ main_loop = None # Gắn với main thread để các background thread gọi ca
 from flask import Flask, request, jsonify, Response
 
 try:
+    import rust_bridge
+except ImportError:
+    try:
+        from backend import rust_bridge
+    except ImportError:
+        rust_bridge = None
+
+try:
     import psutil
 except ImportError:
     print("Thiếu thư viện psutil. Cài đặt: pip3 install psutil")
@@ -5087,6 +5095,11 @@ def api_status():
                 data["status"] = data["status"] + " | " + _system_alert
     except NameError:
         pass
+
+    try:
+        data["rust_accelerated"] = bool(rust_bridge and rust_bridge.is_rust_accelerated())
+    except Exception:
+        data["rust_accelerated"] = False
         
     return jsonify(_with_version(data))
 
@@ -13502,6 +13515,11 @@ def api_hash_batch():
             real_path = _resolve_webdav_request_path(local_path)
             if not real_path or not os.path.isfile(real_path):
                 return None
+            if rust_bridge and rust_bridge.is_rust_accelerated():
+                try:
+                    return (url_path, rust_bridge.compute_fast_md5_1mb(real_path))
+                except Exception:
+                    pass
             with open(real_path, "rb") as f:
                 chunk = f.read(1048576)
                 return (url_path, hashlib.md5(chunk).hexdigest())
@@ -13917,7 +13935,11 @@ def _generate_image_thumb(src_path, dst_path):
                 b"mif1", b"msf1", b"heic", b"heix", b"hevc", b"hevx",
                 b"heim", b"heis", b"hevm", b"hevs", b"mif2",
             ):
-                # NAS PIL 4.0.0 + ffmpeg 3.2 cannot decode HEIF — no retry will ever work.
+                # NAS PIL 4.0.0 + ffmpeg 3.2 cannot decode HEIF — mark neg-cache so daemon skips
+                try:
+                    _thumb_neg_mark(src_path)
+                except Exception:
+                    pass
                 return False
         except Exception:
             pass
@@ -14356,6 +14378,10 @@ def _process_one_thumb(args):
     # would mark the file done forever and the daemon would never retry when the
     # decoder is eventually available.
     if ext in ('.heic', '.heif'):
+        try:
+            _thumb_neg_mark(full_path)
+        except Exception:
+            pass
         return False
     try:
         if ext in MEDIA_IMAGE_EXTS:
@@ -14453,7 +14479,7 @@ def _thumbnail_generator():
             if not page["ready"]:
                 yield (None, None, None)
                 break
-            if page["root"] != os.path.realpath(base_dir) or page["revision"] != catalogue_revision:
+            if page["root"] != os.path.realpath(base_dir):
                 raise RuntimeError("catalogue_changed")
             rows = page["rows"]
             if not rows:
@@ -14565,8 +14591,12 @@ def _thumbnail_generator():
                 conn.close()
             saved_cursor = thumb_lease.get("cursor", "")
             saved_revision, separator, after_path = saved_cursor.partition("\n")
-            if separator and saved_revision == str(catalogue_revision):
-                thumb_checkpoint_cursor = saved_cursor
+            if separator:
+                thumb_checkpoint_cursor = str(catalogue_revision) + "\n" + after_path
+                thumb_completed = min(thumb_lease.get("completed", 0), media_total)
+            elif saved_cursor:
+                after_path = saved_cursor
+                thumb_checkpoint_cursor = str(catalogue_revision) + "\n" + after_path
                 thumb_completed = min(thumb_lease.get("completed", 0), media_total)
             else:
                 after_path = ""
