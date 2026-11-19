@@ -74,6 +74,12 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_batch_ahash_json"):
                         lib.nas_hasher_batch_ahash_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
                         lib.nas_hasher_batch_ahash_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_read_exif_json"):
+                        lib.nas_hasher_read_exif_json.argtypes = [ctypes.c_char_p]
+                        lib.nas_hasher_read_exif_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_read_batch_exif_json"):
+                        lib.nas_hasher_read_batch_exif_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
+                        lib.nas_hasher_read_batch_exif_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_free_string"):
                         lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
                         lib.nas_hasher_free_string.restype = None
@@ -744,4 +750,88 @@ def ahash_hamming_distance(hash1, hash2):
         return bin(h1 ^ h2).count("1")
     except Exception:
         return 64
+
+
+def _python_exif(filepath):
+    """Fallback Python đọc EXIF cơ bản bằng Pillow nếu vắng Rust."""
+    try:
+        from PIL import Image
+        with Image.open(filepath) as img:
+            ex = getattr(img, "_getexif", None)
+            if not ex:
+                return None
+            data = ex()
+            if not data:
+                return None
+            dt = str(data.get(0x9003) or data.get(0x0132) or "")
+            make = str(data.get(0x010f) or "").strip()
+            model = str(data.get(0x0110) or "").strip()
+            res = {}
+            if dt and len(dt) >= 19:
+                normalized = dt[:10].replace(":", "-") + dt[10:19]
+                res["date_taken"] = normalized
+            if make:
+                res["camera_make"] = make
+            if model:
+                res["camera_model"] = model
+            return res if res else None
+    except Exception:
+        return None
+
+
+def read_image_exif(filepath):
+    """
+    Trích xuất siêu dữ liệu EXIF (ngày chụp, máy ảnh, GPS) của ảnh.
+    Ưu tiên Rust C-ABI (kamadak-exif, chỉ đọc vài KB đầu file, không giải mã pixel).
+    Tự động fallback về Pillow nếu có sự cố.
+    """
+    if not filepath or not os.path.isfile(filepath):
+        return None
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_read_exif_json"):
+        ptr = None
+        try:
+            ptr = _RUST_LIB.nas_hasher_read_exif_json(str(filepath).encode("utf-8"))
+            if ptr:
+                raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+                return json.loads(raw_json)
+        except Exception as e:
+            log.warning("Rust nas_hasher_read_exif_json error for %s: %s", filepath, e)
+        finally:
+            if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+                try:
+                    _RUST_LIB.nas_hasher_free_string(ptr)
+                except Exception:
+                    pass
+    return _python_exif(filepath)
+
+
+def read_batch_exif(filepaths, workers=4):
+    """
+    Trích xuất EXIF hàng loạt cho danh sách file ảnh bằng Rust Rayon đa luồng.
+    Trả về dict {filepath: ExifMetadata or None}.
+    """
+    if not filepaths:
+        return {}
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_read_batch_exif_json"):
+        ptr = None
+        try:
+            paths_json = json.dumps(list(filepaths)).encode("utf-8")
+            ptr = _RUST_LIB.nas_hasher_read_batch_exif_json(paths_json, int(workers))
+            if ptr:
+                raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+                return json.loads(raw_json)
+        except Exception as e:
+            log.warning("Rust batch exif failed, fallback to sequential: %s", e)
+        finally:
+            if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+                try:
+                    _RUST_LIB.nas_hasher_free_string(ptr)
+                except Exception:
+                    pass
+
+    results = {}
+    for p in filepaths:
+        results[p] = read_image_exif(p)
+    return results
+
 

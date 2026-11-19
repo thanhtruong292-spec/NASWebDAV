@@ -6801,6 +6801,76 @@ def api_photos_timeline():
                     "scanning": bool(refresh and root), "error": None if root else "catalogue_root_unavailable"})
 
 
+@app.route('/api/media/exif', methods=['GET'])
+@requires_auth
+def api_media_exif():
+    """Doc sieu du lieu EXIF (ngay chup, camera, GPS, orientation) cua 1 file anh.
+    Query: ?path=/webdav/path/to/image.jpg
+    """
+    raw_p = (request.args.get("path") or "").strip()
+    if not raw_p or ".." in raw_p or "\\" in raw_p:
+        return jsonify({"error": "Invalid path"}), 400
+    clean_p = raw_p[len("/webdav/"):] if raw_p.startswith("/webdav/") else raw_p
+    full = _resolve_webdav_request_path(clean_p)
+    if not full or not os.path.isfile(full):
+        return jsonify({"error": "File not found"}), 404
+
+    bridge = globals().get("rust_bridge")
+    exif = None
+    if bridge and hasattr(bridge, "read_image_exif"):
+        exif = bridge.read_image_exif(full)
+
+    return jsonify({
+        "ok": True,
+        "path": "/webdav/" + clean_p,
+        "exif": exif
+    })
+
+
+@app.route('/api/media/exif/batch', methods=['POST'])
+@requires_auth
+def api_media_exif_batch():
+    """Doc EXIF hang loat da luong bang Rust cho mot danh sach anh.
+    Body JSON: {"paths": ["/webdav/1.jpg", "/webdav/2.jpg", ...]} (toi da 200 items)
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    paths = body.get("paths", [])
+    if not isinstance(paths, list) or len(paths) > 200:
+        return jsonify({"error": "paths phai la list <= 200"}), 400
+
+    full_map = {}
+    for p in paths:
+        if not isinstance(p, str) or ".." in p or "\\" in p:
+            continue
+        clean_p = p[len("/webdav/"):] if p.startswith("/webdav/") else p
+        full = _resolve_webdav_request_path(clean_p)
+        if full and os.path.isfile(full):
+            full_map[full] = "/webdav/" + clean_p
+
+    results = {}
+    if full_map:
+        bridge = globals().get("rust_bridge")
+        batch_exif = {}
+        if bridge and hasattr(bridge, "read_batch_exif"):
+            batch_exif = bridge.read_batch_exif(list(full_map.keys()), workers=4)
+        else:
+            for full in full_map:
+                if bridge and hasattr(bridge, "read_image_exif"):
+                    batch_exif[full] = bridge.read_image_exif(full)
+
+        for full, exif_data in batch_exif.items():
+            web_p = full_map.get(full)
+            if web_p:
+                results[web_p] = exif_data
+
+    return jsonify({
+        "ok": True,
+        "total": len(results),
+        "results": results
+    })
+
+
+
 # ============================================================================
 # DISK HEALTH MONITOR — Theo doi suc khoe HDD truoc khi qua muon
 # ============================================================================

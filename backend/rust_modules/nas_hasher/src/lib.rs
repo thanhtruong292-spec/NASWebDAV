@@ -3,11 +3,13 @@ use std::os::raw::{c_char, c_int, c_ulonglong};
 use std::path::Path;
 
 pub mod duplicates;
+pub mod exif_reader;
 pub mod image_thumb;
 pub mod mp4_parser;
 pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
 };
+pub use exif_reader::{read_batch_exif, read_image_exif, ExifMetadata};
 pub use image_thumb::{
     compute_batch_ahash, compute_frame_brightness, compute_image_ahash, generate_image_thumbnail,
     hamming_distance,
@@ -255,6 +257,64 @@ pub unsafe extern "C" fn nas_hasher_batch_ahash_json(
     let mut map = std::collections::BTreeMap::new();
     for (p, h) in results {
         map.insert(p, h);
+    }
+    let out_json = match serde_json::to_string(&map) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(out_json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Trích xuất siêu dữ liệu EXIF (ngày chụp, camera, GPS, orientation) cho 1 ảnh.
+/// Trả về chuỗi JSON ExifMetadata hoặc null nếu không có EXIF hoặc lỗi.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_read_exif_json(path_ptr: *const c_char) -> *mut c_char {
+    if path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = match CStr::from_ptr(path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let meta = match read_image_exif(Path::new(path_str)) {
+        Ok(m) => m,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&meta) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Trích xuất EXIF đa luồng (Rayon) từ mảng JSON các đường dẫn ảnh.
+/// Trả về chuỗi JSON: {"/path/1.jpg": {...}, "/path/2.jpg": null, ...}
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_read_batch_exif_json(
+    paths_json_ptr: *const c_char,
+    workers: c_int,
+) -> *mut c_char {
+    if paths_json_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let json_str = match CStr::from_ptr(paths_json_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let paths: Vec<String> = match serde_json::from_str(json_str) {
+        Ok(p) => p,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let results = read_batch_exif(&paths, workers.max(1) as usize);
+    let mut map = std::collections::BTreeMap::new();
+    for (p, m) in results {
+        map.insert(p, m);
     }
     let out_json = match serde_json::to_string(&map) {
         Ok(j) => j,
