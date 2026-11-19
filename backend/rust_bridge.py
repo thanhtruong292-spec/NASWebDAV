@@ -14,11 +14,13 @@ import hashlib
 import ctypes
 import logging
 import subprocess
+import threading
 
 log = logging.getLogger("nas_api.rust_bridge")
 
 _RUST_LIB = None
 _RUST_AVAILABLE = False
+_RUST_INIT_LOCK = threading.Lock()
 
 
 def _init_rust_bridge():
@@ -26,7 +28,11 @@ def _init_rust_bridge():
     if _RUST_LIB is not None:
         return _RUST_AVAILABLE
 
-    # Các đường dẫn tìm kiếm thư viện
+    with _RUST_INIT_LOCK:
+        if _RUST_LIB is not None:
+            return _RUST_AVAILABLE
+
+        # Các đường dẫn tìm kiếm thư viện
     candidates = [
         # Thư mục build cục bộ dev
         os.path.join(os.path.dirname(__file__), "rust_modules", "nas_hasher", "target", "release", "nas_hasher_core.dll"),

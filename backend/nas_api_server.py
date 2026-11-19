@@ -11777,11 +11777,6 @@ def api_system_logs():
             cur = conn.cursor()
             cur.execute("SELECT id, type, module, message, timestamp FROM system_logs ORDER BY id DESC LIMIT 50")
             logs = [{"id": r[0], "type": r[1], "module": r[2], "message": normalize_vietnamese_message(r[3]), "timestamp": str(r[4])[:19]} for r in cur.fetchall()]
-            try:
-                cur.execute("DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)")
-                conn.commit()
-            except Exception:
-                pass
         finally:
             conn.close()
         return jsonify({"status": "success", "logs": logs})
@@ -11789,7 +11784,7 @@ def api_system_logs():
         return jsonify({"status": "error", "message": "Không tải được nhật ký hệ thống: %s" % normalize_vietnamese_message(str(e))}), 500
 
 @app.route("/api/system_logs/clear", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_system_logs_clear():
     """Xoa toan bo nhat ky he thong tren NAS."""
     try:
