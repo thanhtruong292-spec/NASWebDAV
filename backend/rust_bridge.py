@@ -80,6 +80,12 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_read_batch_exif_json"):
                         lib.nas_hasher_read_batch_exif_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
                         lib.nas_hasher_read_batch_exif_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_extract_zip_json"):
+                        lib.nas_hasher_extract_zip_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                        lib.nas_hasher_extract_zip_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_create_zip_json"):
+                        lib.nas_hasher_create_zip_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                        lib.nas_hasher_create_zip_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_free_string"):
                         lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
                         lib.nas_hasher_free_string.restype = None
@@ -833,5 +839,63 @@ def read_batch_exif(filepaths, workers=4):
     for p in filepaths:
         results[p] = read_image_exif(p)
     return results
+
+
+def extract_zip_safe_rust(archive_path, dest_dir):
+    """
+    Giải nén file ZIP bằng Rust C-ABI với bảo vệ an toàn chống Zip-Slip và Symlink traversal.
+    Trả về số file đã giải nén (int) hoặc None nếu cần fallback về Python.
+    """
+    if not archive_path or not os.path.isfile(archive_path) or not dest_dir:
+        return None
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_extract_zip_json"):
+        ptr = None
+        try:
+            ptr = _RUST_LIB.nas_hasher_extract_zip_json(
+                str(archive_path).encode("utf-8"),
+                str(dest_dir).encode("utf-8")
+            )
+            if ptr:
+                raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+                data = json.loads(raw_json)
+                return int(data.get("files_extracted", 0))
+        except Exception as e:
+            log.warning("Rust extract_zip failed, fallback to python: %s", e)
+        finally:
+            if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+                try:
+                    _RUST_LIB.nas_hasher_free_string(ptr)
+                except Exception:
+                    pass
+    return None
+
+
+def create_zip_from_dir_rust(src_dir, dst_zip):
+    """
+    Nén một thư mục thành file ZIP bằng Rust C-ABI (Deflate compression).
+    Trả về dict {"files_compressed": N, "total_bytes": B, "zip_size": Z} hoặc None.
+    """
+    if not src_dir or not os.path.isdir(src_dir) or not dst_zip:
+        return None
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_create_zip_json"):
+        ptr = None
+        try:
+            ptr = _RUST_LIB.nas_hasher_create_zip_json(
+                str(src_dir).encode("utf-8"),
+                str(dst_zip).encode("utf-8")
+            )
+            if ptr:
+                raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+                return json.loads(raw_json)
+        except Exception as e:
+            log.warning("Rust create_zip failed: %s", e)
+        finally:
+            if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+                try:
+                    _RUST_LIB.nas_hasher_free_string(ptr)
+                except Exception:
+                    pass
+    return None
+
 
 

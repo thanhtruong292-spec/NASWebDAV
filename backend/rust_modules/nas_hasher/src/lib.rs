@@ -2,10 +2,12 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_ulonglong};
 use std::path::Path;
 
+pub mod archive_worker;
 pub mod duplicates;
 pub mod exif_reader;
 pub mod image_thumb;
 pub mod mp4_parser;
+pub use archive_worker::{create_zip_from_dir, extract_zip_safe, ZipCreateResult, ZipExtractResult};
 pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
 };
@@ -321,6 +323,70 @@ pub unsafe extern "C" fn nas_hasher_read_batch_exif_json(
         Err(_) => return std::ptr::null_mut(),
     };
     match CString::new(out_json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Giải nén an toàn file ZIP bằng Rust chống Zip-Slip và Symlink traversal.
+/// Trả về JSON: {"files_extracted": N, "bytes_extracted": B} hoặc null nếu lỗi.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_extract_zip_json(
+    archive_ptr: *const c_char,
+    dest_ptr: *const c_char,
+) -> *mut c_char {
+    if archive_ptr.is_null() || dest_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let archive_str = match CStr::from_ptr(archive_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let dest_str = match CStr::from_ptr(dest_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = match extract_zip_safe(Path::new(archive_str), Path::new(dest_str)) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Nén một thư mục thành file ZIP bằng thuật toán Deflate tốc độ cao.
+/// Trả về JSON: {"files_compressed": N, "total_bytes": B, "zip_size": Z} hoặc null nếu lỗi.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_create_zip_json(
+    src_dir_ptr: *const c_char,
+    dst_zip_ptr: *const c_char,
+) -> *mut c_char {
+    if src_dir_ptr.is_null() || dst_zip_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let src_str = match CStr::from_ptr(src_dir_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let dst_str = match CStr::from_ptr(dst_zip_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = match create_zip_from_dir(Path::new(src_str), Path::new(dst_str)) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
         Ok(cs) => cs.into_raw(),
         Err(_) => std::ptr::null_mut(),
     }

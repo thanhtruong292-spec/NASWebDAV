@@ -3289,6 +3289,16 @@ def _archive_member_within_dest(dest_dir, member_name):
     return target_real == dest_real or target_real.startswith(dest_real + os.sep)
 
 def _extract_zip_safe(archive_path, dest_dir):
+    # Ưu tiên Rust C-ABI (streaming zero-GIL, chống Zip-Slip)
+    bridge = globals().get("rust_bridge")
+    if bridge and hasattr(bridge, "extract_zip_safe_rust"):
+        try:
+            res = bridge.extract_zip_safe_rust(archive_path, dest_dir)
+            if res is not None:
+                return res
+        except Exception as e:
+            log.warning("[Archive] Rust extract_zip error, fallback to python: %s", e)
+
     import stat
     import zipfile
     with zipfile.ZipFile(archive_path) as zf:
@@ -11694,6 +11704,7 @@ def api_torrent_add_file():
 # ============ GIAI NEN FILE ============
 
 @app.route("/api/file/unzip", methods=["POST"])
+@app.route("/api/unzip", methods=["POST"])
 @requires_auth
 def api_unzip():
     try:
@@ -11739,6 +11750,73 @@ def api_unzip():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/file/zip", methods=["POST"])
+@app.route("/api/zip", methods=["POST"])
+@requires_auth
+def api_zip():
+    """Nen mot thu muc thanh file .zip bang Rust Deflate toc do cao.
+    Input JSON:
+      - path: duong dan thu muc can nen (vi du: /webdav/Album)
+      - dest: duong dan file zip dich (tuy chon, mac dinh <path>.zip)
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        raw_path = data.get("path", "") or data.get("src", "")
+        if not raw_path:
+            return jsonify({"error": "Khong tim thay thu muc can nen"}), 400
+        src_dir = _resolve_webdav_request_path(raw_path)
+        if not src_dir or not os.path.isdir(src_dir):
+            if os.path.isabs(raw_path) and _validate_file_path(raw_path) and os.path.isdir(raw_path):
+                src_dir = os.path.realpath(raw_path)
+            else:
+                return jsonify({"error": "Thu muc khong ton tai"}), 404
+        if not _validate_file_path(src_dir):
+            return jsonify({"error": "Duong dan thu muc khong hop le"}), 403
+
+        raw_dest = data.get("dest", "")
+        if raw_dest:
+            dst_zip = _resolve_webdav_request_path(raw_dest)
+            if not dst_zip and os.path.isabs(raw_dest) and _validate_file_path(raw_dest):
+                dst_zip = os.path.realpath(raw_dest)
+        else:
+            dst_zip = src_dir.rstrip("/\\") + ".zip"
+
+        if not dst_zip or not dst_zip.lower().endswith(".zip"):
+            dst_zip = src_dir.rstrip("/\\") + ".zip"
+        if not _validate_file_path(os.path.dirname(dst_zip)):
+            return jsonify({"error": "Thu muc luu file zip khong hop le"}), 403
+
+        bridge = globals().get("rust_bridge")
+        res = None
+        if bridge and hasattr(bridge, "create_zip_from_dir_rust"):
+            res = bridge.create_zip_from_dir_rust(src_dir, dst_zip)
+
+        if res is None:
+            import zipfile
+            with zipfile.ZipFile(dst_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                count = 0
+                total_b = 0
+                for root, dirs, files in os.walk(src_dir):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        rel = os.path.relpath(fp, src_dir)
+                        zf.write(fp, rel)
+                        count += 1
+                        total_b += os.path.getsize(fp)
+                res = {"files_compressed": count, "total_bytes": total_b, "zip_size": os.path.getsize(dst_zip)}
+
+        return jsonify({
+            "result": "ok",
+            "zip_file": dst_zip,
+            "files_compressed": res.get("files_compressed", 0),
+            "zip_size": res.get("zip_size", 0)
+        })
+    except Exception as e:
+        log.error("[API] Error in api_zip: %s", e)
+        return jsonify({"error": str(e)}), 500
+
 
 # ============ BAO MAT ============
 

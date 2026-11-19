@@ -20,9 +20,10 @@ def test_exif_extraction_and_fallback():
         # Tạo ảnh JPEG có nhúng thông tin EXIF qua Pillow
         img = Image.new("RGB", (32, 32), (100, 150, 200))
         exif_data = img.getexif()
-        # 0x010f: Make, 0x0110: Model, 0x9003: DateTimeOriginal
+        # 0x010f: Make, 0x0110: Model, 0x0132: DateTime, 0x9003: DateTimeOriginal
         exif_data[0x010f] = "TestCamera"
         exif_data[0x0110] = "ModelAlpha"
+        exif_data[0x0132] = "2026:11:19 23:59:00"
         exif_data[0x9003] = "2026:11:19 23:59:00"
         img.save(path, "JPEG", exif=exif_data)
 

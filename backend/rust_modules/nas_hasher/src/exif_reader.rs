@@ -1,4 +1,4 @@
-use exif::{In, Reader, Tag, Value};
+use exif::{Reader, Tag, Value};
 use serde::Serialize;
 use std::fs::File;
 use std::io::BufReader;
@@ -72,9 +72,10 @@ pub fn read_image_exif(img_path: &Path) -> Result<ExifMetadata, String> {
 
     // 1. Ngày chụp: ưu tiên DateTimeOriginal, sau đó DateTimeDigitized, cuối cùng DateTime
     let dt_field = exif
-        .get_field(Tag::DateTimeOriginal, In::PRIMARY)
-        .or_else(|| exif.get_field(Tag::DateTimeDigitized, In::PRIMARY))
-        .or_else(|| exif.get_field(Tag::DateTime, In::PRIMARY));
+        .fields()
+        .find(|f| f.tag == Tag::DateTimeOriginal)
+        .or_else(|| exif.fields().find(|f| f.tag == Tag::DateTimeDigitized))
+        .or_else(|| exif.fields().find(|f| f.tag == Tag::DateTime));
     if let Some(f) = dt_field {
         let raw = f.display_value().to_string();
         let (dt_str, ts) = parse_exif_datetime(&raw);
@@ -83,7 +84,7 @@ pub fn read_image_exif(img_path: &Path) -> Result<ExifMetadata, String> {
     }
 
     // 2. Camera Make & Model
-    if let Some(f) = exif.get_field(Tag::Make, In::PRIMARY) {
+    if let Some(f) = exif.fields().find(|f| f.tag == Tag::Make) {
         meta.camera_make = Some(
             f.display_value()
                 .to_string()
@@ -92,7 +93,7 @@ pub fn read_image_exif(img_path: &Path) -> Result<ExifMetadata, String> {
                 .to_string(),
         );
     }
-    if let Some(f) = exif.get_field(Tag::Model, In::PRIMARY) {
+    if let Some(f) = exif.fields().find(|f| f.tag == Tag::Model) {
         meta.camera_model = Some(
             f.display_value()
                 .to_string()
@@ -103,7 +104,7 @@ pub fn read_image_exif(img_path: &Path) -> Result<ExifMetadata, String> {
     }
 
     // 3. Orientation
-    if let Some(f) = exif.get_field(Tag::Orientation, In::PRIMARY) {
+    if let Some(f) = exif.fields().find(|f| f.tag == Tag::Orientation) {
         if let Some(v) = f.value.get_uint(0) {
             meta.orientation = Some(v);
         }
@@ -111,16 +112,18 @@ pub fn read_image_exif(img_path: &Path) -> Result<ExifMetadata, String> {
 
     // 4. GPS
     let lat_ref = exif
-        .get_field(Tag::GPSLatitudeRef, In::PRIMARY)
+        .fields()
+        .find(|f| f.tag == Tag::GPSLatitudeRef)
         .map(|f| f.display_value().to_string());
     let lon_ref = exif
-        .get_field(Tag::GPSLongitudeRef, In::PRIMARY)
+        .fields()
+        .find(|f| f.tag == Tag::GPSLongitudeRef)
         .map(|f| f.display_value().to_string());
 
-    if let Some(f) = exif.get_field(Tag::GPSLatitude, In::PRIMARY) {
+    if let Some(f) = exif.fields().find(|f| f.tag == Tag::GPSLatitude) {
         meta.latitude = parse_gps_coord(&f.value, lat_ref.as_deref());
     }
-    if let Some(f) = exif.get_field(Tag::GPSLongitude, In::PRIMARY) {
+    if let Some(f) = exif.fields().find(|f| f.tag == Tag::GPSLongitude) {
         meta.longitude = parse_gps_coord(&f.value, lon_ref.as_deref());
     }
 
