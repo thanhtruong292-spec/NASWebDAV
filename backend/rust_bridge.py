@@ -68,6 +68,12 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_frame_brightness"):
                         lib.nas_hasher_frame_brightness.argtypes = [ctypes.c_char_p]
                         lib.nas_hasher_frame_brightness.restype = ctypes.c_double
+                    if hasattr(lib, "nas_hasher_ahash"):
+                        lib.nas_hasher_ahash.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                        lib.nas_hasher_ahash.restype = ctypes.c_int
+                    if hasattr(lib, "nas_hasher_batch_ahash_json"):
+                        lib.nas_hasher_batch_ahash_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
+                        lib.nas_hasher_batch_ahash_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_free_string"):
                         lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
                         lib.nas_hasher_free_string.restype = None
@@ -652,3 +658,90 @@ def query_photos_timeline(db_path, start_ms=-1, end_ms=-1, limit=500, offset=0):
                 _INDEXER_LIB.nas_indexer_free_string(ptr)
             except Exception:
                 pass
+
+
+def _python_ahash(filepath):
+    """Fallback Python tính aHash 64-bit bằng Pillow nếu vắng Rust."""
+    try:
+        from PIL import Image
+        with Image.open(filepath) as img:
+            small = img.convert("L").resize((8, 8), Image.BILINEAR)
+            if hasattr(small, "get_flattened_data"):
+                pixels = list(small.get_flattened_data())
+            else:
+                pixels = list(small.getdata())
+            if not pixels or len(pixels) != 64:
+                return None
+            avg = sum(pixels) / 64.0
+            val = 0
+            for i, p in enumerate(pixels):
+                if p >= avg:
+                    val |= (1 << (63 - i))
+            return "{:016x}".format(val)
+    except Exception:
+        return None
+
+
+def compute_image_ahash(filepath):
+    """
+    Tính perceptual aHash 64-bit (16 ký tự hex) cho 1 ảnh.
+    Khớp 100% với ImageFingerprint của app Android.
+    Ưu tiên Rust C-ABI (NEON SIMD Bilinear), tự động fallback về Pillow.
+    """
+    if not filepath or not os.path.isfile(filepath):
+        return None
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_ahash"):
+        try:
+            buf = ctypes.create_string_buffer(32)
+            rc = _RUST_LIB.nas_hasher_ahash(str(filepath).encode("utf-8"), buf)
+            if rc == 0:
+                val = buf.value.decode("ascii", errors="ignore").strip().lower()
+                if len(val) == 16:
+                    return val
+        except Exception as e:
+            log.warning("Rust nas_hasher_ahash error for %s: %s", filepath, e)
+    return _python_ahash(filepath)
+
+
+def compute_batch_ahash(filepaths, workers=4):
+    """
+    Tính aHash hàng loạt cho danh sách file ảnh bằng Rust Rayon đa luồng.
+    Trả về dict {filepath: ahash_hex or None}.
+    """
+    if not filepaths:
+        return {}
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_batch_ahash_json"):
+        ptr = None
+        try:
+            paths_json = json.dumps(list(filepaths)).encode("utf-8")
+            ptr = _RUST_LIB.nas_hasher_batch_ahash_json(paths_json, int(workers))
+            if ptr:
+                raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+                return json.loads(raw_json)
+        except Exception as e:
+            log.warning("Rust batch ahash failed, fallback to sequential: %s", e)
+        finally:
+            if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+                try:
+                    _RUST_LIB.nas_hasher_free_string(ptr)
+                except Exception:
+                    pass
+
+    # Fallback tuần tự nếu Rust không khả dụng
+    results = {}
+    for p in filepaths:
+        results[p] = compute_image_ahash(p)
+    return results
+
+
+def ahash_hamming_distance(hash1, hash2):
+    """Tính khoảng cách Hamming (0..64) giữa 2 chuỗi aHash 16 ký tự hex."""
+    if not hash1 or not hash2 or len(hash1) != 16 or len(hash2) != 16:
+        return 64
+    try:
+        h1 = int(hash1, 16)
+        h2 = int(hash2, 16)
+        return bin(h1 ^ h2).count("1")
+    except Exception:
+        return 64
+

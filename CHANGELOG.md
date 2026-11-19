@@ -5,6 +5,26 @@
 
 ---
 
+## [2026-11-19] ANTIGRAVITY-016 — Tự Động Tính Chu Ký Ảnh Perceptual aHash 64-bit Bằng Rust & Nhận Diện Ảnh Tương Đồng Trên NAS
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** 279 passed, 6 skipped (100% test pass) + 4/4 Rust unit tests (`nas_hasher`). Production verified trên NAS thật (`100.90.135.102`).
+
+### 1. Bộ Tính Chu Ký Ảnh Thuần Rust Tăng Tốc NEON SIMD (`nas_hasher/src/image_thumb.rs`):
+- **Thuật toán Average Hash (aHash 64-bit):** Khớp 100% logic của `ImageFingerprint.kt` trên app Android.
+  - Scale ảnh về 8x8 pixels bằng NEON SIMD Bilinear (`fast_image_resize`).
+  - Chuyển màu Grayscale tiêu chuẩn (`0.299*R + 0.587*G + 0.114*B`).
+  - Tính độ xám trung bình của 64 pixels và đóng gói 64 bits (pixel >= avg là 1, bit (0,0) là MSB).
+  - Xuất ra chuỗi hex 16 ký tự chữ thường (`String.format("%016x")`).
+- **Khoảng cách Hamming (Hamming Distance):** Tính số lượng bit khác biệt giữa 2 chuỗi aHash bằng `(h1 ^ h2).count_ones()`, cho phép nhận diện ảnh gần trùng (near-duplicates, distance <= 5).
+- **Batch Đa Luồng Rayon (`nas_hasher_batch_ahash_json`):** Phân chia tính toán trên toàn bộ 4 nhân CPU Cortex-A53 của NAS L1 Pro. Benchmark thực tế trên NAS: **5 ảnh thật chỉ mất 0.249s (~50ms/ảnh)**.
+
+### 2. Tích Hợp Backend & Endpoints Mới (`nas_api_server.py`, `rust_bridge.py`):
+- **`POST /api/fingerprint/compute`:** Tự động quét các ảnh chưa có hash trong `file_index` (hoặc danh sách chỉ định), tính aHash bằng Rust đa luồng và lưu thẳng vào SQLite `image_fingerprints`. Giải phóng hoàn toàn gánh nặng cho điện thoại Android.
+- **`GET /api/fingerprint/similar`:** Tìm kiếm các ảnh tương đồng với ảnh chỉ định dựa vào khoảng cách Hamming (`?path=...&threshold=5`). Kiểm chứng thực tế trên NAS tìm thấy 2 ảnh FB chụp liên tiếp có `hamming_distance = 2`.
+- **An toàn tương thích:** Tự động fallback về Pillow nếu thiếu thư viện Rust; tuân thủ nghiêm ngặt Python 3.5.3 (không f-strings, bảo vệ input).
+
+---
+
 ## [2026-11-19] ANTIGRAVITY-015 — Rà Soát Toàn Diện 2 Sub-Agent Độc Lập, Vá Lỗ Hổng Backend/Rust & Tương Thích Glibc 2.24
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode) + 2 Sub-agents chuyên trách (Reviewer Rust & Reviewer Python).
 **Kết quả kiểm thử:** 277 passed, 6 skipped (100% test pass), 10/10 Rust unit tests PASS. Production verified trên NAS thật (`100.90.135.102`).

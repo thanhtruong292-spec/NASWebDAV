@@ -8,7 +8,10 @@ pub mod mp4_parser;
 pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
 };
-pub use image_thumb::{compute_frame_brightness, generate_image_thumbnail};
+pub use image_thumb::{
+    compute_batch_ahash, compute_frame_brightness, compute_image_ahash, generate_image_thumbnail,
+    hamming_distance,
+};
 pub use mp4_parser::{parse_mp4_header, Mp4HeaderInfo};
 
 /// Băm SHA256 toàn bộ file (chuẩn C-ABI).
@@ -200,6 +203,66 @@ pub unsafe extern "C" fn nas_hasher_frame_brightness(img_ptr: *const c_char) -> 
     match compute_frame_brightness(Path::new(img_str)) {
         Ok(b) => b,
         Err(_) => -1.0,
+    }
+}
+
+/// C-ABI: Tính aHash 64-bit (16 ký tự hex) cho 1 file ảnh.
+/// Buffer `out_hex` phải có dung lượng >= 17 bytes (16 hex + \0).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_ahash(
+    img_ptr: *const c_char,
+    out_hex: *mut c_char,
+) -> c_int {
+    if img_ptr.is_null() || out_hex.is_null() {
+        return -2;
+    }
+    let img_str = match CStr::from_ptr(img_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let hash = match compute_image_ahash(Path::new(img_str)) {
+        Ok(h) => h,
+        Err(_) => return -1,
+    };
+    let bytes = hash.as_bytes();
+    if bytes.len() != 16 {
+        return -1;
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_hex as *mut u8, 16);
+    *out_hex.add(16) = 0;
+    0
+}
+
+/// C-ABI: Tính batch aHash đa luồng (Rayon) từ mảng JSON các đường dẫn ảnh.
+/// Trả về chuỗi JSON: {"/path/1": "0123456789abcdef", "/path/2": null, ...}
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_batch_ahash_json(
+    paths_json_ptr: *const c_char,
+    workers: c_int,
+) -> *mut c_char {
+    if paths_json_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let json_str = match CStr::from_ptr(paths_json_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let paths: Vec<String> = match serde_json::from_str(json_str) {
+        Ok(p) => p,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let results = compute_batch_ahash(&paths, workers.max(1) as usize);
+    let mut map = std::collections::BTreeMap::new();
+    for (p, h) in results {
+        map.insert(p, h);
+    }
+    let out_json = match serde_json::to_string(&map) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(out_json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
     }
 }
 

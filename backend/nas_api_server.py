@@ -15546,6 +15546,190 @@ def api_fingerprint_lookup():
             conn.close()
     return jsonify({"result": "ok", "results": results})
 
+
+@app.route("/api/fingerprint/compute", methods=["POST"])
+@requires_auth
+def api_fingerprint_compute():
+    """Tu dong tinh aHash bang Rust tren NAS cho mot danh sach path hoac quet batch anh chua co hash.
+    Body JSON hoac Query params:
+      - paths: list duong dan cu the can tinh (toi da 500)
+      - limit: so luong anh chua co hash can tinh tu dong tu file_index (mac dinh 100, toi da 500)
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    paths = body.get("paths")
+    try:
+        limit = int(body.get("limit") or request.args.get("limit") or 100)
+    except Exception:
+        limit = 100
+    limit = max(1, min(500, limit))
+
+    root = _get_webdav_public_dir()
+    if not root:
+        return jsonify({"error": "WebDAV root unavailable"}), 503
+    root_real = os.path.realpath(root)
+
+    candidates = []
+    conn = _fingerprint_db()
+    try:
+        if isinstance(paths, list) and paths:
+            for p in paths[:500]:
+                if not isinstance(p, str) or ".." in p or "\\" in p:
+                    continue
+                clean_p = p[len("/webdav/"):] if p.startswith("/webdav/") else p
+                full = _resolve_webdav_request_path(clean_p)
+                if full and os.path.isfile(full):
+                    try:
+                        st = os.stat(full)
+                        candidates.append((clean_p, full, st.st_size, int(st.st_mtime * 1000)))
+                    except Exception:
+                        pass
+        else:
+            rows = conn.execute(
+                "SELECT f.path, f.size, f.mtime FROM file_index f "
+                "LEFT JOIN image_fingerprints fp ON fp.path = f.path "
+                "WHERE f.is_dir=0 "
+                "AND (fp.path IS NULL OR fp.size<>f.size OR fp.mtime<>f.mtime OR fp.ahash='' OR fp.ahash IS NULL) "
+                "AND lower(f.mime) LIKE 'image/%' "
+                "ORDER BY f.path LIMIT ?", (limit,)).fetchall()
+            for rel_p, sz, mt in rows:
+                full = os.path.join(root_real, *rel_p.split("/"))
+                if os.path.isfile(full):
+                    candidates.append((rel_p, full, sz, mt))
+
+        if not candidates:
+            return jsonify({"result": "ok", "computed": 0, "remaining_pending": 0, "results": {}})
+
+        full_map = {}
+        for rel_p, full, sz, mt in candidates:
+            full_map[full] = (rel_p, sz, mt)
+
+        bridge = globals().get("rust_bridge")
+        batch_hashes = {}
+        if bridge and hasattr(bridge, "compute_batch_ahash"):
+            batch_hashes = bridge.compute_batch_ahash(list(full_map.keys()), workers=4)
+        else:
+            for full in full_map:
+                if bridge and hasattr(bridge, "compute_image_ahash"):
+                    batch_hashes[full] = bridge.compute_image_ahash(full)
+
+        now = time.time()
+        saved = 0
+        results = {}
+        for full, h in batch_hashes.items():
+            if not h or len(h) != 16:
+                continue
+            meta = full_map.get(full)
+            if not meta:
+                continue
+            rel_p, sz, mt = meta
+            conn.execute(
+                "INSERT OR REPLACE INTO image_fingerprints(path,source_version,ahash,size,mtime,updated_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (rel_p, "nas-rust-1.0", h, sz, mt, now))
+            saved += 1
+            results["/webdav/" + rel_p] = h
+        conn.commit()
+
+        pending_count = conn.execute(
+            "SELECT COUNT(*) FROM file_index f "
+            "LEFT JOIN image_fingerprints fp ON fp.path = f.path "
+            "WHERE f.is_dir=0 "
+            "AND (fp.path IS NULL OR fp.size<>f.size OR fp.mtime<>f.mtime OR fp.ahash='' OR fp.ahash IS NULL) "
+            "AND lower(f.mime) LIKE 'image/%'").fetchone()[0]
+
+        return jsonify({
+            "result": "ok",
+            "computed": saved,
+            "remaining_pending": pending_count,
+            "results": results
+        })
+    except Exception as e:
+        if conn is not None:
+            conn.rollback()
+        log.error("[Fingerprint] compute error: %s", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route("/api/fingerprint/similar", methods=["GET"])
+@requires_auth
+def api_fingerprint_similar():
+    """Tim cac anh tuong dong voi anh chi dinh dua vao khoang cach Hamming (Hamming distance <= threshold).
+    Query params:
+      - path: duong dan anh can so sanh (vi du: /webdav/DCIM/photo.jpg)
+      - threshold: nguong khac biet bit (mac dinh 5, toi da 15, cang nho cang giong)
+      - limit: so ket qua tra ve toi da (mac dinh 50, toi da 200)
+    """
+    raw_p = (request.args.get("path") or "").strip()
+    if not raw_p or ".." in raw_p or "\\" in raw_p:
+        return jsonify({"error": "Invalid path"}), 400
+    clean_p = raw_p[len("/webdav/"):] if raw_p.startswith("/webdav/") else raw_p
+
+    try:
+        threshold = int(request.args.get("threshold", "5") or 5)
+    except Exception:
+        threshold = 5
+    threshold = max(0, min(20, threshold))
+
+    try:
+        limit = int(request.args.get("limit", "50") or 50)
+    except Exception:
+        limit = 50
+    limit = max(1, min(200, limit))
+
+    conn = _fingerprint_db()
+    try:
+        row = conn.execute("SELECT ahash FROM image_fingerprints WHERE path=?", (clean_p,)).fetchone()
+        target_hash = row[0] if row else None
+        if not target_hash:
+            full = _resolve_webdav_request_path(clean_p)
+            bridge = globals().get("rust_bridge")
+            if full and os.path.isfile(full) and bridge and hasattr(bridge, "compute_image_ahash"):
+                target_hash = bridge.compute_image_ahash(full)
+                if target_hash:
+                    st = os.stat(full)
+                    conn.execute(
+                        "INSERT OR REPLACE INTO image_fingerprints(path,source_version,ahash,size,mtime,updated_at) VALUES(?,?,?,?,?,?)",
+                        (clean_p, "nas-rust-1.0", target_hash, st.st_size, int(st.st_mtime * 1000), time.time()))
+                    conn.commit()
+
+        if not target_hash or len(target_hash) != 16:
+            return jsonify({"error": "Target image ahash unavailable"}), 404
+
+        target_int = int(target_hash, 16)
+        rows = conn.execute("SELECT path, ahash, size, mtime FROM image_fingerprints WHERE path<>? AND ahash<>''", (clean_p,)).fetchall()
+        matches = []
+        for p, h, sz, mt in rows:
+            if len(h) != 16:
+                continue
+            try:
+                diff = bin(target_int ^ int(h, 16)).count("1")
+                if diff <= threshold:
+                    matches.append({
+                        "path": "/webdav/" + p,
+                        "ahash": h,
+                        "hamming_distance": diff,
+                        "size": sz,
+                        "mtime": mt
+                    })
+            except Exception:
+                continue
+
+        matches.sort(key=lambda x: x["hamming_distance"])
+        return jsonify({
+            "target": "/webdav/" + clean_p,
+            "target_ahash": target_hash,
+            "threshold": threshold,
+            "total_matches": len(matches),
+            "matches": matches[:limit]
+        })
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 @app.route("/api/process_state", methods=["GET"])
 @requires_auth
 def api_process_state():
