@@ -150,7 +150,12 @@ def _find_undefined_names(src):
 
 class TestAudit20261026Fixes(unittest.TestCase):
     def test_python353_no_36plus_syntax_or_stdlib_across_server_and_scripts(self):
-        targets = [SERVER_PATH, REPO_ROOT / "check_log.py"] + sorted((REPO_ROOT / "scripts").glob("*.py"))
+        targets = [
+            SERVER_PATH,
+            REPO_ROOT / "backend" / "rust_bridge.py",
+            REPO_ROOT / "backend" / "nas_work_coordinator.py",
+            REPO_ROOT / "check_log.py"
+        ] + sorted((REPO_ROOT / "scripts").glob("*.py"))
         forbidden_ast = ("JoinedStr", "FormattedValue", "AnnAssign", "NamedExpr", "AsyncGeneratorExp", "Match")
         forbidden_modules = {"secrets", "dataclasses", "contextvars", "zoneinfo", "graphlib", "tomllib"}
         forbidden_attrs = {

@@ -5,6 +5,28 @@
 
 ---
 
+## [2026-11-19] ANTIGRAVITY-015 — Rà Soát Toàn Diện 2 Sub-Agent Độc Lập, Vá Lỗ Hổng Backend/Rust & Tương Thích Glibc 2.24
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode) + 2 Sub-agents chuyên trách (Reviewer Rust & Reviewer Python).
+**Kết quả kiểm thử:** 277 passed, 6 skipped (100% test pass), 10/10 Rust unit tests PASS. Production verified trên NAS thật (`100.90.135.102`).
+
+### 1. Kết Quả Rà Soát & Vá Lỗi Độc Lập Từ 2 Sub-Agents:
+- **Rust Modules (`nas_hasher`, `nas_indexer`):**
+  - **Khắc phục out-of-bounds write:** Bổ sung kiểm tra độ dài buffer (`bytes.len() < 64` cho SHA256, `bytes.len() < 32` cho MD5) trong `nas_hasher/src/lib.rs` trước khi ghi chuỗi hex vào C pointer.
+  - **Khắc phục underflow panic:** Dùng `meta_json.strip_suffix('}').unwrap_or(&meta_json)` trong `nas_indexer/src/lib.rs` thay thế slicing trực tiếp `&meta_json[..meta_json.len() - 1]`.
+  - **Tối ưu release profile:** Cấu hình `[profile.release]` (`opt-level = 3`, `lto = "thin"`, `codegen-units = 1`, `strip = true`) và cố định version `fast_image_resize = "=6.1.0"` trong cả 2 crate Cargo.toml.
+  - **Biên dịch tương thích glibc 2.24:** Cross-compile bằng `cargo zigbuild --target aarch64-unknown-linux-gnu.2.24` đảm bảo liên kết hoàn hảo với Debian 9 Stretch trên NAS L1 Pro, khắc phục lỗi thiếu `GLIBC_2.29`.
+- **Python Backend (`backend/rust_bridge.py`, `backend/nas_api_server.py`):**
+  - **Sửa thụt lề phá vỡ lock (`rust_bridge.py`):** Sửa lỗi thụt lề khối `candidates` và `for p in candidates:` trong `_init_rust_bridge()` đưa vào trong phạm vi `with _RUST_INIT_LOCK:`, ngăn race condition khi nhiều luồng tải CDLL đồng thời.
+  - **Tránh syscall lặp vô ích (`rust_bridge.py`):** Bổ sung cờ `_RUST_CHECKED = True` để khi môi trường không có Rust binary thì không lặp lại 4 lần syscall `os.path.isfile()` ở mỗi lời gọi.
+  - **Dọn dẹp tiến trình zombie (`rust_bridge.py`):** Bổ sung `proc.wait(timeout=0.5)` trong `_RustIndexerStream.close()` và `stream_fast_index()` sau khi gọi `proc.terminate()`, loại trừ nguy cơ rò rỉ zombie `<defunct>`.
+  - **An toàn ngoại lệ luồng (`rust_bridge.py`):** Bọc `t.start()` trong `schedule_fts_rebuild()` bằng block `try...except`, nhả `_FTS_REBUILD_LOCK` nếu xảy ra lỗi, tránh deadlock vĩnh viễn cho tác vụ rebuild FTS ngầm.
+  - **Vá lỗ hổng Path Traversal / Xóa Thùng Rác Gốc (`nas_api_server.py`):** Trong `api_disk_trash_batch()`, sửa điều kiện kiểm tra `if not local_path.startswith(root_real + os.sep):` loại bỏ hoàn toàn sơ hở `local_path == root_real` có thể khiến thư mục chia sẻ gốc bị di chuyển vào thùng rác.
+  - **Bảo vệ `request.get_json()` rỗng (`nas_api_server.py`):** Cập nhật 7 điểm gọi thành `request.get_json(force=True) or {}` tránh `AttributeError` khi payload client gửi null/empty.
+  - **Bảo toàn trạng thái response restore (`nas_api_server.py`):** Cập nhật danh sách `services_restarted` trước khi `jsonify()` trong `api_backup_restore()` để client nhận đúng danh sách service được lên lịch khởi động lại.
+- **Kiểm thử tự động (`tests/test_audit_20261026_fixes.py`):** Bổ sung `rust_bridge.py` và `nas_work_coordinator.py` vào bộ kiểm tra cú pháp AST Python 3.5.3 bắt buộc.
+
+---
+
 ## [2026-11-19] ANTIGRAVITY-014 — Khắc Phục Triệt Để Lỗi Quạt Nháy Bật Rồi Tắt Giật Cục Trên NAS RK3328
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** 276 passed, 6 skipped (100% test pass) + regression test `test_fan_does_not_blip_when_hdd_temp_unavailable_or_in_hysteresis`. Production verified trên NAS thật (`100.90.135.102`).

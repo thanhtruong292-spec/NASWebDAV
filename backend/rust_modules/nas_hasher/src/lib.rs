@@ -33,6 +33,9 @@ pub unsafe extern "C" fn nas_hasher_sha256(
         Err(_) => return -1,
     };
     let bytes = hex_str.as_bytes();
+    if bytes.len() < 64 {
+        return -1;
+    }
     for i in 0..64 {
         *out_hex.add(i) = bytes[i] as c_char;
     }
@@ -62,6 +65,9 @@ pub unsafe extern "C" fn nas_hasher_md5_1mb(
         Err(_) => return -1,
     };
     let bytes = hex_str.as_bytes();
+    if bytes.len() < 32 {
+        return -1;
+    }
     for i in 0..32 {
         *out_hex.add(i) = bytes[i] as c_char;
     }

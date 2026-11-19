@@ -6489,7 +6489,7 @@ def api_docker_list():
 @requires_admin
 def api_docker_control():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         action = data.get("action", "")
         container = data.get("container", "")
         if action in ("start", "stop", "restart") and container:
@@ -10916,6 +10916,7 @@ def api_backup_restore():
         # bao dam response hoan tat. Quy trinh moi: build response -> dang ky
         # call_on_close (chay SAU khi response flush xong) de restart nginx/fan
         # roi self-restart nas_api qua exec co drain. Caller luon nhan du JSON.
+        services_restarted.append("nas_api (scheduled after response)")
         _result = jsonify({
             "status": "restored",
             "restored_count": len(restored),
@@ -10939,14 +10940,11 @@ def api_backup_restore():
                             subprocess.run(["systemctl", "daemon-reload"], timeout=10)
                             r = subprocess.run(["systemctl", "restart", svc], timeout=15,
                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if r.returncode == 0:
-                                services_restarted.append(svc)
                         except Exception:
                             pass
                     _restart_nas_api("restore cau hinh xong — kich hoat cau hinh moi")
                 except Exception as _ae:
                     log.error("[Backup] Activation sau response loi: %s", _ae)
-            services_restarted.append("nas_api (scheduled after response)")
         except Exception:
             pass
         return _result
@@ -11075,7 +11073,7 @@ def api_fan_control():
 def api_torrent_control():
     try:
         import urllib.request, urllib.parse
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         action = data.get("action", "")
         torrent_hash = data.get("hash", "")
 
@@ -11136,7 +11134,7 @@ def api_download():
     try:
         import urllib.request
         import urllib.parse
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         link = data.get("url", "")
         if not link:
             return jsonify({"error": "Thiếu URL"}), 400
@@ -11830,7 +11828,7 @@ def api_temperature_history():
 def api_cron_trash_clean():
     """Kich hoat thu cong don dep Thung rac ngay lap tuc (không cần doi cron)."""
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         max_days = int(data.get("max_age_days", 30))
         deleted = _clean_trash(WEBDAV_FILE_ROOT, max_age_days=max_days)
         msg = "Đã xóa %d tệp trong Thùng rác (quá %d ngày)." % (deleted, max_days)
@@ -13502,7 +13500,7 @@ def api_disk_trash_batch():
             errors.append({"path": webdav_path, "error": "Not found"})
             continue
             
-        if local_path != root_real and not local_path.startswith(root_real + os.sep):
+        if not local_path.startswith(root_real + os.sep):
             errors.append({"path": webdav_path, "error": "Path traversal"})
             continue
 

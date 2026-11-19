@@ -21,63 +21,65 @@ log = logging.getLogger("nas_api.rust_bridge")
 
 _RUST_LIB = None
 _RUST_AVAILABLE = False
+_RUST_CHECKED = False
 _RUST_INIT_LOCK = threading.Lock()
 
 
 def _init_rust_bridge():
-    global _RUST_LIB, _RUST_AVAILABLE
-    if _RUST_LIB is not None:
+    global _RUST_LIB, _RUST_AVAILABLE, _RUST_CHECKED
+    if _RUST_CHECKED:
         return _RUST_AVAILABLE
 
     with _RUST_INIT_LOCK:
-        if _RUST_LIB is not None:
+        if _RUST_CHECKED:
             return _RUST_AVAILABLE
+        _RUST_CHECKED = True
 
         # Các đường dẫn tìm kiếm thư viện
-    candidates = [
-        # Thư mục build cục bộ dev
-        os.path.join(os.path.dirname(__file__), "rust_modules", "nas_hasher", "target", "release", "nas_hasher_core.dll"),
-        os.path.join(os.path.dirname(__file__), "rust_modules", "nas_hasher", "target", "release", "libnas_hasher_core.so"),
-        # Đường dẫn cài đặt trên NAS thực tế
-        "/opt/nas_hasher/libnas_hasher_core.so",
-        "/usr/local/lib/libnas_hasher_core.so",
-    ]
+        candidates = [
+            # Thư mục build cục bộ dev
+            os.path.join(os.path.dirname(__file__), "rust_modules", "nas_hasher", "target", "release", "nas_hasher_core.dll"),
+            os.path.join(os.path.dirname(__file__), "rust_modules", "nas_hasher", "target", "release", "libnas_hasher_core.so"),
+            # Đường dẫn cài đặt trên NAS thực tế
+            "/opt/nas_hasher/libnas_hasher_core.so",
+            "/usr/local/lib/libnas_hasher_core.so",
+        ]
 
-    for p in candidates:
-        if os.path.isfile(p):
-            try:
-                lib = ctypes.CDLL(p)
-                lib.nas_hasher_sha256.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-                lib.nas_hasher_sha256.restype = ctypes.c_int
-                lib.nas_hasher_md5_1mb.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-                lib.nas_hasher_md5_1mb.restype = ctypes.c_int
-                if hasattr(lib, "nas_hasher_batch_md5_1mb_json"):
-                    lib.nas_hasher_batch_md5_1mb_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
-                    lib.nas_hasher_batch_md5_1mb_json.restype = ctypes.c_void_p
-                if hasattr(lib, "nas_hasher_find_duplicates_json"):
-                    lib.nas_hasher_find_duplicates_json.argtypes = [ctypes.c_char_p, ctypes.c_ulonglong, ctypes.c_int, ctypes.c_int]
-                    lib.nas_hasher_find_duplicates_json.restype = ctypes.c_void_p
-                if hasattr(lib, "nas_hasher_parse_mp4_json"):
-                    lib.nas_hasher_parse_mp4_json.argtypes = [ctypes.c_char_p]
-                    lib.nas_hasher_parse_mp4_json.restype = ctypes.c_void_p
-                if hasattr(lib, "nas_hasher_generate_thumb"):
-                    lib.nas_hasher_generate_thumb.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
-                    lib.nas_hasher_generate_thumb.restype = ctypes.c_int
-                if hasattr(lib, "nas_hasher_frame_brightness"):
-                    lib.nas_hasher_frame_brightness.argtypes = [ctypes.c_char_p]
-                    lib.nas_hasher_frame_brightness.restype = ctypes.c_double
-                if hasattr(lib, "nas_hasher_free_string"):
-                    lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
-                    lib.nas_hasher_free_string.restype = None
-                _RUST_LIB = lib
-                _RUST_AVAILABLE = True
-                log.info("Rust accelerated engine loaded successfully from: %s", p)
-                return True
-            except Exception as e:
-                log.warning("Failed to load Rust engine at %s: %s", p, e)
+        for p in candidates:
+            if os.path.isfile(p):
+                try:
+                    lib = ctypes.CDLL(p)
+                    lib.nas_hasher_sha256.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                    lib.nas_hasher_sha256.restype = ctypes.c_int
+                    lib.nas_hasher_md5_1mb.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                    lib.nas_hasher_md5_1mb.restype = ctypes.c_int
+                    if hasattr(lib, "nas_hasher_batch_md5_1mb_json"):
+                        lib.nas_hasher_batch_md5_1mb_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
+                        lib.nas_hasher_batch_md5_1mb_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_find_duplicates_json"):
+                        lib.nas_hasher_find_duplicates_json.argtypes = [ctypes.c_char_p, ctypes.c_ulonglong, ctypes.c_int, ctypes.c_int]
+                        lib.nas_hasher_find_duplicates_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_parse_mp4_json"):
+                        lib.nas_hasher_parse_mp4_json.argtypes = [ctypes.c_char_p]
+                        lib.nas_hasher_parse_mp4_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_generate_thumb"):
+                        lib.nas_hasher_generate_thumb.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+                        lib.nas_hasher_generate_thumb.restype = ctypes.c_int
+                    if hasattr(lib, "nas_hasher_frame_brightness"):
+                        lib.nas_hasher_frame_brightness.argtypes = [ctypes.c_char_p]
+                        lib.nas_hasher_frame_brightness.restype = ctypes.c_double
+                    if hasattr(lib, "nas_hasher_free_string"):
+                        lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
+                        lib.nas_hasher_free_string.restype = None
+                    _RUST_LIB = lib
+                    _RUST_AVAILABLE = True
+                    log.info("Rust accelerated engine loaded successfully from: %s", p)
+                    return True
+                except Exception as e:
+                    log.warning("Failed to load Rust engine at %s: %s", p, e)
 
-    _RUST_AVAILABLE = False
-    return False
+        _RUST_AVAILABLE = False
+        return False
 
 
 def is_rust_accelerated():
@@ -191,6 +193,10 @@ class _RustIndexerStream(object):
             if self._proc.poll() is None:
                 try:
                     self._proc.terminate()
+                    try:
+                        self._proc.wait(timeout=0.5)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -226,6 +232,10 @@ def stream_fast_index(db_path):
             if proc.poll() is None:
                 try:
                     proc.terminate()
+                    try:
+                        proc.wait(timeout=0.5)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
             return None
@@ -385,9 +395,14 @@ def schedule_fts_rebuild(db_path):
         finally:
             _FTS_REBUILD_LOCK.release()
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    return True
+    try:
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        return True
+    except Exception as e:
+        _FTS_REBUILD_LOCK.release()
+        log.warning("Khong khoi tao duoc luong FTS rebuild: %s", e)
+        return False
 
 
 def compute_batch_md5_1mb(pairs, workers=4):

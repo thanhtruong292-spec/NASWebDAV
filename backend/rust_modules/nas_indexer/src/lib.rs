@@ -85,7 +85,7 @@ mod main_logic {
         let meta_json = serde_json::to_string(&metadata)
             .map_err(|e| format!("Serialize metadata failed: {}", e))?;
 
-        let header_prefix = &meta_json[..meta_json.len() - 1];
+        let header_prefix = meta_json.strip_suffix('}').unwrap_or(&meta_json);
         writer
             .write_all(format!("{},\"files\":[", header_prefix).as_bytes())
             .map_err(|e| format!("Write header failed: {}", e))?;
