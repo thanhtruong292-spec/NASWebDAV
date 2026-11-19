@@ -136,10 +136,23 @@ fun NasHtmlDashboardScreen(
     LaunchedEffect(viewName, pageLoaded) {
         if (!pageLoaded) return@LaunchedEffect
         webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.setView('$viewName');", null)
+        smartToolsVM.fetchThumbStatus()
+        liveVM.refreshLivestreamState(context)
+        deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         var tick = 0
         while (isActive) {
             if (tick % 2 == 0) {
                 withContext(Dispatchers.IO) { sysMonitorVM.fetchStatusNow() }
+            }
+            if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused || tick % 5 == 0) {
+                smartToolsVM.fetchThumbStatus()
+            }
+            if ((liveVM.activeLivestreams.isNotEmpty() && tick % 2 == 0) || tick % 5 == 0) {
+                liveVM.fetchLivestreamStatusOnly(context)
+            }
+            val usbStatus = deviceVM.usbImportState.status
+            if (usbStatus == "copying" || usbStatus == "cancelling" || tick % 5 == 0) {
+                deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
             }
             if (tick % 15 == 0) {
                 smartToolsVM.fetchThumbnailAudit()
@@ -793,6 +806,36 @@ fun NasHtmlDashboardScreen(
                             smartToolsVM.isScanningDuplicates = true
                         }
                     }
+
+                    @JavascriptInterface
+                    fun toggleThumbPause() {
+                        post { smartToolsVM.toggleThumbPause() }
+                    }
+
+                    @JavascriptInterface
+                    fun refreshThumbStatus() {
+                        post { smartToolsVM.fetchThumbStatus() }
+                    }
+
+                    @JavascriptInterface
+                    fun togglePauseDuplicateScan() {
+                        post { smartToolsVM.togglePauseDuplicateScan() }
+                    }
+
+                    @JavascriptInterface
+                    fun cancelDuplicateScan() {
+                        post { smartToolsVM.cancelDuplicateScan(context) }
+                    }
+
+                    @JavascriptInterface
+                    fun startUsbImport() {
+                        post { deviceVM.startUsbImportNow() }
+                    }
+
+                    @JavascriptInterface
+                    fun cancelUsbImport() {
+                        post { deviceVM.cancelUsbImport() }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -1137,11 +1180,21 @@ private fun buildHtml5StateJson(
         })
     }
     root.put("failedUploads", fuArr)
+    val usbSt = deviceVM.usbImportState
+    val usbRunning = usbSt.status.equals("copying", ignoreCase = true) || usbSt.status.equals("cancelling", ignoreCase = true)
     root.put("usb", JSONObject().apply {
         put("loading", deviceVM.isUsbImportLoading)
-        put("message", deviceVM.usbImportMessage.ifBlank { deviceVM.usbImportState.message })
-        put("running", deviceVM.usbImportState.status.equals("running", ignoreCase = true))
-        put("phase", deviceVM.usbImportState.status)
+        put("message", deviceVM.usbImportMessage.ifBlank { usbSt.message })
+        put("running", usbRunning)
+        put("phase", usbSt.status)
+        put("device", usbSt.detectedDevicesInfo.ifBlank { usbSt.activeDevice })
+        put("currentFile", usbSt.currentFile)
+        put("filesDone", usbSt.filesDone)
+        put("filesTotal", usbSt.filesTotal)
+        put("bytesProcessed", usbSt.bytesProcessed)
+        put("bytesTotal", usbSt.bytesTotal)
+        put("speedBps", usbSt.copySpeedBps)
+        put("etaSeconds", usbSt.etaSeconds)
     })
     val sl = autoBackupVM.sleepSchedule
     root.put("sleep", JSONObject().apply {
@@ -1154,9 +1207,48 @@ private fun buildHtml5StateJson(
         put("inWindow", sl.inWindowNow)
         put("message", autoBackupVM.sleepScheduleMessage)
     })
+    val dupStage = DuplicateProgressState.stage.value
+    val dupPercent = DuplicateProgressState.percent.value
+    val dupPaused = DuplicateProgressState.isPaused.value
+    val dupRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
+    val dupActive = dupRunning || dupPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
+    val thumbActive = (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && smartToolsVM.thumbGenerated < smartToolsVM.thumbTotal && smartToolsVM.thumbTotal > 0
     root.put("duplicate", JSONObject().apply {
-        put("scanning", smartToolsVM.isScanningDuplicates || smartToolsVM.isWorkerRunning)
+        put("scanning", smartToolsVM.isScanningDuplicates || smartToolsVM.isWorkerRunning || dupRunning)
         put("count", smartToolsVM.duplicateFilesList.size)
+    })
+    root.put("bgTasks", JSONObject().apply {
+        put("thumb", JSONObject().apply {
+            put("active", thumbActive)
+            put("running", smartToolsVM.thumbRunning)
+            put("paused", smartToolsVM.thumbPaused)
+            put("generated", smartToolsVM.thumbGenerated)
+            put("total", smartToolsVM.thumbTotal)
+            put("lastFile", smartToolsVM.thumbLastFile.substringAfterLast('/'))
+        })
+        put("dup", JSONObject().apply {
+            put("active", dupActive)
+            put("running", dupRunning)
+            put("paused", dupPaused)
+            put("stage", dupStage)
+            put("stageDesc", DuplicateProgressState.stageDescription.value)
+            put("percent", dupPercent.toDouble())
+            put("scanned", DuplicateProgressState.scannedCount.value)
+            put("found", DuplicateProgressState.foundCount.value)
+            put("stageNum", DuplicateProgressState.stageNumber.value)
+            put("totalStages", DuplicateProgressState.totalStages.value)
+            put("elapsedMs", DuplicateProgressState.elapsedTime.value)
+            put("etaMs", DuplicateProgressState.estimatedTimeRemaining.value)
+            put("resultCount", smartToolsVM.duplicateFilesList.size)
+        })
+        put("backup", JSONObject().apply {
+            put("active", autoBackupVM.isAutoBackupRunning)
+            put("currentFile", autoBackupVM.autoBackupCurrentFile)
+            put("progress", autoBackupVM.autoBackupProgress.toDouble())
+            put("processed", autoBackupVM.autoBackupProcessedCount)
+            put("total", autoBackupVM.autoBackupTotalCount)
+            put("speedBps", autoBackupVM.autoBackupUploadSpeedBps)
+        })
     })
 
     return root.toString()

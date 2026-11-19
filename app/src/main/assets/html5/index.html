@@ -54,6 +54,18 @@
       <span>Công cụ &amp; Cài đặt</span>
     </button>
 
+    <!-- Background Tasks Card (TÁC VỤ NỀN) -->
+    <div class="card hidden" id="bgTasksCard">
+      <div class="card-header" id="bgTasksHeader" style="cursor:pointer;">
+        <span class="card-title">TÁC VỤ NỀN</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="badge" id="bgTasksCount" style="color:var(--ux-green);">0 đang chạy</span>
+          <span id="bgTasksChevron" style="color:var(--ux-text-2);font-size:12px;">▾</span>
+        </div>
+      </div>
+      <div id="bgTasksBody"></div>
+    </div>
+
     <!-- Storage Card -->
     <div class="card">
       <div class="card-header">
