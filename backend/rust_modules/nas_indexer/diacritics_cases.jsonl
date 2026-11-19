@@ -1,0 +1,36 @@
+{"input": "", "input_lower": "", "expected": "", "expected_lower": ""}
+{"input": "a", "input_lower": "a", "expected": "a", "expected_lower": "a"}
+{"input": "A", "input_lower": "a", "expected": "A", "expected_lower": "a"}
+{"input": "đ", "input_lower": "đ", "expected": "d", "expected_lower": "d"}
+{"input": "Đ", "input_lower": "đ", "expected": "d", "expected_lower": "d"}
+{"input": "đường", "input_lower": "đường", "expected": "duong", "expected_lower": "duong"}
+{"input": "ĐƯỜNG", "input_lower": "đường", "expected": "dUONG", "expected_lower": "duong"}
+{"input": "Việt Nam", "input_lower": "việt nam", "expected": "Viet Nam", "expected_lower": "viet nam"}
+{"input": "VIỆT NAM ĐẤT NƯỚC CON NGƯỜI", "input_lower": "việt nam đất nước con người", "expected": "VIET NAM dAT NUOC CON NGUOI", "expected_lower": "viet nam dat nuoc con nguoi"}
+{"input": "Tài liệu báo cáo tài chính quý 4 năm 2026", "input_lower": "tài liệu báo cáo tài chính quý 4 năm 2026", "expected": "Tai lieu bao cao tai chinh quy 4 nam 2026", "expected_lower": "tai lieu bao cao tai chinh quy 4 nam 2026"}
+{"input": "Ảnh chụp kỳ nghỉ lễ Đà Nẵng - Hội An đẹp tuyệt vời.jpg", "input_lower": "ảnh chụp kỳ nghỉ lễ đà nẵng - hội an đẹp tuyệt vời.jpg", "expected": "Anh chup ky nghi le da Nang - Hoi An dep tuyet voi.jpg", "expected_lower": "anh chup ky nghi le da nang - hoi an dep tuyet voi.jpg"}
+{"input": "Video quay flycam bờ biển Nha Trang lúc hoàng hôn.mp4", "input_lower": "video quay flycam bờ biển nha trang lúc hoàng hôn.mp4", "expected": "Video quay flycam bo bien Nha Trang luc hoang hon.mp4", "expected_lower": "video quay flycam bo bien nha trang luc hoang hon.mp4"}
+{"input": "Bản vẽ thiết kế kỹ thuật công trình thủy điện Nho Quế 2.dwg", "input_lower": "bản vẽ thiết kế kỹ thuật công trình thủy điện nho quế 2.dwg", "expected": "Ban ve thiet ke ky thuat cong trinh thuy dien Nho Que 2.dwg", "expected_lower": "ban ve thiet ke ky thuat cong trinh thuy dien nho que 2.dwg"}
+{"input": "Hợp đồng lao động và phụ lục bảo hiểm xã hội 2026.docx", "input_lower": "hợp đồng lao động và phụ lục bảo hiểm xã hội 2026.docx", "expected": "Hop dong lao dong va phu luc bao hiem xa hoi 2026.docx", "expected_lower": "hop dong lao dong va phu luc bao hiem xa hoi 2026.docx"}
+{"input": "Đoàn Thị Điểm", "input_lower": "đoàn thị điểm", "expected": "doan Thi diem", "expected_lower": "doan thi diem"}
+{"input": "Nguyễn Trãi - Bình Ngô Đại Cáo", "input_lower": "nguyễn trãi - bình ngô đại cáo", "expected": "Nguyen Trai - Binh Ngo dai Cao", "expected_lower": "nguyen trai - binh ngo dai cao"}
+{"input": "Tiếng Việt có dấu: á à ả ã ạ ă ắ ằ ẳ ẵ ặ â ấn ầ ẩn lẫn ậ", "input_lower": "tiếng việt có dấu: á à ả ã ạ ă ắ ằ ẳ ẵ ặ â ấn ầ ẩn lẫn ậ", "expected": "Tieng Viet co dau: a a a a a a a a a a a a an a an lan a", "expected_lower": "tieng viet co dau: a a a a a a a a a a a a an a an lan a"}
+{"input": "é è ẻ ẽ ẹ ê ế ề ể ễ ệ", "input_lower": "é è ẻ ẽ ẹ ê ế ề ể ễ ệ", "expected": "e e e e e e e e e e e", "expected_lower": "e e e e e e e e e e e"}
+{"input": "í ì ỉ ĩ ị", "input_lower": "í ì ỉ ĩ ị", "expected": "i i i i i", "expected_lower": "i i i i i"}
+{"input": "ó ò ỏ õ ọ ô ố ồ ổ ỗ ộ ơ ớ ờ ở ỡ ợ", "input_lower": "ó ò ỏ õ ọ ô ố ồ ổ ỗ ộ ơ ớ ờ ở ỡ ợ", "expected": "o o o o o o o o o o o o o o o o o", "expected_lower": "o o o o o o o o o o o o o o o o o"}
+{"input": "ú ù ủ ũ ụ ư ứ ừ ử ữ ự", "input_lower": "ú ù ủ ũ ụ ư ứ ừ ử ữ ự", "expected": "u u u u u u u u u u u", "expected_lower": "u u u u u u u u u u u"}
+{"input": "ý ỳ ỷ ỹ ỵ", "input_lower": "ý ỳ ỷ ỹ ỵ", "expected": "y y y y y", "expected_lower": "y y y y y"}
+{"input": "Á À Ả Ã Ạ Ă Ắ Ằ Ẳ Ẵ Ặ Â Ấ Ầ Ẩ Ẫ Ậ", "input_lower": "á à ả ã ạ ă ắ ằ ẳ ẵ ặ â ấ ầ ẩ ẫ ậ", "expected": "A A A A A A A A A A A A A A A A A", "expected_lower": "a a a a a a a a a a a a a a a a a"}
+{"input": "É È Ẻ Ẽ Ẹ Ê Ế Ề Ể Ễ Ệ", "input_lower": "é è ẻ ẽ ẹ ê ế ề ể ễ ệ", "expected": "E E E E E E E E E E E", "expected_lower": "e e e e e e e e e e e"}
+{"input": "Í Ì Ỉ Ĩ Ị", "input_lower": "í ì ỉ ĩ ị", "expected": "I I I I I", "expected_lower": "i i i i i"}
+{"input": "Ó Ò Ỏ Õ Ọ Ô Ố Ồ Ổ Ỗ Ộ Ơ ỚỜ Ở Ỡ Ợ", "input_lower": "ó ò ỏ õ ọ ô ố ồ ổ ỗ ộ ơ ớờ ở ỡ ợ", "expected": "O O O O O O O O O O O O OO O O O", "expected_lower": "o o o o o o o o o o o o oo o o o"}
+{"input": "Ú Ù Ủ Ũ Ụ Ư Ứ Ừ Ử Ữ Ự", "input_lower": "ú ù ủ ũ ụ ư ứ ừ ử ữ ự", "expected": "U U U U U U U U U U U", "expected_lower": "u u u u u u u u u u u"}
+{"input": "Ý Ỳ Ỷ Ỹ Ỵ", "input_lower": "ý ỳ ỷ ỹ ỵ", "expected": "Y Y Y Y Y", "expected_lower": "y y y y y"}
+{"input": "Dấu câu & ký tự đặc biệt: !@#$%^&*()_+-=[]{}|;':\",./<>?", "input_lower": "dấu câu & ký tự đặc biệt: !@#$%^&*()_+-=[]{}|;':\",./<>?", "expected": "Dau cau & ky tu dac biet: !@#$%^&*()_+-=[]{}|;':\",./<>?", "expected_lower": "dau cau & ky tu dac biet: !@#$%^&*()_+-=[]{}|;':\",./<>?"}
+{"input": "Số: 0123456789", "input_lower": "số: 0123456789", "expected": "So: 0123456789", "expected_lower": "so: 0123456789"}
+{"input": "English text: The quick brown fox jumps over the lazy dog.", "input_lower": "english text: the quick brown fox jumps over the lazy dog.", "expected": "English text: The quick brown fox jumps over the lazy dog.", "expected_lower": "english text: the quick brown fox jumps over the lazy dog."}
+{"input": "French: café, naïve, façade, déjà vu, Noël", "input_lower": "french: café, naïve, façade, déjà vu, noël", "expected": "French: cafe, naive, facade, deja vu, Noel", "expected_lower": "french: cafe, naive, facade, deja vu, noel"}
+{"input": "German: schön, über, Straße, Äpfel, Österreich", "input_lower": "german: schön, über, straße, äpfel, österreich", "expected": "German: schon, uber, Straße, Apfel, Osterreich", "expected_lower": "german: schon, uber, straße, apfel, osterreich"}
+{"input": "Spanish: año, señor, niño, canción", "input_lower": "spanish: año, señor, niño, canción", "expected": "Spanish: ano, senor, nino, cancion", "expected_lower": "spanish: ano, senor, nino, cancion"}
+{"input": "Complex filename: [2026-11-19] Báo Cáo Kỹ Thuật #01 (Bản Đầy Đủ) + Bản Vẽ.PDF", "input_lower": "complex filename: [2026-11-19] báo cáo kỹ thuật #01 (bản đầy đủ) + bản vẽ.pdf", "expected": "Complex filename: [2026-11-19] Bao Cao Ky Thuat #01 (Ban day du) + Ban Ve.PDF", "expected_lower": "complex filename: [2026-11-19] bao cao ky thuat #01 (ban day du) + ban ve.pdf"}
+{"input": "Special: 100%_+ Tài liệu+%_", "input_lower": "special: 100%_+ tài liệu+%_", "expected": "Special: 100%_+ Tai lieu+%_", "expected_lower": "special: 100%_+ tai lieu+%_"}

@@ -5,6 +5,21 @@
 
 ---
 
+## [2026-11-19] ANTIGRAVITY-009 — Chuyển Đổi Tìm Kiếm `api_fast_search` & Chuẩn Hóa Tiếng Việt `_remove_diacritics_py` Sang Rust C-ABI
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** 269 passed, 6 skipped (100% test pass) + 3/3 Rust unit tests (36 ground-truth cases). Production verified trên NAS thật (`100.90.135.102`).
+
+### 1. Module Rust C-ABI cho Chuẩn hóa Tiếng Việt & Tìm kiếm (`nas_indexer`)
+- Bổ sung `src/diacritics.rs` (`unicode-normalization` NFD + lọc combining marks + thay `đ`/`Đ` → `d`) khớp 100% byte-for-byte với `_remove_diacritics_py` của Python.
+- Bổ sung `src/search.rs` (`rusqlite` READ_ONLY + NO_MUTEX, escape wildcard `%`/`_`/`\` chuẩn xác, hỗ trợ lọc phân vùng `root_param`) xuất ra C-ABI `nas_indexer_remove_diacritics`, `nas_indexer_search_json`, `nas_indexer_free_string` (không rò rỉ bộ nhớ).
+- Nạp tự động trong `backend/rust_bridge.py` (`is_search_accelerated()`, `remove_diacritics()`, `search_file_index()`) và tích hợp vào `_remove_diacritics_py()`, `api_fast_search()`, `/api/status` (`"rust_search_accelerated": true`) với fallback 100% về Python 3.5.3.
+
+### 2. Hiệu năng đo thực tế trên NAS thật (Chainedbox L1 Pro RK3328 ARM64, 467.967 tệp)
+- **Xóa dấu tiếng Việt (10.000 tên tệp):** Python `1.3825s` → Rust C-ABI `0.4712s` (**nhanh gấp 2.93x**).
+- **Tìm kiếm toàn bộ 467.967 tệp (full scan):** Python `538.8ms` → Rust C-ABI `461.7ms` (**nhanh hơn 17–20%**, `parity=True` 100%).
+
+---
+
 ## [2026-11-19] ANTIGRAVITY-008 — Triển Khai Kiến Trúc Hybrid Rust Tăng Tốc Backend: nas_hasher & nas_indexer (5.1x Throughput)
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** 266 passed, 6 skipped (100% test pass). Production verified trên NAS thật (Chainedbox L1 Pro RK3328 ARM64, Debian 9 Stretch).

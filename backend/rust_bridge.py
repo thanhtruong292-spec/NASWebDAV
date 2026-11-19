@@ -10,6 +10,7 @@ Tương thích hoàn toàn với Python 3.5.3 (không dùng f-strings, type anno
 
 import os
 import sys
+import json
 import hashlib
 import ctypes
 import logging
@@ -216,3 +217,102 @@ def stream_fast_index(db_path):
     except Exception as e:
         log.warning("Failed to start Rust nas_indexer: %s", e)
         return None
+
+
+_INDEXER_LIB = None
+_INDEXER_LIB_CHECKED = False
+_INDEXER_INIT_LOCK = threading.Lock()
+
+
+def _init_indexer_lib():
+    global _INDEXER_LIB, _INDEXER_LIB_CHECKED
+    if _INDEXER_LIB_CHECKED:
+        return _INDEXER_LIB is not None
+
+    with _INDEXER_INIT_LOCK:
+        if _INDEXER_LIB_CHECKED:
+            return _INDEXER_LIB is not None
+
+        candidates = [
+            os.path.join(os.path.dirname(__file__), "rust_modules", "nas_indexer", "target", "release", "nas_indexer_core.dll"),
+            os.path.join(os.path.dirname(__file__), "rust_modules", "nas_indexer", "target", "release", "libnas_indexer_core.so"),
+            "/opt/nas_hasher/libnas_indexer_core.so",
+            "/usr/local/lib/libnas_indexer_core.so",
+        ]
+
+        for p in candidates:
+            if os.path.isfile(p):
+                try:
+                    lib = ctypes.CDLL(p)
+                    lib.nas_indexer_remove_diacritics.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+                    lib.nas_indexer_remove_diacritics.restype = ctypes.c_int
+                    lib.nas_indexer_search_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+                    lib.nas_indexer_search_json.restype = ctypes.c_void_p
+                    lib.nas_indexer_free_string.argtypes = [ctypes.c_void_p]
+                    lib.nas_indexer_free_string.restype = None
+                    _INDEXER_LIB = lib
+                    _INDEXER_LIB_CHECKED = True
+                    log.info("Rust indexer C-ABI loaded successfully from: %s", p)
+                    return True
+                except Exception as e:
+                    log.warning("Failed to load Rust indexer C-ABI at %s: %s", p, e)
+
+        _INDEXER_LIB_CHECKED = True
+        return False
+
+
+def is_search_accelerated():
+    """Kiểm tra xem thư viện C-ABI tìm kiếm & xóa dấu (Rust) có khả dụng hay không."""
+    return _init_indexer_lib()
+
+
+def remove_diacritics(text):
+    """
+    Xóa dấu tiếng Việt & dấu phụ Latin bằng Rust C-ABI.
+    Trả về None nếu thư viện Rust chưa sẵn sàng để caller fallback về Python.
+    """
+    if not text:
+        return ""
+    if not _init_indexer_lib():
+        return None
+    try:
+        raw = str(text).encode("utf-8")
+        buf_size = len(raw) + 16
+        buf = ctypes.create_string_buffer(buf_size)
+        ret = _INDEXER_LIB.nas_indexer_remove_diacritics(raw, buf, buf_size)
+        if ret >= 0:
+            return buf.raw[:ret].decode("utf-8", errors="ignore")
+    except Exception as e:
+        log.warning("Rust remove_diacritics failed, fallback to python: %s", e)
+    return None
+
+
+def search_file_index(db_path, query, root_param="", limit=300):
+    """
+    Tìm kiếm trong bảng file_index SQLite bằng Rust C-ABI (READ_ONLY).
+    Trả về list các tuple [path, name, is_dir, size, mtime, mime] nếu thành công,
+    hoặc None để caller fallback về Python.
+    """
+    if not _init_indexer_lib() or not db_path or not os.path.isfile(db_path):
+        return None
+    ptr = None
+    try:
+        ptr = _INDEXER_LIB.nas_indexer_search_json(
+            db_path.encode("utf-8"),
+            str(query).encode("utf-8"),
+            str(root_param or "").encode("utf-8"),
+            int(limit)
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust search_file_index failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr:
+            try:
+                _INDEXER_LIB.nas_indexer_free_string(ptr)
+            except Exception:
+                pass

@@ -1,10 +1,14 @@
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::BufWriter;
 use std::os::raw::{c_char, c_int};
 
+pub mod diacritics;
+pub mod search;
+pub use diacritics::remove_diacritics;
+pub use search::search_file_index;
+
 pub mod streamer {
-    use super::*;
     pub use crate::stream_fast_index;
 }
 
@@ -156,5 +160,90 @@ pub unsafe extern "C" fn nas_indexer_stream_to_file(
     match stream_fast_index(db_path, writer) {
         Ok(count) => count as c_int,
         Err(_) => -4,
+    }
+}
+
+/// C-ABI: Xóa dấu chuỗi tiếng Việt và dấu phụ Latin.
+/// Ghi kết quả vào out_buf (chuỗi kết thúc bằng null).
+/// Trả về số byte đã ghi nếu thành công, hoặc số âm nếu lỗi.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_remove_diacritics(
+    input_ptr: *const c_char,
+    out_buf: *mut c_char,
+    max_len: c_int,
+) -> c_int {
+    if input_ptr.is_null() || out_buf.is_null() || max_len <= 0 {
+        return -1;
+    }
+
+    let input_str = match CStr::from_ptr(input_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+
+    let cleaned = remove_diacritics(input_str);
+    let bytes = cleaned.as_bytes();
+    if bytes.len() >= max_len as usize {
+        return -3; // Buffer too small
+    }
+
+    std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out_buf, bytes.len());
+    *out_buf.add(bytes.len()) = 0;
+
+    bytes.len() as c_int
+}
+
+/// C-ABI: Tìm kiếm trong file_index SQLite, trả về con trỏ chuỗi JSON mảng các tuple.
+/// Caller PHẢI gọi nas_indexer_free_string(ptr) sau khi đọc xong để giải phóng bộ nhớ.
+/// Trả về null nếu có lỗi.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_search_json(
+    db_path_ptr: *const c_char,
+    query_ptr: *const c_char,
+    root_ptr: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    if db_path_ptr.is_null() || query_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let query = match CStr::from_ptr(query_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let root_param = if root_ptr.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(root_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let rows = match search_file_index(db_path, query, root_param, limit as i64) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let json = match serde_json::to_string(&rows) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Giải phóng chuỗi được cấp phát bởi nas_indexer_search_json.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_free_string(ptr: *mut c_char) {
+    if !ptr.is_null() {
+        let _ = CString::from_raw(ptr);
     }
 }

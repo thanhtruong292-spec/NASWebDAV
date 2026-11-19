@@ -40,7 +40,7 @@ def create_sample_index_db(db_path):
     CREATE TABLE file_index (
         path TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        name_no_accent TEXT NOT NULL,
+        norm_name TEXT NOT NULL,
         is_dir INTEGER NOT NULL,
         size INTEGER NOT NULL,
         mtime INTEGER NOT NULL,

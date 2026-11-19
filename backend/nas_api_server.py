@@ -538,8 +538,14 @@ _index_scan_lock = threading.Lock()
 _index_mutation_wake = threading.Event()
 
 def _remove_diacritics_py(s):
+    if not s:
+        return ""
+    bridge = globals().get("rust_bridge")
+    if bridge and hasattr(bridge, "remove_diacritics"):
+        res = bridge.remove_diacritics(s)
+        if res is not None:
+            return res
     import unicodedata
-    if not s: return ""
     nfd = unicodedata.normalize('NFD', str(s))
     s_clean = "".join(c for c in nfd if unicodedata.category(c) != 'Mn')
     return s_clean.replace('đ', 'd').replace('Đ', 'd')
@@ -1046,18 +1052,23 @@ def api_fast_search():
             if not actual_root or (state and state[0] != os.path.realpath(actual_root)):
                 return jsonify({"success": False, "results": [], "index_ready": False,
                                 "index_incomplete_reason": "root_changed_or_unavailable"}), 503
-            cur = conn.cursor()
-            like_pattern = "%%%s%%" % _escape_like(norm_query)
-            if root_param:
-                cur.execute("""
-                    SELECT path, name, is_dir, size, mtime, mime FROM file_index
-                    WHERE path >= ? AND path < ? AND norm_name LIKE ? ESCAPE '\\'
-                    ORDER BY is_dir DESC, name ASC LIMIT 300
-                """, (root_param + "/", root_param + "0", like_pattern))
-            else:
-                cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ESCAPE '\\' ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
+            rows = None
+            bridge = globals().get("rust_bridge")
+            if bridge and hasattr(bridge, "search_file_index"):
+                rows = bridge.search_file_index(INDEX_DB_PATH, query, root_param, 300)
+            if rows is None:
+                cur = conn.cursor()
+                like_pattern = "%%%s%%" % _escape_like(norm_query)
+                if root_param:
+                    cur.execute("""
+                        SELECT path, name, is_dir, size, mtime, mime FROM file_index
+                        WHERE path >= ? AND path < ? AND norm_name LIKE ? ESCAPE '\\'
+                        ORDER BY is_dir DESC, name ASC LIMIT 300
+                    """, (root_param + "/", root_param + "0", like_pattern))
+                else:
+                    cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ESCAPE '\\' ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
 
-            rows = cur.fetchall()
+                rows = cur.fetchall()
         finally:
             conn.close()
 
@@ -5104,6 +5115,7 @@ def api_status():
     try:
         data["rust_accelerated"] = bool(rust_bridge and rust_bridge.is_rust_accelerated())
         data["rust_indexer_accelerated"] = bool(rust_bridge and hasattr(rust_bridge, "is_indexer_accelerated") and rust_bridge.is_indexer_accelerated())
+        data["rust_search_accelerated"] = bool(rust_bridge and hasattr(rust_bridge, "is_search_accelerated") and rust_bridge.is_search_accelerated())
     except Exception:
         data["rust_accelerated"] = False
         

@@ -202,6 +202,28 @@ fn main() {
                 exit(1);
             }
         }
+        "search" => {
+            if args.len() < 4 {
+                eprintln!("Usage: nas_indexer search <db_path> <query> [root_param] [limit]");
+                exit(1);
+            }
+            let root = args.get(4).map(|s| s.as_str()).unwrap_or("");
+            let limit = args
+                .get(5)
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(300);
+            match nas_indexer_core::search_file_index(&args[2], &args[3], root, limit) {
+                Ok(rows) => {
+                    if let Ok(json) = serde_json::to_string(&rows) {
+                        println!("{}", json);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Search error: {}", e);
+                    exit(1);
+                }
+            }
+        }
         _ => {
             eprintln!("Unknown command: {}", args[1]);
             exit(1);

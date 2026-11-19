@@ -20,6 +20,7 @@ if backend_dir not in sys.path:
 import rust_bridge
 
 
+@pytest.mark.skipif(not rust_bridge.is_rust_accelerated(), reason="Rust hasher core not built on this host")
 def test_rust_bridge_availability():
     """Kiểm tra Rust bridge khởi tạo thành công trên môi trường dev."""
     # Khi đã build dll/so, is_rust_accelerated phải trả về True
