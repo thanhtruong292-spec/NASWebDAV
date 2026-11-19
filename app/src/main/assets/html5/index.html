@@ -594,6 +594,20 @@
     </div>
   </div>
 
+  <!-- UNIFIED SUB-UI MODAL (Guest, Social, Perf, Whitelist, Bandwidth, NasBackup, FailedUploads, USB) -->
+  <div class="ux-modal-backdrop hidden" id="subUiModal">
+    <div class="ux-modal">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title" id="subUiTitle">--</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="zoom-btn" id="subUiRefreshBtn">↻</button>
+          <button class="zoom-btn" id="subUiCloseBtn">✕</button>
+        </div>
+      </div>
+      <div id="subUiBody"></div>
+    </div>
+  </div>
+
   <div class="ux-toast" id="uxToast"></div>
   <script src="app.js"></script>
 </body>

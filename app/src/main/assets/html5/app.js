@@ -13,6 +13,7 @@
   var smartTab = "summary"; // summary | raw
   var liveTab = "record"; // record | watch
   var liveQuality = "best";
+  var activeSubUi = ""; // guest | social | performance | lanWhitelist | bandwidth | nasBackup | failedUploads | usbImport
   var selectMode = false;
   var selectedPaths = {};
   var timelineData = null;
@@ -282,6 +283,9 @@
     }
     if (!document.getElementById("livestreamModal").classList.contains("hidden")) {
       renderLivestreamModal();
+    }
+    if (!document.getElementById("subUiModal").classList.contains("hidden")) {
+      renderSubUiModal();
     }
 
     // Range & tab UI
@@ -790,6 +794,143 @@
     });
   }
 
+  function openSubUiModal(kind) {
+    activeSubUi = kind;
+    if (kind === "lanWhitelist") callBridge("fetchLanWhitelist");
+    else if (kind === "nasBackup") callBridge("fetchNasBackups");
+    else if (kind === "failedUploads") callBridge("fetchFailedUploads");
+    else if (kind === "usbImport") callBridge("fetchUsbImport");
+    renderSubUiModal();
+    document.getElementById("subUiModal").classList.remove("hidden");
+  }
+
+  function renderSubUiModal() {
+    var titleEl = document.getElementById("subUiTitle");
+    var bodyEl = document.getElementById("subUiBody");
+    var refBtn = document.getElementById("subUiRefreshBtn");
+    if (!titleEl || !bodyEl) return;
+    var s = state || {};
+    var html = "";
+    refBtn.classList.toggle("hidden", activeSubUi === "guest" || activeSubUi === "social" || activeSubUi === "bandwidth");
+
+    if (activeSubUi === "guest") {
+      titleEl.textContent = "KHÁCH WEBDAV / FTP";
+      var g = s.guest || {};
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">' +
+        [15, 60, 180, 1440].map(function (m) {
+          return '<button class="btn-pill primary" data-gmin="' + m + '">' + (m >= 60 ? (m / 60) + ' giờ' : m + ' phút') + '</button>';
+        }).join("") + '</div>';
+      if (g.loading) html += '<div class="list-sub" style="padding:8px 0;">Đang tạo tài khoản khách...</div>';
+      if (g.error) html += '<div class="list-sub" style="color:' + COLOR_RED + ';padding:6px 0;">' + String(g.error).replace(/</g, "&lt;") + '</div>';
+      if (g.username) {
+        html += '<div class="list-item"><div><div class="list-title">User: ' + g.username + '</div><div class="list-sub">Pass: <b>' + g.password + '</b> • Hết hạn: ' + (g.expiresAt || "") + '</div></div>' +
+          '<button class="btn-pill danger" id="gRevokeBtn">Thu hồi</button></div>';
+      } else {
+        html += '<div class="list-sub">Chọn thời hạn phía trên để tạo tài khoản FTP tạm thời cho khách.</div>';
+      }
+      bodyEl.innerHTML = html;
+      bodyEl.querySelectorAll("[data-gmin]").forEach(function (b) {
+        b.addEventListener("click", function () { callBridge("createGuestPass", Number(b.getAttribute("data-gmin"))); });
+      });
+      var rv = document.getElementById("gRevokeBtn");
+      if (rv) rv.addEventListener("click", function () { callBridge("revokeGuestPass"); });
+    } else if (activeSubUi === "social") {
+      titleEl.textContent = "TẢI VIDEO MXH";
+      var sc = s.social || {};
+      var oldVal = (document.getElementById("socUrlInp") && document.getElementById("socUrlInp").value) || "";
+      html += '<input class="ux-input" style="margin:0 0 8px;" id="socUrlInp" type="url" placeholder="Dán link TikTok, Douyin, YouTube, FB..." value="' + oldVal.replace(/"/g, "&quot;") + '" />' +
+        '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+          '<button class="btn-pill primary" style="flex:1;" id="socDlBtn">' + (sc.extracting ? "Đang tải..." : "Tải vào Downloads") + '</button>' +
+          '<button class="btn-pill" id="socPasteBtn">Dán link</button>' +
+        '</div>';
+      if (sc.status) html += '<div class="list-sub" style="margin-bottom:8px;color:var(--ux-cyan);">' + String(sc.status).replace(/</g, "&lt;") + '</div>';
+      (sc.history || []).forEach(function (h) {
+        html += '<div class="list-item"><div style="flex:1;min-width:0;"><div class="list-title" style="font-size:12px;">' + String(h.title || "").replace(/</g, "&lt;") + '</div><div class="list-sub">' + (h.status || "") + ' • ' + (h.folder || "") + '</div></div></div>';
+      });
+      bodyEl.innerHTML = html;
+      document.getElementById("socPasteBtn").addEventListener("click", function () {
+        var b = bridge();
+        if (b && typeof b.getClipboardText === "function") document.getElementById("socUrlInp").value = b.getClipboardText() || "";
+      });
+      document.getElementById("socDlBtn").addEventListener("click", function () {
+        var u = (document.getElementById("socUrlInp").value || "").trim();
+        if (u) { callBridge("downloadSocialVideo", u, "Downloads"); showToast("Đang gửi yêu cầu tải video..."); }
+      });
+    } else if (activeSubUi === "performance") {
+      titleEl.textContent = "HIỆU NĂNG & MẠNG";
+      var pf = s.perf || {};
+      html += '<div class="list-item"><div class="list-title">Kết nối hiện tại</div><span class="badge">' + (s.connLabel || "NAS") + '</span></div>' +
+        '<div class="list-item"><div class="list-title">Độ trễ API</div><span class="badge">' + (pf.latencyMs || 0) + ' ms</span></div>' +
+        '<div class="list-item"><div class="list-title">Tốc độ Tải xuống</div><span class="badge" style="color:var(--ux-cyan);">' + (pf.dl || "--") + '</span></div>' +
+        '<div class="list-item"><div class="list-title">Tốc độ Tải lên</div><span class="badge" style="color:var(--ux-green);">' + (pf.ul || "--") + '</span></div>' +
+        '<button class="btn-pill primary" id="perfRunBtn" style="width:100%;margin-top:12px;">' + (pf.testing ? "Đang đo tốc độ..." : "Đo tốc độ LAN / Tailscale") + '</button>';
+      bodyEl.innerHTML = html;
+      document.getElementById("perfRunBtn").addEventListener("click", function () { callBridge("runSpeedTest"); showToast("Đang đo tốc độ mạng..."); });
+    } else if (activeSubUi === "lanWhitelist") {
+      titleEl.textContent = "LAN WHITELIST";
+      var wl = s.whitelist || {};
+      html += '<div style="display:flex;gap:6px;margin-bottom:8px;"><input class="ux-input" style="margin:0;flex:1;" id="wlInp" placeholder="192.168.1.50 hoặc 100.64.0.0/10" /><button class="btn-pill primary" id="wlAddBtn">Thêm</button></div>';
+      if (wl.error) html += '<div class="list-sub" style="color:var(--ux-red);">' + wl.error + '</div>';
+      (wl.ips || []).forEach(function (ip) {
+        html += '<div class="list-item"><div class="list-title">' + ip + '</div><button class="zoom-btn" data-wldel="' + ip + '" data-wlsub="0" style="color:var(--ux-red);">✕</button></div>';
+      });
+      (wl.subnets || []).forEach(function (sb) {
+        html += '<div class="list-item"><div class="list-title">' + sb + '</div><button class="zoom-btn" data-wldel="' + sb + '" data-wlsub="1" style="color:var(--ux-red);">✕</button></div>';
+      });
+      bodyEl.innerHTML = html;
+      document.getElementById("wlAddBtn").addEventListener("click", function () {
+        var v = (document.getElementById("wlInp").value || "").trim();
+        if (v) callBridge("addLanWhitelist", v);
+      });
+      bodyEl.querySelectorAll("[data-wldel]").forEach(function (b) {
+        b.addEventListener("click", function () { callBridge("removeLanWhitelist", b.getAttribute("data-wldel"), b.getAttribute("data-wlsub") === "1"); });
+      });
+    } else if (activeSubUi === "bandwidth") {
+      titleEl.textContent = "GIỚI HẠN BĂNG THÔNG";
+      var curBps = (s.perf && s.perf.bandwidthLimit) || 0;
+      html += '<div class="list-sub" style="margin-bottom:10px;">Giới hạn tốc độ tải lên NAS để tránh nghẽn mạng gia đình.</div>' +
+        [[0, "Không giới hạn"], [5 * 1024 * 1024, "5 MB/s"], [10 * 1024 * 1024, "10 MB/s"], [20 * 1024 * 1024, "20 MB/s"]].map(function (opt) {
+          var act = curBps === opt[0];
+          return '<div class="list-item" data-bw="' + opt[0] + '"><div class="list-title">' + opt[1] + '</div><span class="badge" style="color:' + (act ? COLOR_BLUE : "var(--ux-text-3)") + ';">' + (act ? "Đang chọn" : "Chọn") + '</span></div>';
+        }).join("");
+      bodyEl.innerHTML = html;
+      bodyEl.querySelectorAll("[data-bw]").forEach(function (el) {
+        el.addEventListener("click", function () { callBridge("setBandwidthLimit", Number(el.getAttribute("data-bw"))); });
+      });
+    } else if (activeSubUi === "nasBackup") {
+      titleEl.textContent = "SAO LƯU CẤU HÌNH NAS";
+      var nb = s.nasBackup || {};
+      html += '<button class="btn-pill primary" id="nbCreateBtn" style="width:100%;margin-bottom:10px;">' + (nb.creating ? "Đang tạo..." : "+ Tạo bản sao lưu cấu hình") + '</button>';
+      if (nb.message) html += '<div class="list-sub" style="margin-bottom:8px;">' + nb.message + '</div>';
+      (nb.items || []).forEach(function (it) {
+        html += '<div class="list-item"><div style="flex:1;min-width:0;"><div class="list-title" style="font-size:12px;">' + it.filename + '</div><div class="list-sub">' + it.size + ' • ' + it.date + '</div></div>' +
+          '<div style="display:flex;gap:4px;"><button class="zoom-btn" data-nbrest="' + it.filename + '">Khôi phục</button><button class="zoom-btn" data-nbdel="' + it.filename + '" style="color:var(--ux-red);">✕</button></div></div>';
+      });
+      bodyEl.innerHTML = html;
+      document.getElementById("nbCreateBtn").addEventListener("click", function () { callBridge("createNasBackup"); });
+      bodyEl.querySelectorAll("[data-nbrest]").forEach(function (b) { b.addEventListener("click", function () { callBridge("restoreNasBackup", b.getAttribute("data-nbrest")); }); });
+      bodyEl.querySelectorAll("[data-nbdel]").forEach(function (b) { b.addEventListener("click", function () { callBridge("deleteNasBackup", b.getAttribute("data-nbdel")); }); });
+    } else if (activeSubUi === "failedUploads") {
+      titleEl.textContent = "TỆP TẢI LÊN LỖI";
+      var fu = s.failedUploads || [];
+      html += fu.length ? '<button class="btn-pill primary" id="fuRetryAllBtn" style="width:100%;margin-bottom:10px;">Thử lại tất cả (' + fu.length + ')</button>' : '<div class="list-sub">Không có tệp tải lên lỗi nào.</div>';
+      fu.forEach(function (f) {
+        html += '<div class="list-item"><div style="flex:1;min-width:0;"><div class="list-title" style="font-size:12px;">' + String(f.name || "").replace(/</g, "&lt;") + '</div><div class="list-sub">' + String(f.error || "").replace(/</g, "&lt;") + '</div></div>' +
+          '<button class="zoom-btn" data-furetry="' + f.id + '">Thử lại</button></div>';
+      });
+      bodyEl.innerHTML = html;
+      var ra = document.getElementById("fuRetryAllBtn");
+      if (ra) ra.addEventListener("click", function () { callBridge("retryAllFailedUploads"); });
+      bodyEl.querySelectorAll("[data-furetry]").forEach(function (b) { b.addEventListener("click", function () { callBridge("retryFailedUpload", Number(b.getAttribute("data-furetry"))); }); });
+    } else if (activeSubUi === "usbImport") {
+      titleEl.textContent = "NHẬP DỮ LIỆU TỪ USB";
+      var usb = s.usb || {};
+      html += '<div class="list-item"><div class="list-title">Trạng thái</div><span class="badge">' + (usb.running ? "Đang chép" : (usb.phase || "Sẵn sàng")) + '</span></div>' +
+        '<div class="list-sub" style="padding:8px 0;">' + (usb.message || "Cắm USB vào cổng USB trên NAS để kiểm tra.") + '</div>';
+      bodyEl.innerHTML = html;
+    }
+  }
+
   function openProcessModal(sortMode) {
     procSortBy = sortMode || "cpu";
     callBridge("fetchProcesses");
@@ -1093,6 +1234,7 @@
       else if (act === "docker") openDockerModal();
       else if (act === "logs") openLogsModal();
       else if (act === "livestream" || act === "stream") openLivestreamModal();
+      else if (act === "guest" || act === "social" || act === "performance" || act === "lanWhitelist" || act === "bandwidth" || act === "nasBackup" || act === "failedUploads" || act === "usbImport") openSubUiModal(act);
       else callBridge("action", act);
     }
 
@@ -1141,6 +1283,8 @@
     document.getElementById("logsCloseBtn").addEventListener("click", function () { document.getElementById("logsModal").classList.add("hidden"); });
     document.getElementById("logsRefreshBtn").addEventListener("click", function () { callBridge("fetchLogs"); showToast("Đang tải nhật ký..."); });
     document.getElementById("liveCloseBtn").addEventListener("click", function () { document.getElementById("livestreamModal").classList.add("hidden"); });
+    document.getElementById("subUiCloseBtn").addEventListener("click", function () { document.getElementById("subUiModal").classList.add("hidden"); });
+    document.getElementById("subUiRefreshBtn").addEventListener("click", function () { openSubUiModal(activeSubUi); showToast("Đang cập nhật..."); });
     document.getElementById("liveRefreshBtn").addEventListener("click", function () { callBridge("refreshLivestream"); showToast("Đang cập nhật Livestream..."); });
     document.getElementById("liveTabRecordBtn").addEventListener("click", function () { liveTab = "record"; renderLivestreamModal(); });
     document.getElementById("liveTabWatchBtn").addEventListener("click", function () { liveTab = "watch"; renderLivestreamModal(); });

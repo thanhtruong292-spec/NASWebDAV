@@ -137,6 +137,7 @@ fun NasHtmlDashboardScreen(
             }
             val payload = buildHtml5StateJson(
                 context = context,
+                authVM = authVM,
                 sysMonitorVM = sysMonitorVM,
                 deviceVM = deviceVM,
                 autoBackupVM = autoBackupVM,
@@ -174,6 +175,7 @@ fun NasHtmlDashboardScreen(
         if (!pageLoaded) return@LaunchedEffect
         val payload = buildHtml5StateJson(
             context = context,
+            authVM = authVM,
             sysMonitorVM = sysMonitorVM,
             deviceVM = deviceVM,
             autoBackupVM = autoBackupVM,
@@ -644,6 +646,98 @@ fun NasHtmlDashboardScreen(
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         return cm?.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
                     }
+
+                    @JavascriptInterface
+                    fun createGuestPass(minutes: Int) {
+                        post { authVM.createGuestPass(minutes) }
+                    }
+
+                    @JavascriptInterface
+                    fun revokeGuestPass() {
+                        post {
+                            authVM.revokeGuestPass(
+                                onSuccess = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+                                onWarning = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() }
+                            )
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun downloadSocialVideo(url: String, folder: String) {
+                        val clean = url.trim()
+                        if (clean.isNotBlank()) {
+                            post { liveVM.requestSocialDownload(clean, folder.ifBlank { "Downloads" }) }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun runSpeedTest() {
+                        post { deviceVM.runSpeedTest() }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchLanWhitelist() {
+                        post { deviceVM.loadLanWhitelist() }
+                    }
+
+                    @JavascriptInterface
+                    fun addLanWhitelist(entry: String) {
+                        val clean = entry.trim()
+                        if (clean.isNotBlank()) post { deviceVM.addLanWhitelistEntry(clean) }
+                    }
+
+                    @JavascriptInterface
+                    fun removeLanWhitelist(entry: String, isSubnet: Boolean) {
+                        post { deviceVM.removeLanWhitelistEntry(entry, isSubnet) }
+                    }
+
+                    @JavascriptInterface
+                    fun setBandwidthLimit(bps: Long) {
+                        post {
+                            com.nas.naswebdav.utils.PreferencesRepository.get(context).setUploadSpeedLimit(bps)
+                            Toast.makeText(context, if (bps <= 0L) "Đã bỏ giới hạn băng thông" else "Đã đặt giới hạn: ${bps / (1024 * 1024)} MB/s", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchNasBackups() {
+                        post { sysMonitorVM.fetchNasConfigBackups() }
+                    }
+
+                    @JavascriptInterface
+                    fun createNasBackup() {
+                        post { sysMonitorVM.createNasConfigBackup() }
+                    }
+
+                    @JavascriptInterface
+                    fun restoreNasBackup(filename: String) {
+                        post { sysMonitorVM.restoreNasConfigBackup(filename) }
+                    }
+
+                    @JavascriptInterface
+                    fun deleteNasBackup(filename: String) {
+                        post { sysMonitorVM.deleteNasConfigBackup(filename) }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchFailedUploads() {
+                        post { deviceVM.loadFailedUploads(context) }
+                    }
+
+                    @JavascriptInterface
+                    fun retryFailedUpload(id: Int) {
+                        post { deviceVM.retryFailedUpload(context, id) }
+                    }
+
+                    @JavascriptInterface
+                    fun retryAllFailedUploads() {
+                        post { deviceVM.retryAllFailedUploads(context) }
+                    }
+
+                    @JavascriptInterface
+                    fun fetchUsbImport() {
+                        post { deviceVM.fetchUsbImportStatus() }
+                    }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
@@ -675,6 +769,7 @@ fun NasHtmlDashboardScreen(
 
 private fun buildHtml5StateJson(
     context: android.content.Context,
+    authVM: com.nas.naswebdav.auth.AuthSessionViewModel,
     sysMonitorVM: com.nas.naswebdav.monitor.SystemMonitorViewModel,
     deviceVM: com.nas.naswebdav.device.DeviceManagementViewModel,
     autoBackupVM: com.nas.naswebdav.backup.AutoBackupViewModel,
@@ -919,6 +1014,78 @@ private fun buildHtml5StateJson(
         put("excludeStart", liveVM.tiktokExcludeStart)
         put("excludeEnd", liveVM.tiktokExcludeEnd)
         put("cookiesStatus", liveVM.tiktokCookiesStatus)
+    })
+
+    // Sub-UI state snapshots (Guest, Social, Perf, Whitelist, Bandwidth, NasBackup, FailedUploads, USB)
+    val guest = authVM.activeGuestPass
+    val guestTimeFmt = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.getDefault())
+    root.put("guest", JSONObject().apply {
+        put("loading", authVM.isGuestPassLoading)
+        put("error", authVM.guestPassError ?: "")
+        if (guest != null) {
+            put("username", guest.username)
+            put("password", guest.password)
+            val expMs = if (guest.expiresAt < 10_000_000_000L) guest.expiresAt * 1000L else guest.expiresAt
+            put("expiresAt", guestTimeFmt.format(java.util.Date(expMs)))
+        }
+    })
+    val socialHist = JSONArray()
+    liveVM.socialDownloadHistory.take(15).forEach { sItem ->
+        socialHist.put(JSONObject().apply {
+            put("title", sItem.url)
+            put("status", if (sItem.isSuccess) "Thành công" else "Thất bại")
+            put("folder", sItem.platform)
+        })
+    }
+    root.put("social", JSONObject().apply {
+        put("extracting", liveVM.isSocialExtracting)
+        put("status", liveVM.socialExtractStatus)
+        put("history", socialHist)
+    })
+    root.put("perf", JSONObject().apply {
+        put("testing", deviceVM.isTestingSpeed)
+        put("dl", deviceVM.speedTestResult.readSpeed)
+        put("ul", deviceVM.speedTestResult.writeSpeed)
+        put("latencyMs", sysMonitorVM.apiLatencyMs)
+        put("bandwidthLimit", prefs.getUploadSpeedLimit())
+    })
+    val wlIps = JSONArray(deviceVM.lanWhitelistIps)
+    val wlSubs = JSONArray(deviceVM.lanWhitelistSubnets)
+    root.put("whitelist", JSONObject().apply {
+        put("ips", wlIps)
+        put("subnets", wlSubs)
+        put("loading", deviceVM.lanWhitelistLoading)
+        put("status", deviceVM.lanWhitelistStatus)
+        put("error", deviceVM.lanWhitelistError)
+    })
+    val nbArr = JSONArray()
+    sysMonitorVM.nasConfigBackups.forEach { b ->
+        nbArr.put(JSONObject().apply {
+            put("filename", b.filename)
+            put("size", b.sizeHuman)
+            put("date", b.createdAt)
+        })
+    }
+    root.put("nasBackup", JSONObject().apply {
+        put("items", nbArr)
+        put("creating", sysMonitorVM.isCreatingNasConfigBackup)
+        put("restoring", sysMonitorVM.isRestoringNasConfigBackup)
+        put("message", sysMonitorVM.nasConfigBackupMessage)
+    })
+    val fuArr = JSONArray()
+    deviceVM.failedUploads.forEach { f ->
+        fuArr.put(JSONObject().apply {
+            put("id", f.id)
+            put("name", f.sourcePath.substringAfterLast('/'))
+            put("error", f.status)
+        })
+    }
+    root.put("failedUploads", fuArr)
+    root.put("usb", JSONObject().apply {
+        put("loading", deviceVM.isUsbImportLoading)
+        put("message", deviceVM.usbImportMessage.ifBlank { deviceVM.usbImportState.message })
+        put("running", deviceVM.usbImportState.status.equals("running", ignoreCase = true))
+        put("phase", deviceVM.usbImportState.status)
     })
 
     return root.toString()
