@@ -1,12 +1,18 @@
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::BufWriter;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_longlong};
 
 pub mod diacritics;
+pub mod dir_scanner;
+pub mod media_queries;
 pub mod search;
+pub mod storage_summary;
 pub use diacritics::remove_diacritics;
-pub use search::search_file_index;
+pub use dir_scanner::{scan_directory_entries, DirScanResult};
+pub use media_queries::{query_photos_timeline, query_recent_media, RecentMediaItem, TimelineResult};
+pub use search::{build_fts_index, search_file_index};
+pub use storage_summary::{compute_storage_summary, StorageSummaryCore};
 
 pub mod streamer {
     pub use crate::stream_fast_index;
@@ -245,5 +251,159 @@ pub unsafe extern "C" fn nas_indexer_search_json(
 pub unsafe extern "C" fn nas_indexer_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         let _ = CString::from_raw(ptr);
+    }
+}
+
+/// C-ABI: Xây dựng sidecar FTS5 trigram index (<db_path>.fts.db).
+/// Trả về số bản ghi đã lập chỉ mục (>= 0) nếu thành công, hoặc số âm nếu lỗi.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_build_fts(db_path_ptr: *const c_char) -> c_int {
+    if db_path_ptr.is_null() {
+        return -1;
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+    match build_fts_index(db_path) {
+        Ok(count) => count as c_int,
+        Err(_) => -3,
+    }
+}
+
+/// C-ABI: Tính toán thống kê lưu trữ (by_type, largest top 10, total_files/bytes/dirs) trong 1 lượt quét.
+/// Caller PHẢI gọi `nas_indexer_free_string(ptr)` sau khi đọc xong.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_storage_summary_json(db_path_ptr: *const c_char) -> *mut c_char {
+    if db_path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let summary = match compute_storage_summary(db_path) {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&summary) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Quét 1 thư mục bằng Rust (`read_dir` + `lstat` + `remove_diacritics` + MIME O(1)).
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_scan_dir_json(
+    dir_path_ptr: *const c_char,
+    rel_prefix_ptr: *const c_char,
+) -> *mut c_char {
+    if dir_path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let dir_path = match CStr::from_ptr(dir_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let rel_prefix = if rel_prefix_ptr.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(rel_prefix_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let res = match scan_directory_entries(dir_path, rel_prefix) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Truy vấn media gần nhất (`api_recent_media`) trực tiếp trên index `mtime DESC, path`.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_recent_media_json(
+    db_path_ptr: *const c_char,
+    kind_ptr: *const c_char,
+    scope_ptr: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    if db_path_ptr.is_null() || kind_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let kind = match CStr::from_ptr(kind_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let scope = if scope_ptr.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(scope_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let items = match query_recent_media(db_path, kind, scope, limit.max(1) as usize) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&items) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Truy vấn Timeline ảnh (`api_photos_timeline`) 1 lượt quét duy nhất trên index `mtime DESC, path`.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_photos_timeline_json(
+    db_path_ptr: *const c_char,
+    start_ms: c_longlong,
+    end_ms: c_longlong,
+    limit: c_int,
+    offset: c_int,
+) -> *mut c_char {
+    if db_path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = match query_photos_timeline(
+        db_path,
+        start_ms as i64,
+        end_ms as i64,
+        limit.max(1) as usize,
+        offset.max(0) as usize,
+    ) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
     }
 }

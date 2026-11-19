@@ -170,3 +170,129 @@ def test_search_file_index_parity_and_wildcards():
                 os.remove(db_path)
             except Exception:
                 pass
+
+
+def test_fts5_trigram_sidecar_build_and_search():
+    """Kiểm tra xây dựng sidecar FTS5 trigram và đối soát kết quả tìm kiếm 100%."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    fts_path = db_path + ".fts.db"
+
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE TABLE index_state(id INTEGER PRIMARY KEY, root TEXT, generation INTEGER, ready INTEGER, scanned_at REAL, catalogue_revision INTEGER)")
+            conn.execute("INSERT INTO index_state VALUES(1, '/srv/data', 5, 1, 1795000000.0, 12)")
+            conn.execute("CREATE TABLE file_index(path TEXT PRIMARY KEY, name TEXT, norm_name TEXT, is_dir INTEGER, size INTEGER, mtime INTEGER, mime TEXT)")
+            rows = [
+                ("Tài liệu/Báo cáo tài chính 2026.pdf", "Báo cáo tài chính 2026.pdf", "bao cao tai chinh 2026.pdf", 0, 1024, 1000, "application/pdf"),
+                ("Ảnh/Ảnh 100%_+.jpg", "Ảnh 100%_+.jpg", "anh 100%_+.jpg", 0, 2048, 2000, "image/jpeg"),
+                ("Ảnh/Ảnh 100xx+.jpg", "Ảnh 100xx+.jpg", "anh 100xx+.jpg", 0, 2048, 2000, "image/jpeg"),
+            ]
+            conn.executemany("INSERT INTO file_index VALUES(?, ?, ?, ?, ?, ?, ?)", rows)
+            conn.commit()
+        finally:
+            conn.close()
+
+        built = rust_bridge.build_fts_index(db_path)
+        assert built == 3
+        assert os.path.isfile(fts_path)
+
+        res = rust_bridge.search_file_index(db_path, "tài chính", "", 300)
+        assert res is not None and len(res) == 1
+        assert res[0][1] == "Báo cáo tài chính 2026.pdf"
+
+        # Wildcard phải giữ nguyên nghĩa literal kể cả khi dùng FTS5 trigram
+        res_wild = rust_bridge.search_file_index(db_path, "100%_+", "Ảnh", 300)
+        assert res_wild is not None and len(res_wild) == 1
+        assert res_wild[0][1] == "Ảnh 100%_+.jpg"
+    finally:
+        for p in (db_path, fts_path):
+            if os.path.isfile(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+
+def test_compute_storage_summary_parity(tmp_path):
+    """Kiểm tra thống kê lưu trữ Rust C-ABI khớp 100% logic Python os.path.splitext + top 10."""
+    db_path = str(tmp_path / "storage.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE file_index(path TEXT PRIMARY KEY, name TEXT, is_dir INTEGER, size INTEGER)")
+        conn.executemany("INSERT INTO file_index VALUES(?, ?, ?, ?)", [
+            ("photos/", "photos", 1, 0),
+            ("photos/a.JPG", "a.JPG", 0, 500),
+            ("videos/b.mp4", "b.mp4", 0, 5000),
+            ("videos/a.mp4", "a.mp4", 0, 5000),  # tie-break path ASC -> videos/a.mp4 truoc videos/b.mp4
+            ("docs/c.pdf", "c.pdf", 0, 200),
+            ("music/d.mp3", "d.mp3", 0, 300),
+            ("arch/e.tar.gz", "e.tar.gz", 0, 400),
+            (".jpg", ".jpg", 0, 100),  # dotfile -> other
+        ])
+        conn.commit()
+    finally:
+        conn.close()
+
+    res = rust_bridge.compute_storage_summary(db_path)
+    assert res is not None
+    assert res["total_files"] == 7
+    assert res["total_dirs"] == 1
+    assert res["total_bytes"] == 11500
+    assert res["by_type"]["image"] == {"files": 1, "bytes": 500}
+    assert res["by_type"]["video"] == {"files": 2, "bytes": 10000}
+    assert res["by_type"]["doc"] == {"files": 1, "bytes": 200}
+    assert res["by_type"]["audio"] == {"files": 1, "bytes": 300}
+    assert res["by_type"]["archive"] == {"files": 1, "bytes": 400}
+    assert res["by_type"]["other"] == {"files": 1, "bytes": 100}
+    assert res["largest"][0] == {"path": "videos/a.mp4", "bytes": 5000}
+    assert res["largest"][1] == {"path": "videos/b.mp4", "bytes": 5000}
+
+
+def test_scan_directory_entries_and_media_queries(tmp_path):
+    """Kiểm tra quét thư mục (Ưu tiên 6) và truy vấn recent_media/photos_timeline (Ưu tiên 7) qua Rust C-ABI."""
+    (tmp_path / "SubDir").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "Ảnh Tết 2026.JPG").write_bytes(b"imgdata")
+    (tmp_path / ".skip.jpg").write_bytes(b"skip")
+
+    scan = rust_bridge.scan_directory_entries(str(tmp_path), "album/")
+    assert scan is not None
+    assert len(scan["entries"]) == 1
+    entry = scan["entries"][0]
+    assert entry[0] == "album/Ảnh Tết 2026.JPG"
+    assert entry[2] == "anh tet 2026.jpg"
+    assert entry[4] == 7
+    assert entry[6] == "image/jpeg"
+    assert scan["special"] == ["SubDir"]
+
+    db_path = str(tmp_path / "media.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE file_index(path TEXT PRIMARY KEY, name TEXT, is_dir INTEGER, size INTEGER, mtime INTEGER, mime TEXT)")
+        conn.executemany("INSERT INTO file_index VALUES(?, ?, ?, ?, ?, ?)", [
+            ("album/a.jpg", "a.jpg", 0, 100, 1700000000000, "image/jpeg"),
+            ("album/b.png", "b.png", 0, 200, 1710000000000, "image/png"),
+            ("videos/c.mp4", "c.mp4", 0, 300, 1720000000000, "video/mp4"),
+            ("docs/d.pdf", "d.pdf", 0, 400, 1730000000000, "application/pdf"),
+        ])
+        conn.commit()
+    finally:
+        conn.close()
+
+    recent_img = rust_bridge.query_recent_media(db_path, "image", "", 10)
+    assert recent_img is not None and len(recent_img) == 2
+    assert recent_img[0]["path"] == "/webdav/album/b.png"
+    assert recent_img[1]["path"] == "/webdav/album/a.jpg"
+
+    recent_vid = rust_bridge.query_recent_media(db_path, "video", "videos", 10)
+    assert recent_vid is not None and len(recent_vid) == 1
+    assert recent_vid[0]["name"] == "c.mp4"
+
+    tl = rust_bridge.query_photos_timeline(db_path, -1, -1, 1, 0)
+    assert tl is not None
+    assert tl["total"] == 2
+    assert len(tl["items"]) == 1
+    assert tl["items"][0]["path"] == "album/b.png"
+    assert tl["items"][0]["mtime"] == 1710000000

@@ -163,6 +163,36 @@ def test_fan_only_stops_after_ten_continuous_cool_minutes():
     assert applied == [(0, 30), (1101, 0)]
 
 
+def test_fan_does_not_blip_when_hdd_temp_unavailable_or_in_hysteresis():
+    class EndSimulation(BaseException):
+        pass
+    # Ticks: t=0 HDD=0 (chưa đọc được), t=1 HDD=41 (khoảng trễ 40-42), t=2 HDD=41
+    ticks = iter([(0, 0.0), (1, 41.0), (2, 41.0)])
+    current = [next(ticks)]
+    applied = []
+    def advance(seconds):
+        try:
+            current[0] = next(ticks)
+        except StopIteration:
+            raise EndSimulation()
+    ns = dict(time=SimpleNamespace(monotonic=lambda: current[0][0], sleep=advance),
+              run_cmd=lambda args: "", _load_fan_settings=lambda: {"mode": "custom", "on_temp": 42.0, "off_temp": 40.0},
+              _fan_temp_value=float, get_cpu_temp=lambda: 45.0, get_hdd_temp=lambda: current[0][1],
+              FAN_DEFAULT_ON_TEMP=42.0, FAN_DEFAULT_OFF_TEMP=40.0, FAN_CPU_FORCE_ON_TEMP=75.0,
+              FAN_HDD_FORCE_ON_TEMP=60.0, _cache_lock=threading.Lock(), _status_cache={},
+              _fan_rpm_for_percent=lambda pct: 0, _fan_status_for_percent=str,
+              _pwm_apply_level=lambda pct: applied.append((current[0][0], pct)),
+              log=__import__("logging").getLogger("fan-test"))
+    exec(compile(ast.Module(body=_source_nodes("_fan_change_delay", "_fan_controller_watchdog"),
+                            type_ignores=[]), str(SOURCE), "exec"), ns)
+    try:
+        ns["_fan_controller_watchdog"]()
+    except EndSimulation:
+        pass
+    # Khi HDD=0 (chưa đọc được) và HDD=41 (dưới ngưỡng bật 42), quạt KHÔNG ĐƯỢC bật lên 100% hay nháy
+    assert applied == [(0, 0)], "Quạt phải giữ 0% không được nháy bật khi HDD=0 hoặc ở vùng trễ 41C"
+
+
 def test_manual_to_auto_discards_old_sample_before_publishing_mode():
     state = {"mode": "on"}
     cache = {"ts": 1, "attempt": 1, "value": "35°C", "paused": False, "cool": 2}

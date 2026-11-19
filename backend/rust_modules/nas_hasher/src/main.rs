@@ -283,6 +283,39 @@ fn main() {
             let record = compute_file_hashes(&args[2]);
             println!("{}", serde_json::to_string(&record).unwrap());
         }
+        "find-duplicates" => {
+            if args.len() < 3 {
+                eprintln!("Usage: nas_hasher find-duplicates <root_dir> [min_size] [workers] [limit]");
+                exit(1);
+            }
+            let min_size = args.get(3).and_then(|s| s.parse::<u64>().ok()).unwrap_or(1024);
+            let workers = args.get(4).and_then(|s| s.parse::<usize>().ok()).unwrap_or(4);
+            let limit = args.get(5).and_then(|s| s.parse::<usize>().ok()).unwrap_or(500);
+            match nas_hasher_core::find_duplicates_in_dir(&args[2], min_size, workers, limit) {
+                Ok(report) => {
+                    println!("{}", serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string()));
+                }
+                Err(e) => {
+                    eprintln!("Duplicate scan error: {}", e);
+                    exit(1);
+                }
+            }
+        }
+        "mp4-info" => {
+            if args.len() < 3 {
+                eprintln!("Usage: nas_hasher mp4-info <video_path>");
+                exit(1);
+            }
+            match nas_hasher_core::parse_mp4_header(Path::new(&args[2])) {
+                Ok(info) => {
+                    println!("{}", serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string()));
+                }
+                Err(e) => {
+                    eprintln!("MP4 parse error: {}", e);
+                    exit(1);
+                }
+            }
+        }
         _ => {
             eprintln!("Unknown command: {}", args[1]);
             exit(1);

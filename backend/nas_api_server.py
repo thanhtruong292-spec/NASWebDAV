@@ -883,10 +883,18 @@ def _scan_file_index_pass(search_root, work_lease=None, ignore_user_idle=False):
                     raise ValueError("Excluded directory boundary or ancestor cycle")
                 if saved[0] == before:
                     continue
-                names = os.listdir(path)
                 entries = []
                 children = []
                 complete = True
+                _dir_bridge = globals().get("rust_bridge")
+                _rust_dir = None
+                if _dir_bridge and hasattr(_dir_bridge, "scan_directory_entries"):
+                    _rust_dir = _dir_bridge.scan_directory_entries(path, rel)
+                if _rust_dir is not None:
+                    entries = [tuple(e) for e in _rust_dir.get("entries", [])]
+                    names = _rust_dir.get("special", [])
+                else:
+                    names = os.listdir(path)
                 for offset, name in enumerate(names):
                     if work_lease and offset and offset % 1024 == 0:
                         paused = check_batch(rel)
@@ -955,6 +963,10 @@ def _scan_file_index_pass(search_root, work_lease=None, ignore_user_idle=False):
             conn.commit()
         result = _index_readiness(conn)
         result.update({"checked_dirs": checked, "enumerated_dirs": enumerated})
+        if result.get("index_ready"):
+            bridge = globals().get("rust_bridge")
+            if bridge and hasattr(bridge, "schedule_fts_rebuild"):
+                bridge.schedule_fts_rebuild(INDEX_DB_PATH)
         return result
     finally:
         if conn is not None:
@@ -5963,6 +5975,17 @@ def api_scan_broken_mp4():
                     total_scanned += 1
                     fpath = os.path.join(root, fname)
 
+                    # Fast path: Rust MP4 atom parser (<0.1ms, khong fork ffprobe cho file lanh).
+                    # File nghi ngo hong van de ffprobe xac nhan truoc khi cach ly (0 false positive).
+                    _mp4_bridge = globals().get("rust_bridge")
+                    if _mp4_bridge and hasattr(_mp4_bridge, "parse_mp4_header"):
+                        try:
+                            _mp4_info = _mp4_bridge.parse_mp4_header(fpath)
+                            if _mp4_info and _mp4_info.get("valid") and _mp4_info.get("has_moov"):
+                                continue
+                        except Exception:
+                            pass
+
                     # ffprobe: check for moov atom (Python 3.5 compatible: no capture_output)
                     try:
                         result = _sp.run(
@@ -6693,10 +6716,17 @@ def api_recent_media():
         same_root = state and state[0] == os.path.realpath(root)
         ready = bool(same_root and state[1] and time.time() - state[2] <= FILE_INDEX_FRESHNESS_SECONDS)
         if same_root:
-            rows = conn.execute("SELECT path,name,mtime,size,mime FROM file_index WHERE " + where +
-                                " ORDER BY mtime DESC,path LIMIT 100", params)
-            items = [{"path": "/webdav/" + path, "name": name, "mtime": mtime, "size": size, "mime": mime}
-                     for path, name, mtime, size, mime in rows]
+            _media_bridge = globals().get("rust_bridge")
+            _rust_items = None
+            if _media_bridge and hasattr(_media_bridge, "query_recent_media"):
+                _rust_items = _media_bridge.query_recent_media(INDEX_DB_PATH, kind, scope, 100)
+            if _rust_items is not None:
+                items = _rust_items
+            else:
+                rows = conn.execute("SELECT path,name,mtime,size,mime FROM file_index WHERE " + where +
+                                    " ORDER BY mtime DESC,path LIMIT 100", params)
+                items = [{"path": "/webdav/" + path, "name": name, "mtime": mtime, "size": size, "mime": mime}
+                         for path, name, mtime, size, mime in rows]
     finally:
         if conn is not None:
             conn.close()
@@ -6727,11 +6757,14 @@ def api_photos_timeline():
 
     predicate = "is_dir=0 AND (" + " OR ".join(["lower(name) LIKE ?"] * len(_IMAGE_EXTS)) + ")"
     params = ["%" + ext for ext in sorted(_IMAGE_EXTS)]
+    start_ms, end_ms = -1, -1
     if month_filter:
         try:
             start = datetime.datetime.strptime(month_filter, "%Y-%m")
             end = datetime.datetime(start.year + (start.month == 12), start.month % 12 + 1, 1)
-            params.extend([int(time.mktime(start.timetuple())) * 1000, int(time.mktime(end.timetuple())) * 1000])
+            start_ms = int(time.mktime(start.timetuple())) * 1000
+            end_ms = int(time.mktime(end.timetuple())) * 1000
+            params.extend([start_ms, end_ms])
             predicate += " AND mtime>=? AND mtime<?"
         except (ValueError, OverflowError, OSError):
             return jsonify({"error": "Invalid month (YYYY-MM)"}), 400
@@ -6746,10 +6779,18 @@ def api_photos_timeline():
         if root and state and state[0] == os.path.realpath(root):
             age = int(max(0, time.time() - state[2])) if state[2] else None
             refresh = not state[1] or age is None or age >= 300
-            total = conn.execute("SELECT COUNT(*) FROM file_index WHERE " + predicate, params).fetchone()[0]
-            rows = conn.execute("SELECT path,mtime,size FROM file_index WHERE " + predicate +
-                                " ORDER BY mtime DESC,path LIMIT ? OFFSET ?", params + [limit, offset])
-            items = [{"path": path, "mtime": mtime // 1000, "size": size} for path, mtime, size in rows]
+            _tl_bridge = globals().get("rust_bridge")
+            _rust_tl = None
+            if _tl_bridge and hasattr(_tl_bridge, "query_photos_timeline"):
+                _rust_tl = _tl_bridge.query_photos_timeline(INDEX_DB_PATH, start_ms, end_ms, limit, offset)
+            if _rust_tl is not None:
+                total = _rust_tl["total"]
+                items = _rust_tl["items"]
+            else:
+                total = conn.execute("SELECT COUNT(*) FROM file_index WHERE " + predicate, params).fetchone()[0]
+                rows = conn.execute("SELECT path,mtime,size FROM file_index WHERE " + predicate +
+                                    " ORDER BY mtime DESC,path LIMIT ? OFFSET ?", params + [limit, offset])
+                items = [{"path": path, "mtime": mtime // 1000, "size": size} for path, mtime, size in rows]
     finally:
         if conn is not None:
             conn.close()
@@ -7835,24 +7876,40 @@ def _build_storage_summary(max_seconds=45, refresh=False):
                         _STORAGE_SUMMARY_BUILD_LOCK.release()
                 threading.Thread(target=rebuild, daemon=True).start()
             return result
-        groups = {
-            'image': ('jpg','jpeg','png','webp','bmp','gif','heic','heif'),
-            'video': ('mp4','mkv','avi','mov','mpg','mpeg','wmv','flv','ts','m4v','webm'),
-            'doc': ('pdf','doc','docx','xls','xlsx','ppt','pptx','txt','md','csv'),
-            'audio': ('mp3','wav','flac','m4a','ogg'),
-            'archive': ('zip','rar','7z','tar','gz'),
-        }
-        extensions = dict(('.' + ext, category) for category, values in groups.items() for ext in values)
-        conn.create_function('storage_category', 1, lambda name: extensions.get(os.path.splitext(name or '')[1].lower(), 'other'))
-        category_sql = 'storage_category(name)'
-        by_type = dict((category, {'files': 0, 'bytes': 0}) for category in list(groups) + ['other'])
-        for category, count, size in conn.execute('SELECT ' + category_sql + ', COUNT(*), COALESCE(SUM(size),0) FROM file_index WHERE is_dir=0 GROUP BY 1'):
-            by_type[category] = {'files': count, 'bytes': size}
-        largest = [{'path': row[0], 'bytes': row[1]} for row in conn.execute('SELECT path,size FROM file_index WHERE is_dir=0 ORDER BY size DESC,path LIMIT 10')]
+        rust_summary = None
+        bridge = globals().get("rust_bridge")
+        if bridge and hasattr(bridge, "compute_storage_summary"):
+            rust_summary = bridge.compute_storage_summary(INDEX_DB_PATH)
+
+        if rust_summary is not None:
+            by_type = rust_summary["by_type"]
+            largest = rust_summary["largest"]
+            total_files = rust_summary["total_files"]
+            total_bytes = rust_summary["total_bytes"]
+            total_dirs = rust_summary["total_dirs"]
+        else:
+            groups = {
+                'image': ('jpg','jpeg','png','webp','bmp','gif','heic','heif'),
+                'video': ('mp4','mkv','avi','mov','mpg','mpeg','wmv','flv','ts','m4v','webm'),
+                'doc': ('pdf','doc','docx','xls','xlsx','ppt','pptx','txt','md','csv'),
+                'audio': ('mp3','wav','flac','m4a','ogg'),
+                'archive': ('zip','rar','7z','tar','gz'),
+            }
+            extensions = dict(('.' + ext, category) for category, values in groups.items() for ext in values)
+            conn.create_function('storage_category', 1, lambda name: extensions.get(os.path.splitext(name or '')[1].lower(), 'other'))
+            category_sql = 'storage_category(name)'
+            by_type = dict((category, {'files': 0, 'bytes': 0}) for category in list(groups) + ['other'])
+            for category, count, size in conn.execute('SELECT ' + category_sql + ', COUNT(*), COALESCE(SUM(size),0) FROM file_index WHERE is_dir=0 GROUP BY 1'):
+                by_type[category] = {'files': count, 'bytes': size}
+            largest = [{'path': row[0], 'bytes': row[1]} for row in conn.execute('SELECT path,size FROM file_index WHERE is_dir=0 ORDER BY size DESC,path LIMIT 10')]
+            total_files = sum(value['files'] for value in by_type.values())
+            total_bytes = sum(value['bytes'] for value in by_type.values())
+            total_dirs = conn.execute('SELECT COUNT(*) FROM file_index WHERE is_dir=1').fetchone()[0]
+
         result = {
-            'total_files': sum(value['files'] for value in by_type.values()),
-            'total_bytes': sum(value['bytes'] for value in by_type.values()),
-            'total_dirs': conn.execute('SELECT COUNT(*) FROM file_index WHERE is_dir=1').fetchone()[0],
+            'total_files': total_files,
+            'total_bytes': total_bytes,
+            'total_dirs': total_dirs,
             'by_type': by_type, 'largest': largest,
             'partial': not bool(state[2]) or _index_scan_lock.locked(),
             'scanned_at': int(state[1]), 'source': 'file_index',
@@ -10952,9 +11009,12 @@ def api_fan_control():
                 _pwm_apply_off()
                 pct, rpm, st = 0, 0, 'Dừng'
             else:
-                _fan_power_set(True)
-                _pwm_write("enable", 1)
-                pct, rpm, st = 0, 0, 'Dừng'
+                pct = int(_status_cache.get('fan_percent', 0) or 0)
+                if pct > 0:
+                    rpm, st = _fan_rpm_for_percent(pct), _fan_status_for_percent(pct)
+                else:
+                    _pwm_apply_off()
+                    pct, rpm, st = 0, 0, 'Dừng'
                 
             with _cache_lock:
                 _status_cache['fan_mode'] = 'custom'
@@ -12516,7 +12576,16 @@ def _find_source_file(relative_path):
     return None
 
 def _get_video_duration(file_path):
-    """L?y thoi luồng video (giay) bang ffprobe"""
+    """L?y thoi luồng video (giay) — ưu tiên Rust MP4 atom parser, fallback ffprobe."""
+    if file_path and str(file_path).lower().endswith((".mp4", ".m4v", ".mov")):
+        bridge = globals().get("rust_bridge")
+        if bridge and hasattr(bridge, "parse_mp4_header"):
+            try:
+                info = bridge.parse_mp4_header(file_path)
+                if info and info.get("valid") and float(info.get("duration_secs", 0) or 0) > 0:
+                    return float(info["duration_secs"])
+            except Exception:
+                pass
     try:
         cmd = ["/usr/bin/ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
@@ -13574,13 +13643,64 @@ def api_hash_batch():
         workers = 2 if mem > 75 else (3 if mem > 60 else 4) 
     except Exception:
         workers = 2
-    
+
+    # Fast path: Rust rayon multi-threaded batch (zero GIL, 100% containment validated)
+    bridge = globals().get("rust_bridge")
+    if bridge and hasattr(bridge, "compute_batch_md5_1mb") and bridge.is_rust_accelerated():
+        valid_pairs = []
+        for item in items:
+            try:
+                url_path = item.get("path")
+                local_path = item.get("local_path")
+                if not url_path or not local_path:
+                    continue
+                real_path = _resolve_webdav_request_path(local_path)
+                if real_path and os.path.isfile(real_path):
+                    valid_pairs.append((url_path, real_path))
+            except Exception:
+                continue
+        rust_res = bridge.compute_batch_md5_1mb(valid_pairs, workers=workers)
+        if rust_res is not None:
+            return jsonify(rust_res)
+
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for r in pool.map(_hash_one, items):
             if r: result[r[0]] = r[1]
 
     return jsonify(result)
+
+
+@app.route("/api/disk/scan_duplicates", methods=["POST"])
+@requires_auth
+def api_disk_scan_duplicates():
+    """Quét tệp trùng lặp 3 tầng đa luồng bằng Rust rayon (Size -> MD5 1MB -> SHA256)."""
+    data = request.json or {}
+    rel_dir = str(data.get("path", "") or "").strip()
+    if rel_dir:
+        target_dir = _resolve_webdav_request_path(rel_dir)
+    else:
+        target_dir = _get_webdav_public_dir()
+    if not target_dir or not os.path.isdir(target_dir):
+        return jsonify({"error": "Thư mục mục tiêu không hợp lệ hoặc không tồn tại"}), 400
+    try:
+        min_size = max(0, int(data.get("min_size", 1024) or 1024))
+        limit = max(1, min(500, int(data.get("limit", 500) or 500)))
+    except Exception:
+        return jsonify({"error": "Tham số min_size/limit không hợp lệ"}), 400
+    try:
+        mem = psutil.virtual_memory().percent
+        workers = 2 if mem > 75 else (3 if mem > 60 else 4)
+    except Exception:
+        workers = 2
+
+    bridge = globals().get("rust_bridge")
+    if bridge and hasattr(bridge, "find_duplicates"):
+        report = bridge.find_duplicates(target_dir, min_size=min_size, workers=workers, limit=limit)
+        if report is not None:
+            report["engine"] = "rust_rayon"
+            return jsonify(report)
+    return jsonify({"error": "Rust duplicate_finder chưa sẵn sàng trên hệ thống"}), 503
 
 # ============ FILE HASH STORE — cùng DB với file_index và work queue =========
 def _hash_db():
@@ -14008,6 +14128,15 @@ def _generate_image_thumb(src_path, dst_path):
                 os.remove(dst_path)
             except Exception:
                 pass
+        # Fast path: Rust ARM64 NEON SIMD (fast_image_resize + zune-jpeg)
+        _thumb_bridge = globals().get("rust_bridge")
+        if _thumb_bridge and hasattr(_thumb_bridge, "generate_image_thumbnail"):
+            try:
+                if (_thumb_bridge.generate_image_thumbnail(src_path, dst_path, THUMB_MAX_SIZE, THUMB_QUALITY)
+                        and os.path.exists(dst_path) and os.path.getsize(dst_path) > 100):
+                    return True
+            except Exception:
+                pass
         with Image.open(src_path) as opened:
             img = opened.convert("RGB") if opened.mode != "RGB" else opened.copy()
         img.thumbnail((THUMB_MAX_SIZE, THUMB_MAX_SIZE), Image.LANCZOS)
@@ -14072,6 +14201,14 @@ def _scrub_stale_zero_byte_files(roots, max_seconds=10, min_age_seconds=600):
 
 def _frame_brightness(jpg_path):
     """Do sang trung binh cua JPEG (0-255). Frame den = 0-15."""
+    bridge = globals().get("rust_bridge")
+    if bridge and hasattr(bridge, "compute_frame_brightness"):
+        try:
+            val = bridge.compute_frame_brightness(jpg_path)
+            if val is not None:
+                return val
+        except Exception:
+            pass
     try:
         from PIL import Image
         img = Image.open(jpg_path).convert('L')
@@ -14086,6 +14223,15 @@ _ffmpeg_semaphore = threading.Semaphore(1)  # REVERT: 2 -> 1 de trảnh I/O burs
 
 def _probe_video_codec(src_path):
     """Return the first video codec, or a stable diagnostic label."""
+    if src_path and str(src_path).lower().endswith((".mp4", ".m4v", ".mov")):
+        bridge = globals().get("rust_bridge")
+        if bridge and hasattr(bridge, "parse_mp4_header"):
+            try:
+                info = bridge.parse_mp4_header(src_path)
+                if info and info.get("valid") and info.get("video_codec"):
+                    return str(info["video_codec"])
+            except Exception:
+                pass
     try:
         probe = subprocess.run(
             ["/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -14121,47 +14267,59 @@ def _generate_video_thumb(src_path, dst_path):
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
 
         with _ffmpeg_semaphore:
-            # Buoc 1: probe duration nhanh
+            # Buoc 1 + 1.5 fast path: Rust MP4 atom parser (<0.1ms, loai bo ca 2 lan fork ffprobe)
             duration = 0.0
-            try:
-                probe = subprocess.run(
-                    ["/usr/bin/ffprobe", "-v", "error",
-                     "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1",
-                     src_path],
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5
-                )
-                duration = float((probe.stdout or b"").decode("utf-8", errors="ignore").strip() or "0")
-            except Exception:
-                duration = 0.0
-
-            # Buoc 1.5: probe codec + stderr để skip file bị corrupt/AV1 ngay lap tuc.
-            # NAS ffmpeg 3.2.18 không có libaom, và file bị truncated/thiếu moov
-            # cũng luôn fail — không có ích gì retry 3 lần.
             codec = "unknown"
-            if os.path.exists(src_path):
+            _rust_probed = False
+            if src_path and str(src_path).lower().endswith((".mp4", ".m4v", ".mov")):
+                _mp4_bridge = globals().get("rust_bridge")
+                if _mp4_bridge and hasattr(_mp4_bridge, "parse_mp4_header"):
+                    try:
+                        _mp4_info = _mp4_bridge.parse_mp4_header(src_path)
+                        if _mp4_info and _mp4_info.get("valid") and _mp4_info.get("video_codec"):
+                            duration = float(_mp4_info.get("duration_secs", 0) or 0)
+                            codec = str(_mp4_info.get("video_codec"))
+                            _rust_probed = True
+                    except Exception:
+                        pass
+
+            # Fallback ffprobe cho non-MP4 hoac file loi header
+            if not _rust_probed:
                 try:
-                    probe2 = subprocess.run(
+                    probe = subprocess.run(
                         ["/usr/bin/ffprobe", "-v", "error",
-                         "-select_streams", "v:0",
-                         "-show_entries", "stream=codec_name",
-                         "-of", "default=nw=1:nk=1",
+                         "-show_entries", "format=duration",
+                         "-of", "default=noprint_wrappers=1:nokey=1",
                          src_path],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5
                     )
-                    codec = (probe2.stdout or b"").decode("utf-8", errors="ignore").strip() or "unknown"
-                    probe_stderr = (probe2.stderr or b"").decode("utf-8", errors="ignore").lower()
-                    if any(tok in probe_stderr for tok in (
-                        "no decoder for stream", "invalid data found",
-                        "moov atom not found", "could not find codec",
-                    )):
-                        log.warning("[ThumbVideo] skip corrupt/unsupported %s (codec=%s, sz=%d)",
-                                    os.path.basename(src_path), codec,
-                                    os.path.getsize(src_path))
-                        _thumb_neg_mark(src_path)
-                        return False
+                    duration = float((probe.stdout or b"").decode("utf-8", errors="ignore").strip() or "0")
                 except Exception:
-                    codec = "probe-error"
+                    duration = 0.0
+
+                if os.path.exists(src_path):
+                    try:
+                        probe2 = subprocess.run(
+                            ["/usr/bin/ffprobe", "-v", "error",
+                             "-select_streams", "v:0",
+                             "-show_entries", "stream=codec_name",
+                             "-of", "default=nw=1:nk=1",
+                             src_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+                        )
+                        codec = (probe2.stdout or b"").decode("utf-8", errors="ignore").strip() or "unknown"
+                        probe_stderr = (probe2.stderr or b"").decode("utf-8", errors="ignore").lower()
+                        if any(tok in probe_stderr for tok in (
+                            "no decoder for stream", "invalid data found",
+                            "moov atom not found", "could not find codec",
+                        )):
+                            log.warning("[ThumbVideo] skip corrupt/unsupported %s (codec=%s, sz=%d)",
+                                        os.path.basename(src_path), codec,
+                                        os.path.getsize(src_path))
+                            _thumb_neg_mark(src_path)
+                            return False
+                    except Exception:
+                        codec = "probe-error"
             # ffmpeg 3.2 trên NAS có decoder software cho VP9/HEVC; chỉ AV1
             # chắc chắn không có decoder (không có libaom/av1).
             if codec and any(c in codec.lower() for c in ("av1", "av01")):
@@ -17306,9 +17464,11 @@ def _fan_controller_watchdog():
             if hdd_temp > 0:
                 control_temp = hdd_temp
             else:
-                control_temp = cpu_temp
+                # Khi HDD tạm thời chưa có giá trị, không so sánh CPU (thường 45-50°C)
+                # trực tiếp với on_temp của HDD (thường 42°C) để tránh nháy quạt giật cục.
+                control_temp = max(0.0, cpu_temp - 15.0)
 
-            force_hot = hdd_temp <= 0 or cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
+            force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or (hdd_temp > 0 and hdd_temp >= FAN_HDD_FORCE_ON_TEMP)
             if force_hot:
                 target_percent = 100
             elif mode == "custom":
@@ -17397,14 +17557,12 @@ def _restore_fan_state_on_boot():
             log.info("[Fan] Kh?i ph?c tr?ng th?i B?T 100%% t? /opt/fan_custom.json")
         elif mode == "custom":
             run_cmd(["systemctl", "stop", "fan.service"])
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
-            log.info("[Fan] Kh?i ph?c tr?ng th?i TU? CH?NH ? watchdog s? quy?t ??nh")
+            _pwm_apply_off()
+            log.info("[Fan] Khởi phục trạng thái TÙY CHỈNH -> tắt quạt ban đầu, watchdog sẽ đo nhiệt độ để bật khi cần")
         else:
             run_cmd(["systemctl", "stop", "fan.service"])
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
-            log.info("[Fan] Kh?i ph?c tr?ng th?i T? ??NG ? watchdog s? quy?t ??nh theo HDD")
+            _pwm_apply_off()
+            log.info("[Fan] Khởi phục trạng thái TỰ ĐỘNG -> tắt quạt ban đầu, watchdog sẽ đo nhiệt độ để bật khi cần")
     except Exception as e:
         log.warning("[Fan] Kh?ng kh?i ph?c ???c tr?ng th?i: %s", e)
 if __name__ == "__main__":

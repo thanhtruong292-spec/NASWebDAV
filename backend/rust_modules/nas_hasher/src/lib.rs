@@ -1,15 +1,17 @@
-use std::ffi::CStr;
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::os::raw::{c_char, c_int};
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int, c_ulonglong};
 use std::path::Path;
 
-use md5::{Digest, Md5};
-use sha2::Sha256;
+pub mod duplicates;
+pub mod image_thumb;
+pub mod mp4_parser;
+pub use duplicates::{
+    batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
+};
+pub use image_thumb::{compute_frame_brightness, generate_image_thumbnail};
+pub use mp4_parser::{parse_mp4_header, Mp4HeaderInfo};
 
 /// Băm SHA256 toàn bộ file (chuẩn C-ABI).
-/// `out_hex` phải là buffer có ít nhất 65 bytes (64 hex chars + null terminator).
-/// Trả về 0 nếu thành công, -1 nếu file không tồn tại/không mở được, -2 nếu buffer null.
 #[no_mangle]
 pub unsafe extern "C" fn nas_hasher_sha256(
     path_ptr: *const c_char,
@@ -18,48 +20,27 @@ pub unsafe extern "C" fn nas_hasher_sha256(
     if path_ptr.is_null() || out_hex.is_null() {
         return -2;
     }
-
     let c_str = match CStr::from_ptr(path_ptr).to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-
     let path = Path::new(c_str);
     if !path.is_file() {
         return -1;
     }
-
-    let file = match File::open(path) {
-        Ok(f) => f,
+    let hex_str = match compute_sha256_path(path) {
+        Ok(h) => h,
         Err(_) => return -1,
     };
-
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 65536];
-
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => hasher.update(&buffer[..n]),
-            Err(_) => return -1,
-        }
-    }
-
-    let hex_str = hex::encode(hasher.finalize());
     let bytes = hex_str.as_bytes();
-
     for i in 0..64 {
         *out_hex.add(i) = bytes[i] as c_char;
     }
-    *out_hex.add(64) = 0; // null terminator
-
+    *out_hex.add(64) = 0;
     0
 }
 
 /// Băm MD5 của tối đa 1MB đầu tiên (chuẩn C-ABI).
-/// `out_hex` phải là buffer có ít nhất 33 bytes (32 hex chars + null terminator).
-/// Trả về 0 nếu thành công, -1 nếu file không tồn tại/không mở được, -2 nếu buffer null.
 #[no_mangle]
 pub unsafe extern "C" fn nas_hasher_md5_1mb(
     path_ptr: *const c_char,
@@ -68,38 +49,158 @@ pub unsafe extern "C" fn nas_hasher_md5_1mb(
     if path_ptr.is_null() || out_hex.is_null() {
         return -2;
     }
-
     let c_str = match CStr::from_ptr(path_ptr).to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-
     let path = Path::new(c_str);
     if !path.is_file() {
         return -1;
     }
-
-    let file = match File::open(path) {
-        Ok(f) => f,
+    let hex_str = match compute_md5_1mb_path(path) {
+        Ok(h) => h,
         Err(_) => return -1,
     };
-
-    let mut reader = BufReader::new(file);
-    let mut chunk = vec![0u8; 1_048_576];
-    let bytes_read = match reader.read(&mut chunk) {
-        Ok(n) => n,
-        Err(_) => return -1,
-    };
-
-    let mut hasher = Md5::new();
-    hasher.update(&chunk[..bytes_read]);
-    let hex_str = hex::encode(hasher.finalize());
     let bytes = hex_str.as_bytes();
-
     for i in 0..32 {
         *out_hex.add(i) = bytes[i] as c_char;
     }
-    *out_hex.add(32) = 0; // null terminator
-
+    *out_hex.add(32) = 0;
     0
+}
+
+/// C-ABI: Băm MD5 1MB song song đa luồng (rayon).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_batch_md5_1mb_json(
+    items_json_ptr: *const c_char,
+    workers: c_int,
+) -> *mut c_char {
+    if items_json_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let items_str = match CStr::from_ptr(items_json_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let items: Vec<(String, String)> = match serde_json::from_str(items_str) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let result_map = batch_md5_1mb_parallel(&items, workers.max(1) as usize);
+    let json = match serde_json::to_string(&result_map) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Quét tệp trùng lặp 3 tầng đa luồng (Size -> Partial MD5 1MB -> Full SHA-256).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_find_duplicates_json(
+    root_dir_ptr: *const c_char,
+    min_size: c_ulonglong,
+    workers: c_int,
+    limit: c_int,
+) -> *mut c_char {
+    if root_dir_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let root_dir = match CStr::from_ptr(root_dir_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let report = match find_duplicates_in_dir(
+        root_dir,
+        min_size as u64,
+        workers.max(1) as usize,
+        limit.max(0) as usize,
+    ) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&report) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Đọc trực tiếp header MP4/MOV/M4V (moov/mvhd/tkhd/stsd) không cần ffprobe.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_parse_mp4_json(path_ptr: *const c_char) -> *mut c_char {
+    if path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = match CStr::from_ptr(path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let info = match parse_mp4_header(Path::new(path_str)) {
+        Ok(i) => i,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&info) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Tạo thumbnail JPEG bằng Rust + ARM64 NEON SIMD (`fast_image_resize` + `zune-jpeg`).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_generate_thumb(
+    src_ptr: *const c_char,
+    dst_ptr: *const c_char,
+    max_size: c_int,
+    quality: c_int,
+) -> c_int {
+    if src_ptr.is_null() || dst_ptr.is_null() || max_size <= 0 {
+        return -1;
+    }
+    let src_str = match CStr::from_ptr(src_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+    let dst_str = match CStr::from_ptr(dst_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+    let q = quality.clamp(1, 100) as u8;
+    match generate_image_thumbnail(Path::new(src_str), Path::new(dst_str), max_size as u32, q) {
+        Ok(_) => 0,
+        Err(_) => -3,
+    }
+}
+
+/// C-ABI: Tính độ sáng trung bình (0.0..=255.0) của ảnh JPEG/PNG.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_frame_brightness(img_ptr: *const c_char) -> f64 {
+    if img_ptr.is_null() {
+        return -1.0;
+    }
+    let img_str = match CStr::from_ptr(img_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return -1.0,
+    };
+    match compute_frame_brightness(Path::new(img_str)) {
+        Ok(b) => b,
+        Err(_) => -1.0,
+    }
+}
+
+/// C-ABI: Giải phóng chuỗi được cấp phát bởi `nas_hasher_*_json`.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_free_string(ptr: *mut c_char) {
+    if !ptr.is_null() {
+        let _ = CString::from_raw(ptr);
+    }
 }

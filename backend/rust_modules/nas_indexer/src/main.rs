@@ -224,6 +224,34 @@ fn main() {
                 }
             }
         }
+        "build-fts" => {
+            if args.len() < 3 {
+                eprintln!("Usage: nas_indexer build-fts <db_path>");
+                exit(1);
+            }
+            match nas_indexer_core::build_fts_index(&args[2]) {
+                Ok(count) => println!("Built FTS5 trigram index for {} rows.", count),
+                Err(e) => {
+                    eprintln!("Build FTS error: {}", e);
+                    exit(1);
+                }
+            }
+        }
+        "storage-summary" => {
+            if args.len() < 3 {
+                eprintln!("Usage: nas_indexer storage-summary <db_path>");
+                exit(1);
+            }
+            match nas_indexer_core::compute_storage_summary(&args[2]) {
+                Ok(summary) => {
+                    println!("{}", serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_string()));
+                }
+                Err(e) => {
+                    eprintln!("Storage summary error: {}", e);
+                    exit(1);
+                }
+            }
+        }
         _ => {
             eprintln!("Unknown command: {}", args[1]);
             exit(1);
