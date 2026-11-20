@@ -5,6 +5,23 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-024 — Tăng Tốc Đồng Bộ AutoBackup (Xác Minh SHA-256 Phía NAS Rust 0-Byte WiFi) & Khôi Phục Tự Xóa Nguồn Đã Sao Lưu
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** Backend `297 passed, 6 skipped` (live smoke test trên NAS RK3328 LAN `192.168.100.254`: video MP4 5.03MB tính Rust SHA-256 hết `113.9 ms`, 0 byte WiFi); Android `:app:testDebugUnitTest` (153/153 PASS) & `:app:assembleDebug` **BUILD SUCCESSFUL**.
+
+### 1. Xóa Bỏ Nút Cổ Chai Tải Ngược 100% File Qua WiFi Khi Đồng Bộ:
+- **`backend/nas_api_server.py`:** Thêm `POST /api/duplicates/compute_hash` (sử dụng Rust `rust_bridge.compute_fast_sha256` kèm Linux `F_SETLEASE` `F_RDLCK` + kiểm tra `_duplicate_stat_version` chống race ghi đè, tự lưu vào `verified_file_hashes`) và phát cờ `server_side_hash: true` trong `/api/duplicates/file` & `/api/duplicates/capabilities`.
+- **`VerifiedDuplicateHash.kt`:** Trong `getCachedVerifiedSha256()`, ưu tiên gọi `POST /api/duplicates/compute_hash` ngay trên NAS thay vì `coordinatedSha256()` (vốn tải ngược 100% file vừa upload qua WiFi về điện thoại để băm lại SHA-256), chỉ fallback khi NAS đời cũ chưa có cờ `server_side_hash`.
+- **`VerifiedDuplicateHash.kt` & `BackupContentIntegrity.kt`:** Cache `OkHttpClient` (`duplicateRpcClient`, `duplicateContentClient`, `duplicateComputeHashClient`, `backupHeadClient`, `backupCleanupClient`) dạng `by lazy` dùng chung connection pool thay vì `.newBuilder()...build()` cho từng file.
+- **`AutoBackupWorker.kt`:** Bỏ `delay(100)` sau mỗi tệp (thay bằng `yield()`), tiết kiệm 100s ngủ vô ích trên mỗi 1.000 ảnh/video.
+
+### 2. Khôi Phục Tự Động Xóa Tệp Đã Có Trên NAS (Chế Độ "Sao lưu & Giải phóng (Move)"):
+- **`BackupContentIntegrity.kt`:** Thêm `deleteVerifiedBackupSource()` — chỉ xóa tệp nguồn trên API 27+ khi đã xác minh `BackupContentState.MATCH` (khớp 100% SHA-256) và tệp nguồn chưa bị sửa đổi (`fstat` version hoặc re-hash SHA-256 khi FUSE không trả `st_ino`); hỗ trợ cả `contentResolver.delete` lẫn fallback `File.delete()` + `MediaScannerConnection` khi đã cấp `MANAGE_EXTERNAL_STORAGE` trên Android 11+.
+- **`AutoBackupWorker.kt`:** Gọi `deleteVerifiedBackupSource()` khi `delete_after_backup = true` ở **cả 2 nhánh**: (a) tệp bị bỏ qua vì đã có sẵn trên NAS (`isSkipped == true`), và (b) tệp vừa upload & xác minh xong (`uploadVerified == true`).
+- **`AndroidManifest.xml` & `Dialogs.kt`:** Khai báo `MANAGE_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE (maxSdkVersion=29)` và hiện nút mở nhanh màn hình cấp quyền "Quản lý tất cả tệp" ngay trong hộp thoại Auto Backup khi bật chế độ Move trên Android 11+.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-023 — Gắn Nút UI Compose Mới (ZIP/EXIF/Similar) & Tối Ưu Hóa Toàn Diện Hiệu Năng Front-end Android
 **Tác nhân thực hiện:** Antigravity + Claude Code (`--model opus --effort max`).
 **Kết quả kiểm thử:** `:app:testDebugUnitTest` & `:app:assembleDebug` **BUILD SUCCESSFUL** (0 lỗi, 0 warning mới trên toàn bộ file chỉnh sửa).

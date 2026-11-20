@@ -173,6 +173,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             var backupCount = 0
             var skippedCount = 0
             var failedCount = 0
+            var deletedCount = 0
+            var deletePermissionWarned = false
             val urisToQuery = listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE)
             
@@ -276,6 +278,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             val isSkipped = plan.skip
 
                             if (isSkipped) {
+                                if (deleteAfterBackup) {
+                                    if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
+                                        deletedCount++
+                                    } else if (!deletePermissionWarned && Build.VERSION.SDK_INT >= 27) {
+                                        deletePermissionWarned = true
+                                        SystemLogger.log("WARNING", "AutoBackup", "Không thể xóa tệp đã có trên NAS ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                                    }
+                                }
                                 val now = System.currentTimeMillis()
                                 if (now - lastSkipProgressTime > 300) {
                                     lastSkipProgressTime = now
@@ -477,7 +487,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 contentHash=sourceProof.sha256
                             ))
                             if (deleteAfterBackup) {
-                                SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup; giữ nguồn vì chưa có thao tác xóa gắn phiên bản an toàn: $fileName")
+                                if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
+                                    deletedCount++
+                                } else if (!deletePermissionWarned && Build.VERSION.SDK_INT >= 27) {
+                                    deletePermissionWarned = true
+                                    SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup nhưng chưa xóa được nguồn ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                                }
                             }
                             backupCount++
                         } catch (e: Exception) {
@@ -503,8 +518,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 }
                             }
                         }
-                        // Nhường luồng cho CPU — thêm delay 100ms để tránh đập NAS liên tục
-                        kotlinx.coroutines.delay(100)
+                        // Nhường luồng coroutine mà không ngủ 100ms lãng phí sau mỗi tệp
+                        kotlinx.coroutines.yield()
                         // CC-005 P1: checkpoint mỗi 25 file — worker bị kill thì lần
                         // sau resume từ checkpoint (qua checkpointDao), không quét lại từ đầu.
                         if (processedFilesCount % 25 == 0) {
@@ -522,7 +537,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     }
                 }
             }
-            val logMessage = "Đồng bộ khép kín: Thành công $backupCount tệp, Bỏ qua $skippedCount tệp tập tin trùng lặp, Thất bại: $failedCount tệp."
+            val deletedSuffix = if (deletedCount > 0) ", Đã giải phóng trên điện thoại: $deletedCount tệp" else ""
+            val logMessage = "Đồng bộ khép kín: Thành công $backupCount tệp, Bỏ qua $skippedCount tệp tập tin trùng lặp, Thất bại: $failedCount tệp$deletedSuffix."
             if (backupCount > 0 || failedCount > 0) {
                 SystemLogger.log(if (failedCount > 0) "WARNING" else "SUCCESS", "AutoBackup", logMessage)
             } else {

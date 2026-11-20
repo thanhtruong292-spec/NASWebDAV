@@ -58,8 +58,79 @@ internal suspend fun backupSourceDigest(context: Context, uri: Uri, size: Long):
     return BackupSourceDigest(sha, before?.value)
 }
 
+private val backupHeadClient by lazy {
+    NasApplication.instance.sharedHttpClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
+}
+
+private val backupCleanupClient by lazy {
+    NasApplication.instance.sharedHttpClient.newBuilder()
+        .followRedirects(false).followSslRedirects(false)
+        .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
+}
+
 internal fun backupSourceStillCurrent(context: Context, uri: Uri, proof: BackupSourceDigest): Boolean =
     proof.version == null || sourceFileVersion(context, uri)?.value == proof.version
+
+private fun sourceMatchesDigestSync(context: Context, uri: Uri, expectedSha256: String): Boolean = runCatching {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val input = context.contentResolver.openInputStream(uri) ?: return@runCatching false
+    input.use { stream ->
+        val buffer = ByteArray(65536)
+        while (true) {
+            val read = stream.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    digest.digest().joinToString("") { "%02x".format(it) } == expectedSha256
+}.getOrDefault(false)
+
+/**
+ * Xóa tệp nguồn trên điện thoại CHỈ KHI tệp đã được xác minh khớp SHA-256 với NAS
+ * và chưa hề bị sửa đổi (kiểm tra fstat version trên API 27+, hoặc băm lại SHA-256 nếu
+ * FUSE/MediaStore không cung cấp st_ino). Trên API < 27 giữ nguyên nguồn.
+ */
+internal fun deleteVerifiedBackupSource(
+    context: Context,
+    uri: Uri,
+    dataPath: String,
+    proof: BackupSourceDigest
+): Boolean {
+    if (Build.VERSION.SDK_INT < 27) return false
+    val stillMatches = if (proof.version != null) {
+        sourceFileVersion(context, uri)?.value == proof.version
+    } else {
+        sourceMatchesDigestSync(context, uri, proof.sha256)
+    }
+    if (!stillMatches) return false
+    val deletedByResolver = try {
+        context.contentResolver.delete(uri, null, null) > 0
+    } catch (_: SecurityException) {
+        false
+    } catch (_: Exception) {
+        false
+    }
+    if (deletedByResolver) return true
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+        android.os.Environment.isExternalStorageManager() &&
+        dataPath.isNotBlank()
+    ) {
+        val recheck = if (proof.version != null) {
+            sourceFileVersion(context, uri)?.value == proof.version
+        } else {
+            sourceMatchesDigestSync(context, uri, proof.sha256)
+        }
+        if (!recheck) return false
+        val targetFile = java.io.File(dataPath)
+        if (targetFile.isFile && targetFile.delete()) {
+            runCatching {
+                android.media.MediaScannerConnection.scanFile(context, arrayOf(dataPath), null, null)
+            }
+            return true
+        }
+    }
+    return false
+}
 
 internal suspend fun WebDavManager.inspectBackupDestination(url: String, size: Long, digest: String): BackupContentState {
     val auth = currentAuthState()
@@ -67,8 +138,7 @@ internal suspend fun WebDavManager.inspectBackupDestination(url: String, size: L
     try {
         val request = okhttp3.Request.Builder().url(url).head()
             .tag(WebDavManager.AuthState::class.java, auth).header("Authorization", auth.authHeader).build()
-        val client = NasApplication.instance.sharedHttpClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
-        client.newCall(request).execute().use { response ->
+        backupHeadClient.newCall(request).execute().use { response ->
             if (response.code == 404) return BackupContentState.MISSING
             if (!response.isSuccessful) return BackupContentState.UNVERIFIABLE
             val remoteSize = response.header("Content-Length")?.toLongOrNull() ?: return BackupContentState.UNVERIFIABLE
@@ -177,10 +247,7 @@ internal suspend fun WebDavManager.cleanupBackupTemporary(url: String, auth: Web
     if (runCatching { java.util.UUID.fromString(name.removePrefix(".nas-backup-").removeSuffix(".tmp")) }.isFailure) return
     val request = okhttp3.Request.Builder().url(url).delete()
         .tag(WebDavManager.AuthState::class.java, auth).header("Authorization", auth.authHeader).build()
-    val client = NasApplication.instance.sharedHttpClient.newBuilder()
-        .followRedirects(false).followSslRedirects(false)
-        .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
-    client.newCall(request).execute().use { response ->
+    backupCleanupClient.newCall(request).execute().use { response ->
         if (!response.isSuccessful && response.code != 404) throw IOException("Temporary backup cleanup HTTP ${response.code}")
     }
 }

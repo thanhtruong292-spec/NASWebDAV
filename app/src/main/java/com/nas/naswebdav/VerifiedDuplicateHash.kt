@@ -37,6 +37,22 @@ internal fun relativeDuplicatePath(base: String, url: String): String? = runCatc
     }
 }.getOrNull()
 
+private val duplicateRpcClient by lazy {
+    NasApplication.instance.fastApiClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
+}
+
+private val duplicateContentClient by lazy {
+    NasApplication.instance.sharedHttpClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
+}
+
+private val duplicateComputeHashClient by lazy {
+    NasApplication.instance.fastApiClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .readTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+}
+
 internal suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject, auth: WebDavManager.AuthState): JSONObject? {
     currentCoroutineContext().ensureActive()
     val base = auth.baseUrl.toApiBaseUrl()
@@ -45,10 +61,27 @@ internal suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject,
         .tag(WebDavManager.AuthState::class.java, auth)
         .header("Authorization", auth.authHeader)
         .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-    val client = NasApplication.instance.fastApiClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
-    client.newCall(request).execute().use { response ->
+    duplicateRpcClient.newCall(request).execute().use { response ->
         if (response.code != 200) return null
         return JSONObject(response.body?.string() ?: return null)
+    }
+}
+
+private suspend fun WebDavManager.serverSideSha256(path: String, size: Long, version: String, fileId: String, auth: WebDavManager.AuthState): String? {
+    currentCoroutineContext().ensureActive()
+    val base = auth.baseUrl.toApiBaseUrl()
+    if (base.isBlank()) return null
+    val request = okhttp3.Request.Builder()
+        .url(base.trimEnd('/') + "/api/duplicates/compute_hash")
+        .tag(WebDavManager.AuthState::class.java, auth)
+        .header("Authorization", auth.authHeader)
+        .post(JSONObject().put("path", path).put("version", version).toString().toRequestBody("application/json".toMediaType()))
+        .build()
+    duplicateComputeHashClient.newCall(request).execute().use { response ->
+        if (response.code != 200) return null
+        val json = runCatching { JSONObject(response.body?.string() ?: return null) }.getOrNull() ?: return null
+        if (json.optString("version") != version || json.optString("file_id") != fileId || json.optLong("size", -1) != size) return null
+        return json.optString("sha256").takeIf(fullDigestPattern::matches)
     }
 }
 
@@ -79,8 +112,7 @@ private suspend fun WebDavManager.coordinatedSha256(path: String, size: Long, ve
         .header("Authorization", auth.authHeader)
         .post(JSONObject().put("path",path).put("version",version).toString().toRequestBody("application/json".toMediaType()))
         .build()
-    val client = NasApplication.instance.sharedHttpClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
-    client.newCall(request).execute().use { response ->
+    duplicateContentClient.newCall(request).execute().use { response ->
         if (response.header("X-NAS-Version") != version || response.header("X-NAS-File-ID") != fileId) return null
         return hashCompleteResponse(response,size)
     }
@@ -103,14 +135,23 @@ internal suspend fun WebDavManager.getCachedVerifiedSha256(url: String, size: Lo
     if (before.optLong("size", -1) != size || !fullDigestPattern.matches(version) || fileId.isBlank()) { invalidate(); return null }
     val cached = db.verifiedHashDao().get(account, url)
     var hash = before.optString("sha256").takeIf(fullDigestPattern::matches)
+    var savedOnServer = hash != null
     if (hash == null && reusableVerifiedHash(cached, account, url, size, version, fileId)) hash = cached!!.sha256
     if (hash == null) {
         invalidate()
-        hash = coordinatedSha256(path, size, version, fileId, auth) ?: return null
-        val after = duplicateRpc("file", JSONObject().put("path", path), auth) ?: return null
-        if (after.optString("version") != version || after.optString("file_id") != fileId || after.optLong("size",-1) != size) return null
+        val serverHash = if (before.optBoolean("server_side_hash", false)) {
+            serverSideSha256(path, size, version, fileId, auth)
+        } else null
+        if (serverHash != null) {
+            hash = serverHash
+            savedOnServer = true
+        } else {
+            hash = coordinatedSha256(path, size, version, fileId, auth) ?: return null
+            val after = duplicateRpc("file", JSONObject().put("path", path), auth) ?: return null
+            if (after.optString("version") != version || after.optString("file_id") != fileId || after.optLong("size",-1) != size) return null
+        }
     }
-    if (before.optString("sha256") != hash) {
+    if (!savedOnServer && before.optString("sha256") != hash) {
         val saved = duplicateRpc("hash", JSONObject().put("path",path).put("version",version).put("sha256",hash), auth)
         if (saved?.optBoolean("saved") != true) { invalidate(); return null }
     }

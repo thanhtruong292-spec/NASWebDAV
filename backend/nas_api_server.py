@@ -506,6 +506,7 @@ _NON_INTERACTIVE_HIT_PREFIXES = (
     "/api/disk/fast_index", "/api/v1/disk/fast_index",
     "/api/duplicates/file", "/api/v1/duplicates/file",
     "/api/duplicates/hash", "/api/v1/duplicates/hash",
+    "/api/duplicates/compute_hash", "/api/v1/duplicates/compute_hash",
     "/api/duplicates/content", "/api/v1/duplicates/content",
     "/api/thumb/exists", "/api/v1/thumb/exists",
     "/api/thumb/upload", "/api/v1/thumb/upload",
@@ -8381,7 +8382,7 @@ def _duplicate_find_matches(sha256, size, after=''):
 @app.route('/api/duplicates/capabilities', methods=['GET', 'POST'])
 @requires_admin
 def api_duplicate_capabilities():
-    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True})
+    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True, 'server_side_hash': True})
 
 
 @app.route('/api/duplicates/find', methods=['POST'])
@@ -8406,6 +8407,7 @@ def api_duplicate_file():
         info = _duplicate_file_info(body.get('path'))
         info.pop('physical')
         info['sha256'] = _duplicate_lookup(info)
+        info['server_side_hash'] = True
         return jsonify(info)
     except (OSError, ValueError) as error:
         return jsonify({'error': str(error)}), 409
@@ -8420,6 +8422,57 @@ def api_duplicate_hash():
             raise ValueError('JSON object required')
         _duplicate_save_hash(body.get('path'), body.get('version'), body.get('sha256'))
         return jsonify({'saved': True})
+    except (OSError, ValueError) as error:
+        return jsonify({'error': str(error)}), 409
+
+
+def _duplicate_compute_hash(relative, version=None):
+    info = _duplicate_file_info(relative)
+    if version is not None and info['version'] != version:
+        raise ValueError('File version changed')
+    known = _duplicate_lookup(info)
+    if known and len(known) == 64:
+        return {
+            'path': info['path'],
+            'version': info['version'],
+            'file_id': info['file_id'],
+            'size': info['size'],
+            'sha256': known,
+            'cached': True,
+        }
+    import fcntl
+    fd = _duplicate_open_lease(info)
+    try:
+        sha256 = rust_bridge.compute_fast_sha256(info['physical'])
+        if not sha256 or len(sha256) != 64:
+            raise ValueError('Failed to compute SHA256 on NAS')
+        if fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK:
+            raise ValueError('File requested for writing during verification')
+        if _duplicate_stat_version(os.fstat(fd)) != info['version']:
+            raise ValueError('File changed during verification')
+    finally:
+        os.close(fd)
+    _duplicate_save_hash(info['path'], info['version'], sha256)
+    return {
+        'path': info['path'],
+        'version': info['version'],
+        'file_id': info['file_id'],
+        'size': info['size'],
+        'sha256': sha256,
+        'cached': False,
+    }
+
+
+@app.route('/api/duplicates/compute_hash', methods=['POST'])
+@requires_admin
+def api_duplicate_compute_hash():
+    """Tinh SHA-256 truc tiep tren NAS bang Rust SHA2 (0 byte qua WiFi) + read-lease chong race."""
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        result = _duplicate_compute_hash(body.get('path'), body.get('version'))
+        return jsonify(result)
     except (OSError, ValueError) as error:
         return jsonify({'error': str(error)}), 409
 

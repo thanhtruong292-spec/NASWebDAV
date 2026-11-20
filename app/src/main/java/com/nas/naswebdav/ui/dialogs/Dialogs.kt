@@ -486,7 +486,32 @@ fun AutoBackupDialog(
                 )
                 Column {
                     Text("Sao lưu & Giải phóng (Move)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (deleteAfterBackup) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                    Text("Tự động xóa ảnh/video trên điện thoại sau khi đã xác minh có trên NAS.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                }
+            }
+
+            if (deleteAfterBackup && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()) {
+                val permCtx = androidx.compose.ui.platform.LocalContext.current
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            val intent = Intent(
+                                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                android.net.Uri.parse("package:${permCtx.packageName}")
+                            )
+                            permCtx.startActivity(intent)
+                        }.onFailure {
+                            runCatching {
+                                permCtx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(34.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text("Cấp quyền Quản lý tất cả tệp để tự xóa nguồn", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                 }
             }
 
