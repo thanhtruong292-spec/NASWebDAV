@@ -761,11 +761,10 @@ object WebDavManager {
 
                 inputStream.source().use { source ->
 
-                    // OPTIMIZE: 256KB buffer cho LAN throughput (1Gbps = ~125MB/s,
-                    // 8KB chunks = 15000 syscalls/MB). Giữ 8KB khi speed-limit đang active
-                    // để throttle math chính xác hơn (smaller chunks = tighter rate control).
+                    // OPTIMIZE: 512KB buffer cho LAN throughput (1Gbps = ~125MB/s)
+                    // Giữ 8KB khi speed-limit đang active để throttle math chính xác hơn.
                     val speedLimit = AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC
-                    val bufferSize = if (speedLimit == 0L) 262144L else 8192L
+                    val bufferSize = if (speedLimit == 0L) 524288L else 8192L
 
                     var totalBytesRead = 0L
                     var readCount = 0L

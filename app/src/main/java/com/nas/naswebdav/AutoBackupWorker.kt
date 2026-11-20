@@ -346,7 +346,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                     lastSpeedCalcTime = now
                                                     lastSpeedCalcBytes = bytesWritten
                                                 }
-                                                if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                                if (now - lastProgressTime > 750 || bytesWritten == totalBytes) {
                                                     lastProgressTime = now
                                                     val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
                                                     val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
