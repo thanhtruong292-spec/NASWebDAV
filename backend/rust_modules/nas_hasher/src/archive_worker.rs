@@ -1,7 +1,9 @@
+use flate2::read::GzDecoder;
 use serde::Serialize;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::path::Path;
+use std::path::{Component, Path};
+use tar::{Archive, EntryType};
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -151,9 +153,170 @@ pub fn create_zip_from_dir(src_dir: &Path, dst_zip: &Path) -> Result<ZipCreateRe
     })
 }
 
+fn validate_tar_rel_path(rel: &Path) -> Result<std::path::PathBuf, String> {
+    let mut clean = std::path::PathBuf::new();
+    for comp in rel.components() {
+        match comp {
+            Component::Normal(p) => clean.push(p),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("Unsafe archive entry: {:?}", rel));
+            }
+        }
+    }
+    if clean.as_os_str().is_empty() {
+        return Err("Unsafe archive entry: empty path".to_string());
+    }
+    Ok(clean)
+}
+
+fn extract_tar_reader<R: Read>(
+    reader: R,
+    dest_real: &Path,
+) -> Result<ZipExtractResult, String> {
+    let mut archive = Archive::new(reader);
+    let mut files_count = 0u64;
+    let mut bytes_count = 0u64;
+    let mut buf = [0u8; 65536];
+
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Invalid tar archive: {}", e))?;
+
+    for entry_res in entries {
+        let mut entry = entry_res.map_err(|e| format!("Read tar entry error: {}", e))?;
+        let etype = entry.header().entry_type();
+        let entry_path = entry
+            .path()
+            .map_err(|e| format!("Invalid tar path: {}", e))?
+            .into_owned();
+
+        // Chặn tuyệt đối symlink, hardlink, character/block device, fifo
+        if matches!(
+            etype,
+            EntryType::Symlink | EntryType::Link | EntryType::Char | EntryType::Block | EntryType::Fifo
+        ) {
+            return Err(format!("Unsafe archive entry: {:?}", entry_path));
+        }
+
+        // Bỏ qua PAX metadata headers (XHeader / XGlobalHeader / GNULongName)
+        if matches!(
+            etype,
+            EntryType::XHeader | EntryType::XGlobalHeader | EntryType::GNULongName | EntryType::GNULongLink
+        ) {
+            continue;
+        }
+
+        let clean_rel = validate_tar_rel_path(&entry_path)?;
+        let out_path = dest_real.join(&clean_rel);
+        if !out_path.starts_with(dest_real) {
+            return Err(format!("Unsafe archive entry: {:?}", entry_path));
+        }
+
+        if etype == EntryType::Directory {
+            fs::create_dir_all(&out_path)
+                .map_err(|e| format!("Cannot create dir {:?}: {}", out_path, e))?;
+        } else if etype == EntryType::Regular || etype == EntryType::Continuous {
+            if let Some(parent) = out_path.parent() {
+                if !parent.is_dir() {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| format!("Cannot create parent dir: {}", e))?;
+                }
+            }
+            let mut out_file = File::create(&out_path)
+                .map_err(|e| format!("Cannot create file {:?}: {}", out_path, e))?;
+            loop {
+                let n = entry
+                    .read(&mut buf)
+                    .map_err(|e| format!("Read tar stream error: {}", e))?;
+                if n == 0 {
+                    break;
+                }
+                out_file
+                    .write_all(&buf[..n])
+                    .map_err(|e| format!("Write tar file error: {}", e))?;
+                bytes_count += n as u64;
+            }
+            files_count += 1;
+        } else {
+            return Err(format!("Unsupported tar entry type: {:?}", entry_path));
+        }
+    }
+
+    Ok(ZipExtractResult {
+        files_extracted: files_count,
+        bytes_extracted: bytes_count,
+    })
+}
+
+/// Giải nén `.tar` / `.tar.gz` / `.tgz` an toàn tuyệt đối chống Tar-Slip, Symlink & Hardlink attack.
+pub fn extract_tar_safe(archive_path: &Path, dest_dir: &Path) -> Result<ZipExtractResult, String> {
+    if !archive_path.is_file() {
+        return Err("Archive file not found".into());
+    }
+    if !dest_dir.is_dir() {
+        fs::create_dir_all(dest_dir).map_err(|e| format!("Cannot create dest_dir: {}", e))?;
+    }
+    let dest_real =
+        fs::canonicalize(dest_dir).map_err(|e| format!("Canonicalize dest_dir failed: {}", e))?;
+
+    // Nhận diện gzip magic 0x1F 0x8B hoặc bzip2/xz không hỗ trợ (để Python fallback)
+    let mut probe = [0u8; 6];
+    let n = {
+        let mut f = File::open(archive_path).map_err(|e| format!("Cannot open archive: {}", e))?;
+        f.read(&mut probe).unwrap_or(0)
+    };
+
+    let is_gzip = n >= 2 && probe[0] == 0x1F && probe[1] == 0x8B;
+    let is_bzip2 = n >= 3 && &probe[0..3] == b"BZh";
+    let is_xz = n >= 6 && probe == [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00];
+    if is_bzip2 || is_xz {
+        return Err("unsupported_compression".to_string());
+    }
+
+    let file = File::open(archive_path).map_err(|e| format!("Cannot open archive: {}", e))?;
+    let reader = BufReader::with_capacity(64 * 1024, file);
+    if is_gzip {
+        extract_tar_reader(GzDecoder::new(reader), &dest_real)
+    } else {
+        extract_tar_reader(reader, &dest_real)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tar_gz_extract_and_safety() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let tmp_root = std::env::temp_dir().join(format!("rust_targz_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp_root);
+        let dest_dir = tmp_root.join("dest");
+        fs::create_dir_all(&tmp_root).unwrap();
+
+        let tgz_path = tmp_root.join("sample.tar.gz");
+        {
+            let f = File::create(&tgz_path).unwrap();
+            let enc = GzEncoder::new(f, Compression::fast());
+            let mut builder = tar::Builder::new(enc);
+            let data = b"Hello TAR.GZ from Rust!";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, "sub/hello.txt", &data[..]).unwrap();
+            let enc = builder.into_inner().unwrap();
+            enc.finish().unwrap();
+        }
+
+        let res = extract_tar_safe(&tgz_path, &dest_dir).unwrap();
+        assert_eq!(res.files_extracted, 1);
+        assert_eq!(fs::read(dest_dir.join("sub").join("hello.txt")).unwrap(), b"Hello TAR.GZ from Rust!");
+        let _ = fs::remove_dir_all(&tmp_root);
+    }
 
     #[test]
     fn test_zip_roundtrip_and_safety() {

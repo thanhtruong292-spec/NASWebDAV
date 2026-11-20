@@ -92,6 +92,12 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_fast_copy_file_json"):
                         lib.nas_hasher_fast_copy_file_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]
                         lib.nas_hasher_fast_copy_file_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_extract_tar_json"):
+                        lib.nas_hasher_extract_tar_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                        lib.nas_hasher_extract_tar_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_parse_media_header_json"):
+                        lib.nas_hasher_parse_media_header_json.argtypes = [ctypes.c_char_p]
+                        lib.nas_hasher_parse_media_header_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_free_string"):
                         lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
                         lib.nas_hasher_free_string.restype = None
@@ -329,6 +335,12 @@ def _init_indexer_lib():
                             ctypes.c_int, ctypes.c_int
                         ]
                         lib.nas_indexer_find_similar_fingerprints_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_indexer_scan_photo_tags_json"):
+                        lib.nas_indexer_scan_photo_tags_json.argtypes = [
+                            ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                            ctypes.c_double, ctypes.c_double, ctypes.c_char_p
+                        ]
+                        lib.nas_indexer_scan_photo_tags_json.restype = ctypes.c_void_p
                     _INDEXER_LIB = lib
                     _INDEXER_LIB_CHECKED = True
                     log.info("Rust indexer C-ABI loaded successfully from: %s", p)
@@ -1060,6 +1072,98 @@ def fast_copy_file_rust(src, dst, compute_sha256=False, progress_cb=None):
                 _RUST_LIB.nas_hasher_free_string(ptr)
             except Exception:
                 pass
+
+
+def scan_photo_tags_rust(db_path, expected_root, ai_tags_json_path="", now_secs=0.0, freshness_secs=300.0, generated_at=""):
+    """
+    Quét và phân loại ảnh streaming trong Rust (`nas_indexer`), ghi thẳng `ai_image_tags`
+    + `ai_tags.json` không nạp 400k tuples vào Python heap.
+    """
+    if not db_path or not os.path.isfile(db_path) or not expected_root:
+        return None
+    if not _init_indexer_lib() or not hasattr(_INDEXER_LIB, "nas_indexer_scan_photo_tags_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _INDEXER_LIB.nas_indexer_scan_photo_tags_json(
+            str(db_path).encode("utf-8"),
+            str(expected_root).encode("utf-8"),
+            str(ai_tags_json_path or "").encode("utf-8"),
+            float(now_secs),
+            float(freshness_secs),
+            str(generated_at or "").encode("utf-8"),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust scan_photo_tags failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_INDEXER_LIB, "nas_indexer_free_string"):
+            try:
+                _INDEXER_LIB.nas_indexer_free_string(ptr)
+            except Exception:
+                pass
+
+
+def extract_tar_safe_rust(archive_path, dest_dir):
+    """
+    Giải nén `.tar` / `.tar.gz` / `.tgz` bằng Rust C-ABI chống Tar-Slip, Symlink & Hardlink.
+    Trả về dict {"ok": True, "files_extracted": N} hoặc {"ok": False, "error": "..."} hoặc None.
+    """
+    if not archive_path or not os.path.isfile(archive_path) or not dest_dir:
+        return None
+    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_extract_tar_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _RUST_LIB.nas_hasher_extract_tar_json(
+            str(archive_path).encode("utf-8"),
+            str(dest_dir).encode("utf-8"),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust extract_tar failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+            try:
+                _RUST_LIB.nas_hasher_free_string(ptr)
+            except Exception:
+                pass
+
+
+def parse_media_header(filepath):
+    """
+    Phân tích header đa định dạng (MP4/MOV/M4V + MKV/WebM EBML + FLV) bằng Rust không fork `ffprobe`.
+    Trả về dict {"valid", "container", "duration_secs", "video_codec", "audio_codec", "has_moov"} hoặc None.
+    """
+    if not filepath or not os.path.isfile(filepath):
+        return None
+    if _init_rust_bridge() and hasattr(_RUST_LIB, "nas_hasher_parse_media_header_json"):
+        ptr = None
+        try:
+            ptr = _RUST_LIB.nas_hasher_parse_media_header_json(str(filepath).encode("utf-8"))
+            if ptr:
+                raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+                return json.loads(raw_json)
+        except Exception as e:
+            log.warning("Rust parse_media_header failed: %s", e)
+        finally:
+            if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+                try:
+                    _RUST_LIB.nas_hasher_free_string(ptr)
+                except Exception:
+                    pass
+    if str(filepath).lower().endswith((".mp4", ".m4v", ".mov")):
+        return parse_mp4_header(filepath)
+    return None
+
 
 
 

@@ -7,6 +7,7 @@ pub mod diacritics;
 pub mod dir_scanner;
 pub mod fingerprint_search;
 pub mod media_queries;
+pub mod photo_tagger;
 pub mod search;
 pub mod smart_organize;
 pub mod storage_summary;
@@ -14,6 +15,7 @@ pub use diacritics::remove_diacritics;
 pub use dir_scanner::{scan_directory_entries, DirScanResult};
 pub use fingerprint_search::{find_similar_fingerprints, SimilarImageMatch};
 pub use media_queries::{query_photos_timeline, query_recent_media, RecentMediaItem, TimelineResult};
+pub use photo_tagger::{scan_photo_tags, PhotoTagScanResult};
 pub use search::{build_fts_index, search_file_index};
 pub use smart_organize::{scan_smart_organize, SmartOrganizeResult};
 pub use storage_summary::{compute_storage_summary, StorageSummaryCore};
@@ -493,6 +495,64 @@ pub unsafe extern "C" fn nas_indexer_find_similar_fingerprints_json(
     let json = match serde_json::to_string(&matches) {
         Ok(j) => j,
         Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Quét và phân loại ảnh streaming zero-memory-bloat (`_scan_photos_lightweight`),
+/// ghi trực tiếp `ai_image_tags` + đồng bộ `ai_tags.json` không load 400k tuples vào Python heap.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_scan_photo_tags_json(
+    db_path_ptr: *const c_char,
+    expected_root_ptr: *const c_char,
+    ai_tags_json_ptr: *const c_char,
+    now_secs: f64,
+    freshness_secs: f64,
+    generated_at_ptr: *const c_char,
+) -> *mut c_char {
+    if db_path_ptr.is_null() || expected_root_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let expected_root = match CStr::from_ptr(expected_root_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let ai_tags_json = if ai_tags_json_ptr.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(ai_tags_json_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => "",
+        }
+    };
+    let generated_at = if generated_at_ptr.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(generated_at_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => "",
+        }
+    };
+    let json = match scan_photo_tags(
+        db_path,
+        expected_root,
+        ai_tags_json,
+        now_secs,
+        freshness_secs,
+        generated_at,
+    ) {
+        Ok(res) => match serde_json::to_string(&res) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        },
+        Err(err_msg) => serde_json::json!({ "success": false, "error": err_msg }).to_string(),
     };
     match CString::new(json) {
         Ok(cs) => cs.into_raw(),

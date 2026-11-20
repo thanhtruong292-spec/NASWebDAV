@@ -3328,6 +3328,17 @@ def _extract_zip_safe(archive_path, dest_dir):
     return extracted
 
 def _extract_tar_safe(archive_path, dest_dir):
+    # Fast-path Rust streaming TAR / TAR.GZ extractor (zero-GIL, chong Tar-Slip & symlink/hardlink)
+    _bridge = globals().get("rust_bridge")
+    if _bridge is not None and hasattr(_bridge, "extract_tar_safe_rust"):
+        _rtar = _bridge.extract_tar_safe_rust(archive_path, dest_dir)
+        if isinstance(_rtar, dict):
+            if _rtar.get("ok"):
+                return int(_rtar.get("files_extracted", 0))
+            _err = str(_rtar.get("error") or "")
+            if _err.startswith("Unsafe archive entry") or _err.startswith("Unsupported tar entry"):
+                raise ValueError(_err)
+            # unsupported_compression (.tar.bz2 / .tar.xz) -> fallback Python tarfile
     import tarfile
     with tarfile.open(archive_path, "r:*") as tf:
         members = tf.getmembers()
@@ -4339,6 +4350,21 @@ def _scan_photos_lightweight():
                 _alert_states["ai_scan_running"] = False
             return False
         root_real = os.path.realpath(root)
+
+        # Fast-path Rust streaming zero-memory-bloat (khong fetchall 400k tuples vao Python heap)
+        _bridge = globals().get("rust_bridge")
+        if _bridge is not None and hasattr(_bridge, "scan_photo_tags_rust") and not _index_scan_lock.locked():
+            _now_r = time.time()
+            _gen_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _rtag = _bridge.scan_photo_tags_rust(
+                INDEX_DB_PATH, root_real, AI_TAGS_PATH, _now_r, FILE_INDEX_FRESHNESS_SECONDS, _gen_str
+            )
+            if isinstance(_rtag, dict) and _rtag.get("success"):
+                with _alert_state_lock:
+                    _alert_states["ai_scan_running"] = False
+                    _alert_states["ai_last_scan"] = time.time()
+                    _alert_states["ai_catalogue_revision"] = int(_rtag.get("catalogue_revision") or 0)
+                return True
 
         conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         try:
@@ -12806,16 +12832,18 @@ def _find_source_file(relative_path):
     return None
 
 def _get_video_duration(file_path):
-    """L?y thoi luồng video (giay) — ưu tiên Rust MP4 atom parser, fallback ffprobe."""
-    if file_path and str(file_path).lower().endswith((".mp4", ".m4v", ".mov")):
+    """L?y thoi luồng video (giay) — ưu tiên Rust MP4/MKV/WebM/FLV header parser, fallback ffprobe."""
+    if file_path and str(file_path).lower().endswith((".mp4", ".m4v", ".mov", ".mkv", ".webm", ".flv")):
         bridge = globals().get("rust_bridge")
-        if bridge and hasattr(bridge, "parse_mp4_header"):
-            try:
-                info = bridge.parse_mp4_header(file_path)
-                if info and info.get("valid") and float(info.get("duration_secs", 0) or 0) > 0:
-                    return float(info["duration_secs"])
-            except Exception:
-                pass
+        if bridge:
+            _parser = getattr(bridge, "parse_media_header", None) or getattr(bridge, "parse_mp4_header", None)
+            if _parser is not None:
+                try:
+                    info = _parser(file_path)
+                    if info and info.get("valid") and float(info.get("duration_secs", 0) or 0) > 0:
+                        return float(info["duration_secs"])
+                except Exception:
+                    pass
     try:
         cmd = ["/usr/bin/ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
@@ -14499,15 +14527,17 @@ _ffmpeg_semaphore = threading.Semaphore(1)  # REVERT: 2 -> 1 de trảnh I/O burs
 
 def _probe_video_codec(src_path):
     """Return the first video codec, or a stable diagnostic label."""
-    if src_path and str(src_path).lower().endswith((".mp4", ".m4v", ".mov")):
+    if src_path and str(src_path).lower().endswith((".mp4", ".m4v", ".mov", ".mkv", ".webm", ".flv")):
         bridge = globals().get("rust_bridge")
-        if bridge and hasattr(bridge, "parse_mp4_header"):
-            try:
-                info = bridge.parse_mp4_header(src_path)
-                if info and info.get("valid") and info.get("video_codec"):
-                    return str(info["video_codec"])
-            except Exception:
-                pass
+        if bridge:
+            _parser = getattr(bridge, "parse_media_header", None) or getattr(bridge, "parse_mp4_header", None)
+            if _parser is not None:
+                try:
+                    info = _parser(src_path)
+                    if info and info.get("valid") and info.get("video_codec"):
+                        return str(info["video_codec"])
+                except Exception:
+                    pass
     try:
         probe = subprocess.run(
             ["/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0",

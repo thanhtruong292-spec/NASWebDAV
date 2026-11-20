@@ -6,10 +6,13 @@ pub mod archive_worker;
 pub mod duplicates;
 pub mod exif_reader;
 pub mod image_thumb;
+pub mod media_header_parser;
 pub mod mp4_parser;
 pub mod ts_merger;
 pub mod usb_importer;
-pub use archive_worker::{create_zip_from_dir, extract_zip_safe, ZipCreateResult, ZipExtractResult};
+pub use archive_worker::{
+    create_zip_from_dir, extract_tar_safe, extract_zip_safe, ZipCreateResult, ZipExtractResult,
+};
 pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
 };
@@ -18,6 +21,7 @@ pub use image_thumb::{
     compute_batch_ahash, compute_frame_brightness, compute_image_ahash, generate_image_thumbnail,
     hamming_distance,
 };
+pub use media_header_parser::{parse_ebml_header, parse_flv_header, parse_media_header, MediaHeaderInfo};
 pub use mp4_parser::{parse_mp4_header, Mp4HeaderInfo};
 pub use ts_merger::{merge_ts_segments, MergeResult};
 pub use usb_importer::{fast_copy_file, FastCopyResult, ProgressCallback};
@@ -457,6 +461,68 @@ pub unsafe extern "C" fn nas_hasher_fast_copy_file_json(
         Err(_) => return std::ptr::null_mut(),
     };
     let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Giải nén `.tar` / `.tar.gz` / `.tgz` an toàn chống Tar-Slip & Symlink/Hardlink traversal.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_extract_tar_json(
+    archive_path_ptr: *const c_char,
+    dest_dir_ptr: *const c_char,
+) -> *mut c_char {
+    if archive_path_ptr.is_null() || dest_dir_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let arch_str = match CStr::from_ptr(archive_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let dest_str = match CStr::from_ptr(dest_dir_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match extract_tar_safe(Path::new(arch_str), Path::new(dest_str)) {
+        Ok(r) => serde_json::json!({
+            "ok": true,
+            "files_extracted": r.files_extracted,
+            "bytes_extracted": r.bytes_extracted
+        })
+        .to_string(),
+        Err(err_msg) => serde_json::json!({
+            "ok": false,
+            "error": err_msg
+        })
+        .to_string(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Phân tích header đa định dạng (MP4/MOV/M4V + MKV/WebM EBML + FLV) không fork `ffprobe`.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_parse_media_header_json(
+    path_ptr: *const c_char,
+) -> *mut c_char {
+    if path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = match CStr::from_ptr(path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let info = match parse_media_header(Path::new(path_str)) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&info) {
         Ok(j) => j,
         Err(_) => return std::ptr::null_mut(),
     };
