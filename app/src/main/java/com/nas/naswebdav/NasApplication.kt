@@ -543,6 +543,30 @@ fun String.toFastMediaUrl(): String {
     return "$apiBase/api/media?path=$encodedPath"
 }
 
+/**
+ * Chuyển đổi bất kỳ WebDAV URL hoặc đường dẫn nào thành relative path chuẩn trên NAS
+ * (không chứa protocol, host, port, tiền tố /webdav/ hay dấu gạch chéo đầu).
+ * An toàn với URL chưa encode hoặc chứa dấu cách / ký tự tiếng Việt.
+ */
+fun String.toNasRelativePath(): String {
+    val trimmed = trim()
+    if (trimmed.isEmpty()) return ""
+    val withoutQuery = trimmed.substringBefore('?').substringBefore('#')
+    val rawPath = if (withoutQuery.contains("://")) {
+        val afterScheme = withoutQuery.substringAfter("://")
+        val slashIdx = afterScheme.indexOf('/')
+        if (slashIdx != -1) afterScheme.substring(slashIdx) else ""
+    } else {
+        withoutQuery
+    }
+    val decoded = runCatching { java.net.URLDecoder.decode(rawPath, "UTF-8") }.getOrDefault(rawPath)
+    var clean = decoded.trim()
+    if (clean.startsWith("/webdav/")) clean = clean.substring("/webdav/".length)
+    else if (clean.startsWith("webdav/")) clean = clean.substring("webdav/".length)
+    else if (clean.startsWith("/webdav")) clean = clean.substring("/webdav".length)
+    return clean.trimStart('/')
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SecurePrefsHelper — Quản lý EncryptedSharedPreferences
 // ════════════════════════════════════════════════════════════════════════════

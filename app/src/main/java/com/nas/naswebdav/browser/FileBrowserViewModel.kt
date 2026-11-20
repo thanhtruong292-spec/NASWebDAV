@@ -16,6 +16,7 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.encodeWebDavSegment
 import com.nas.naswebdav.buildWebDavRestoreTargetUrl
 import com.nas.naswebdav.ThumbnailAuditData
+import com.nas.naswebdav.toNasRelativePath
 import com.nas.naswebdav.utils.SystemLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -1089,15 +1090,11 @@ class FileBrowserViewModel(
 
     fun unzipFile(context: Context, filePath: String) {
         try {
-            // URI chua encode (dau cach/tieng Viet) -> URISyntaxException.
-            // Da trong try, nhung fallback path thu cong de van giai nen duoc.
-            val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) {
-                try { java.net.URL(filePath).path } catch (_: Exception) { filePath }
-            }
-            val relativePath = (rawPath ?: filePath).substringAfter("/webdav")
+            val relativePath = filePath.toNasRelativePath()
             val fileName = filePath.substringAfterLast("/")
             val jsonBody = org.json.JSONObject().apply {
-                put("file_path", relativePath)
+                put("file_path", "/webdav/$relativePath")
+                put("path", "/webdav/$relativePath")
             }.toString()
             
             android.widget.Toast.makeText(context, "Tac vu giai nen ($fileName) dang chay ngam tren NAS!", android.widget.Toast.LENGTH_LONG).show()
@@ -1127,13 +1124,10 @@ class FileBrowserViewModel(
     /** Nén thư mục thành file ZIP bằng Rust trên NAS (POST /api/zip). */
     fun zipFolder(context: Context, folderPath: String) {
         try {
-            val rawPath = try { java.net.URI(folderPath).path } catch (_: Exception) {
-                try { java.net.URL(folderPath).path } catch (_: Exception) { folderPath }
-            }
-            val relativePath = (rawPath ?: folderPath).substringAfter("/webdav")
+            val relativePath = folderPath.toNasRelativePath()
             val folderName = folderPath.trimEnd('/').substringAfterLast("/")
             val jsonBody = org.json.JSONObject().apply {
-                put("path", "/webdav/" + relativePath.removePrefix("/"))
+                put("path", "/webdav/$relativePath")
             }.toString()
 
             android.widget.Toast.makeText(context, "Tac vu nen ZIP ($folderName) dang chay ngam tren NAS!", android.widget.Toast.LENGTH_LONG).show()
@@ -1164,8 +1158,7 @@ class FileBrowserViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val result = linkedMapOf<String, String>()
             try {
-                val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) { filePath }
-                val rel = (rawPath ?: filePath).substringAfter("/webdav/").removePrefix("/")
+                val rel = filePath.toNasRelativePath()
                 val encoded = java.net.URLEncoder.encode("/webdav/$rel", "UTF-8")
                 val apiUrl = "${baseUrl.toApiBaseUrl()}/api/media/exif?path=$encoded"
                 val req = okhttp3.Request.Builder()
@@ -1188,7 +1181,9 @@ class FileBrowserViewModel(
                         }
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "MediaExif", "Không đọc được EXIF ($filePath): ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) {
                     selectedMediaExif = result

@@ -5,6 +5,22 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-025 — Kiểm Toán Toàn Diện End-to-End, Khắc Phục Lỗi Path Normalization Cho Các API Rust Mới & Tối Ưu Hệ Thống
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Android: `:app:testDebugUnitTest` (154/154 unit test PASS 100%, bổ sung `NasRelativePathTest.kt` kiểm tra toàn bộ các biến thể đường dẫn WebDAV/NAS).
+- Backend: `pytest tests/` (297 passed, 6 skipped in 70s, 100% PASS).
+- NAS Live (`192.168.100.254` RK3328): Test nén ZIP & giải nén ZIP thực tế qua API `HTTP 200, files_compressed: 5, extracted: 5`; Test EXIF và Similar Images 100% HTTP 200 cho cả 3 dạng URL/path (có/không có `/webdav/`, có/không có leading slash).
+
+### 1. Khắc Phục Triệt Để Lỗi Path Normalization Gây 404 Trên Các Tính Năng Rust Mới:
+- **`NasApplication.kt`:** Thêm extension function `fun String.toNasRelativePath(): String` chuyển đổi nhất quán mọi WebDAV URL (dù có hoặc không có tiền tố `/webdav/`, có dấu cách, unencoded tiếng Việt, query param hoặc fragment) thành đường dẫn tương đối chuẩn của NAS mà không phụ thuộc Android URI runtime.
+- **`FileBrowserViewModel.kt` & `SmartToolsViewModel.kt`:** Áp dụng `toNasRelativePath()` cho `unzipFile()`, `zipFolder()`, `fetchMediaExif()`, `findSimilarImages()`. Khắc phục tận gốc lỗi trước đó: khi `filePath` không chứa chuỗi `"/webdav/"`, hàm `substringAfter("/webdav/")` trả về toàn bộ URL `http://...`, khiến NAS backend trả về 404 File Not Found cho toàn bộ các tính năng này.
+- **`backend/nas_api_server.py`:** 
+  - Thêm `clean_p = clean_p.lstrip("/")` tại `api_media_exif` và `api_fingerprint_similar` để khớp 100% với khóa lưu trong bảng SQLite `image_fingerprints` (vốn lưu đường dẫn không có dấu gạch chéo đầu).
+  - Chuẩn hóa `relative.lstrip("/")` và loại bỏ `/webdav/` trong `_duplicate_compute_hash` giúp các yêu cầu tính hash phía server không bị từ chối bởi `_duplicate_file_info`.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-024 — Tăng Tốc Đồng Bộ AutoBackup (Xác Minh SHA-256 Phía NAS Rust 0-Byte WiFi) & Khôi Phục Tự Xóa Nguồn Đã Sao Lưu
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** Backend `297 passed, 6 skipped` (live smoke test trên NAS RK3328 LAN `192.168.100.254`: video MP4 5.03MB tính Rust SHA-256 hết `113.9 ms`, 0 byte WiFi); Android `:app:testDebugUnitTest` (153/153 PASS) & `:app:assembleDebug` **BUILD SUCCESSFUL**.

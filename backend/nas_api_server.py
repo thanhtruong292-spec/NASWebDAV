@@ -6862,6 +6862,7 @@ def api_media_exif():
     if not raw_p or ".." in raw_p or "\\" in raw_p:
         return jsonify({"error": "Invalid path"}), 400
     clean_p = raw_p[len("/webdav/"):] if raw_p.startswith("/webdav/") else raw_p
+    clean_p = clean_p.lstrip("/")
     full = _resolve_webdav_request_path(clean_p)
     if not full or not os.path.isfile(full):
         return jsonify({"error": "File not found"}), 404
@@ -8427,6 +8428,10 @@ def api_duplicate_hash():
 
 
 def _duplicate_compute_hash(relative, version=None):
+    if isinstance(relative, str) and relative.startswith("/webdav/"):
+        relative = relative[len("/webdav/"):]
+    if isinstance(relative, str) and relative.startswith("/"):
+        relative = relative.lstrip("/")
     info = _duplicate_file_info(relative)
     if version is not None and info['version'] != version:
         raise ValueError('File version changed')
@@ -16041,6 +16046,7 @@ def api_fingerprint_similar():
     if not raw_p or ".." in raw_p or "\\" in raw_p:
         return jsonify({"error": "Invalid path"}), 400
     clean_p = raw_p[len("/webdav/"):] if raw_p.startswith("/webdav/") else raw_p
+    clean_p = clean_p.lstrip("/")
 
     try:
         threshold = int(request.args.get("threshold", "5") or 5)

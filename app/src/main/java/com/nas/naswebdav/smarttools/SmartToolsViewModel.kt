@@ -16,6 +16,7 @@ import com.nas.naswebdav.AutoDuplicateScanWorker
 import com.nas.naswebdav.deleteVerifiedDuplicate
 import com.nas.naswebdav.DuplicateScanWorker
 import com.nas.naswebdav.toApiBaseUrl
+import com.nas.naswebdav.toNasRelativePath
 import com.nas.naswebdav.buildWebDavTrashTargetUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -322,8 +323,7 @@ class SmartToolsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val found = mutableListOf<com.nas.naswebdav.NasFile>()
             try {
-                val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) { filePath }
-                val rel = (rawPath ?: filePath).substringAfter("/webdav/").removePrefix("/")
+                val rel = filePath.toNasRelativePath()
                 val encoded = java.net.URLEncoder.encode("/webdav/$rel", "UTF-8")
                 val apiUrl = "${baseUrl.toApiBaseUrl()}/api/fingerprint/similar?path=$encoded&threshold=$threshold&limit=$limit"
                 val req = okhttp3.Request.Builder()
@@ -357,7 +357,9 @@ class SmartToolsViewModel(
                         }
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "SimilarImages", "Tìm ảnh tương đồng lỗi ($filePath): ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) {
                     similarImagesList = found
@@ -370,11 +372,10 @@ class SmartToolsViewModel(
     // ═══ ZIP / UNZIP (NAS Rust archive_worker) ═══
 
     fun zipFolder(folderPath: String) {
-        val rawPath = try { java.net.URI(folderPath).path } catch (_: Exception) { folderPath }
-        val relativePath = (rawPath ?: folderPath).substringAfter("/webdav")
+        val relativePath = folderPath.toNasRelativePath()
         val folderName = folderPath.trimEnd('/').substringAfterLast("/")
         val jsonBody = org.json.JSONObject().apply {
-            put("path", "/webdav/" + relativePath.removePrefix("/"))
+            put("path", "/webdav/$relativePath")
         }.toString()
 
         _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS,
@@ -396,11 +397,11 @@ class SmartToolsViewModel(
     }
 
     fun unzipFile(filePath: String) {
-        val uri = java.net.URI(filePath)
-        val relativePath = uri.path.substringAfter("/webdav")
+        val relativePath = filePath.toNasRelativePath()
         val fileName = filePath.substringAfterLast("/")
         val jsonBody = org.json.JSONObject().apply {
-            put("file_path", relativePath)
+            put("file_path", "/webdav/$relativePath")
+            put("path", "/webdav/$relativePath")
         }.toString()
 
         _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS,
