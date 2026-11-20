@@ -334,6 +334,9 @@ interface FingerprintDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertFingerprint(fingerprint: FileFingerprint)
 
+    @Query("SELECT * FROM file_fingerprints WHERE filePath = :path LIMIT 1")
+    fun getFingerprint(path: String): FileFingerprint?
+
     // Tìm file có hash CHÍNH XÁC trùng khớp — scope theo phien.
     @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND (accountKey = :key OR accountKey = '') LIMIT 1")
     fun findByExactHash(hash: String, key: String = ""): FileFingerprint?

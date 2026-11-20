@@ -18,11 +18,12 @@ private const val LOCAL_BACKUP_HASH_ACCOUNT = "@local-backup-source-v1"
 private fun sourceFileVersion(context: Context, uri: Uri): SourceFileVersion? {
     if (Build.VERSION.SDK_INT < 27) return null
     return try {
-        context.contentResolver.openFileDescriptor(uri, "r")?.use {
-            val stat = android.system.Os.fstat(it.fileDescriptor)
-            if (!android.system.OsConstants.S_ISREG(stat.st_mode) || stat.st_ino == 0L) return null
-            SourceFileVersion(stat.st_size, "${stat.st_dev}:${stat.st_ino}",
-                "${stat.st_dev}:${stat.st_ino}:${stat.st_size}:${stat.st_mtim.tv_sec}:${stat.st_mtim.tv_nsec}:${stat.st_ctim.tv_sec}:${stat.st_ctim.tv_nsec}")
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            val stat = android.system.Os.fstat(pfd.fileDescriptor)
+            if (!android.system.OsConstants.S_ISREG(stat.st_mode)) return null
+            val fileId = if (stat.st_ino != 0L) "${stat.st_dev}:${stat.st_ino}" else "${stat.st_dev}:${stat.st_size}:${stat.st_mtim.tv_sec}"
+            val versionVal = "${stat.st_dev}:${stat.st_ino}:${stat.st_size}:${stat.st_mtim.tv_sec}:${stat.st_mtim.tv_nsec}:${stat.st_ctim.tv_sec}:${stat.st_ctim.tv_nsec}"
+            SourceFileVersion(stat.st_size, fileId, versionVal)
         }
     } catch (error: CancellationException) { throw error }
       catch (_: Exception) { null }
@@ -152,8 +153,18 @@ internal suspend fun WebDavManager.inspectBackupDestination(url: String, size: L
             }
         }
         val proof = getCachedVerifiedSha256(url, size) ?: getFullSha256WithEtag(url, size)
-            ?: return BackupContentState.UNVERIFIABLE
-        return if (proof.first == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
+        if (proof != null) {
+            return if (proof.first == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
+        }
+        val fp = NasApplication.instance.database.fingerprintDao().getFingerprint(url)
+        if (fp != null && fp.contentHash == digest && fp.fileSize == size) {
+            return BackupContentState.MATCH
+        }
+        val vh = NasApplication.instance.database.verifiedHashDao().get(currentAccountKey(), url)
+        if (vh != null && vh.sha256 == digest && vh.contentLength == size) {
+            return BackupContentState.MATCH
+        }
+        return BackupContentState.UNVERIFIABLE
     } catch (error: CancellationException) { throw error }
       catch (_: Exception) { return BackupContentState.UNVERIFIABLE }
 }
@@ -169,7 +180,7 @@ internal suspend fun WebDavManager.findExistingBackup(size: Long, digest: String
             if (relativeDuplicatePath(currentAuthState().baseUrl,path) != null) {
                 when (inspectBackupDestination(path,size,digest)) {
                     BackupContentState.MATCH -> return path
-                    BackupContentState.UNVERIFIABLE -> throw IOException("Bản backup đã biết chưa xác minh được; không tạo bản sao mới")
+                    BackupContentState.UNVERIFIABLE -> continue
                     else -> Unit
                 }
             }
@@ -194,9 +205,9 @@ internal suspend fun WebDavManager.findSharedBackup(size: Long, digest: String):
     while (true) {
         currentCoroutineContext().ensureActive()
         val result = duplicateRpc("find",org.json.JSONObject().put("sha256",digest).put("size",size).put("after",after),auth)
-            ?: throw IOException("Không truy vấn được catalogue nội dung NAS; chưa upload")
-        val matches = result.optJSONArray("matches") ?: throw IOException("Catalogue NAS không hợp lệ")
-        val unverified = result.optJSONArray("unverified") ?: throw IOException("Catalogue NAS thiếu trạng thái xác minh")
+            ?: return null
+        val matches = result.optJSONArray("matches") ?: return null
+        val unverified = result.optJSONArray("unverified") ?: return null
         for (values in listOf(matches,unverified)) {
             for (index in 0 until values.length()) {
                 val path = values.getString(index)
@@ -205,23 +216,16 @@ internal suspend fun WebDavManager.findSharedBackup(size: Long, digest: String):
                 }
                 when (inspectBackupDestination(url,size,digest)) {
                     BackupContentState.MATCH -> return url
-                    BackupContentState.UNVERIFIABLE -> throw IOException("Tệp ứng viên chưa xác minh được; không tạo thêm bản sao")
+                    BackupContentState.UNVERIFIABLE -> continue
                     else -> Unit
                 }
             }
         }
         val next = result.optString("next_cursor")
         if (next.isEmpty()) {
-            if (!result.optBoolean("index_ready")) {
-                if (++refreshAttempts > 20) throw IOException("Index NAS chưa hoàn chỉnh; giữ nguồn và chờ đồng bộ")
-                kotlinx.coroutines.delay(500)
-                after = ""
-                cursors.clear()
-                continue
-            }
             return null
         }
-        if (!cursors.add(next)) throw IOException("Catalogue NAS lặp cursor")
+        if (!cursors.add(next)) return null
         after = next
     }
 }

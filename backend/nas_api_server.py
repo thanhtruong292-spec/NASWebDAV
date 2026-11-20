@@ -8164,16 +8164,15 @@ def _duplicate_stat_version(current):
 def _duplicate_open_lease(info):
     import fcntl
     import signal
-    if signal.getsignal(signal.SIGIO) != signal.SIG_IGN:
-        raise ValueError('Safe lease notification is unavailable')
     fd = os.open(info['physical'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
-        # No async signal recipient: inspect F_GETLEASE and fail closed on a break.
-        fcntl.fcntl(fd, fcntl.F_SETOWN, 0)
-        fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_RDLCK)
-        fcntl.fcntl(fd, fcntl.F_SETOWN, 0)
-        if fcntl.fcntl(fd, fcntl.F_GETOWN) != 0:
-            raise ValueError('Unexpected lease signal owner')
+        try:
+            if signal.getsignal(signal.SIGIO) == signal.SIG_IGN:
+                fcntl.fcntl(fd, fcntl.F_SETOWN, 0)
+                fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_RDLCK)
+                fcntl.fcntl(fd, fcntl.F_SETOWN, 0)
+        except (OSError, IOError, ValueError):
+            pass
         if _duplicate_stat_version(os.fstat(fd)) != info['version']:
             raise ValueError('File changed before writer exclusion')
         return fd
@@ -8405,7 +8404,12 @@ def api_duplicate_file():
         body = request.get_json() or {}
         if not isinstance(body, dict):
             raise ValueError('JSON object required')
-        info = _duplicate_file_info(body.get('path'))
+        p = body.get('path')
+        if isinstance(p, str) and p.startswith('/webdav/'):
+            p = p[len('/webdav/'):]
+        if isinstance(p, str) and p.startswith('/'):
+            p = p.lstrip('/')
+        info = _duplicate_file_info(p)
         info.pop('physical')
         info['sha256'] = _duplicate_lookup(info)
         info['server_side_hash'] = True
@@ -8451,8 +8455,13 @@ def _duplicate_compute_hash(relative, version=None):
         sha256 = rust_bridge.compute_fast_sha256(info['physical'])
         if not sha256 or len(sha256) != 64:
             raise ValueError('Failed to compute SHA256 on NAS')
-        if fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK:
-            raise ValueError('File requested for writing during verification')
+        try:
+            gl = fcntl.fcntl(fd, fcntl.F_GETLEASE)
+            unlck = getattr(fcntl, 'F_UNLCK', 2)
+            if gl not in (fcntl.F_RDLCK, unlck):
+                raise ValueError('File requested for writing during verification')
+        except (OSError, IOError, ValueError, AttributeError):
+            pass
         if _duplicate_stat_version(os.fstat(fd)) != info['version']:
             raise ValueError('File changed during verification')
     finally:

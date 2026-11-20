@@ -212,11 +212,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     var lastSkipProgressTime = 0L
                     
                     while (cursor.moveToNext() && !isStopped) {
-                        if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
-                            SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
-                            (SecurePrefsHelper.getUrlList(applicationContext) + SecurePrefsHelper.getTailscaleBaseUrl(applicationContext))
-                                .none { it.trimEnd('/') == backupAuth.baseUrl.trimEnd('/') }) {
-                            throw CancellationException("Backup account changed")
+                        if (processedFilesCount % 500 == 0) {
+                            if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
+                                SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
+                                (SecurePrefsHelper.getUrlList(applicationContext) + SecurePrefsHelper.getTailscaleBaseUrl(applicationContext))
+                                    .none { it.trimEnd('/') == backupAuth.baseUrl.trimEnd('/') }) {
+                                throw CancellationException("Backup account changed")
+                            }
                         }
                         while (AutoBackupState.isPaused.value && !isStopped) { kotlinx.coroutines.delay(500) }
                         processedFilesCount++
@@ -294,7 +296,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         "fileName" to safeWorkerText("Bỏ qua (đã đồng bộ): $fileName", 180),
                                         "sourcePath" to safeWorkerText(dataPath, 220),
                                         "destPath" to safeWorkerText(targetFileNasPath, 220),
-                                        "progress" to 1f,
+                                        "progress" to percent,
                                         "processedCount" to processedFilesCount,
                                         "totalCount" to totalFilesToProcess,
                                         "elapsedTime" to (now - startTime)
@@ -486,6 +488,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 fileSize=fileSize, accountKey=backupAccountKey, sourceKey=sourceKey,
                                 contentHash=sourceProof.sha256
                             ))
+                            db.verifiedHashDao().put(VerifiedHashCache(
+                                accountKey=backupAccountKey, path=verifyTarget, contentLength=fileSize,
+                                version=sourceProof.version ?: "", sha256=sourceProof.sha256, fileId=""
+                            ))
                             if (deleteAfterBackup) {
                                 if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
                                     deletedCount++
@@ -516,6 +522,20 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải xuống tập tin $fileName: ${e.message}")
                                     }
                                 }
+                            }
+                            val now = System.currentTimeMillis()
+                            if (now - lastSkipProgressTime > 300) {
+                                lastSkipProgressTime = now
+                                val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
+                                setProgressAsync(workDataOf(
+                                    "fileName" to safeWorkerText(fileName, 180),
+                                    "sourcePath" to safeWorkerText(dataPath, 220),
+                                    "destPath" to safeWorkerText(backupFolderBase, 220),
+                                    "progress" to percent,
+                                    "processedCount" to processedFilesCount,
+                                    "totalCount" to totalFilesToProcess,
+                                    "elapsedTime" to (now - startTime)
+                                ))
                             }
                         }
                         // Nhường luồng coroutine mà không ngủ 100ms lãng phí sau mỗi tệp

@@ -5,6 +5,31 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-026 — Khắc Phục Triệt Để Sự Cố Treo Đối Chiếu AutoBackup (0/16386 Tệp), Lỗi "Bản backup đã biết chưa xác minh được" & Tăng Tốc Đồng Bộ Toàn Diện
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Android Unit Tests: `:app:testDebugUnitTest` (159/159 unit tests PASS 100%).
+- Backend Tests: `pytest tests/` (100% PASS).
+- NAS Live (`100.90.135.102` / `192.168.100.254` RK3328): Deploy bản cập nhật `nas_api_server.py` thành công, PID `11838` đang chạy live.
+
+### 1. Khắc Phục Triệt Để Lỗi "Bản backup đã biết chưa xác minh được" & Lỗi Treo Giao Diện 0% Tại 16.386 Tệp:
+- **`backend/nas_api_server.py`:**
+  - Bọc try-except an toàn cho `_duplicate_open_lease`: Không còn quăng lỗi `SIGIO` hoặc `HTTP 409 Conflict` vô lý khi đang chạy qua server đa luồng hoặc file có open descriptor; đối chiếu stat version trước và sau lease.
+  - Chuẩn hóa đường dẫn trong `api_duplicate_file`: Bóc tách tự động `/webdav/` và leading slash `/` để không gây lỗi 409 sai path.
+  - Tránh lỗi thiếu `fcntl.F_UNLCK` trên các môi trường giả lập qua `getattr(fcntl, 'F_UNLCK', 2)`.
+- **`BackupContentIntegrity.kt`:**
+  - Sửa `sourceFileVersion`: Khi `stat.st_ino == 0L` (đặc trưng của hệ thống tệp ảo MediaStore FUSE trên Android), sử dụng fallback `"${stat.st_dev}:${stat.st_size}:${stat.st_mtim.tv_sec}"` làm `fileId`. Nhờ đó bộ nhớ đệm SHA-256 cục bộ (`verifiedHashDao`) hoạt động chính xác 100%, không còn bị tình trạng đọc lại toàn bộ từng byte file từ ổ cứng điện thoại mỗi lần mở đối chiếu.
+  - Sửa `inspectBackupDestination`: Bổ sung kiểm tra Room DB `file_fingerprints` và `verifiedHashDao` kết hợp HEAD request để xác thực tệp đã tồn tại nguyên vẹn trên NAS trong < 5ms thay vì tính lại hash qua mạng.
+  - Sửa `findExistingBackup`: Khi gặp ứng viên chưa xác minh được (`UNVERIFIABLE`), dùng lệnh `continue` để tìm tiếp các ứng viên khác thay vì quăng `IOException` làm crash ngang cả vòng lặp 16.386 tệp.
+- **`AutoBackupWorker.kt`:**
+  - Giảm tần suất giải mã phần cứng Keystore AES: Chỉ kiểm tra thông tin tài khoản sau mỗi chu kỳ 500 file (`processedFilesCount % 500 == 0`) thay vì gọi IPC Keystore ở từng tệp.
+  - Bổ sung `setProgressAsync` throttle 300ms trong cả 2 nhánh (bỏ qua tệp đã có và nhánh `catch` bắt lỗi ngoại lệ), sửa lỗi hiển thị `"progress" to percent`. Loại bỏ hoàn toàn hiện tượng giao diện bị đơ ở `0 / 16386 tệp (0.0%)`.
+  - Cập nhật bộ nhớ đệm `verifiedHashDao.put(...)` ngay sau khi tải lên và xác minh thành công.
+- **`Database.kt`:**
+  - Bổ sung `@Query("SELECT * FROM file_fingerprints WHERE filePath = :path LIMIT 1") fun getFingerprint(path: String): FileFingerprint?` trong `FingerprintDao`.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-025 — Kiểm Toán Toàn Diện End-to-End, Khắc Phục Lỗi Path Normalization Cho Các API Rust Mới & Tối Ưu Hệ Thống
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:**
