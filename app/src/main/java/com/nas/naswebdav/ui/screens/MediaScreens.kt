@@ -122,6 +122,9 @@ fun ImageViewerScreen(
 ) {
     val context = LocalContext.current
     val fileBrowserVM = LocalFileBrowserVM.current
+    val smartToolsVM = LocalSmartToolsVM.current
+    var showExifDialog by remember { mutableStateOf(false) }
+    var showSimilarDialog by remember { mutableStateOf(false) }
 
     // Hieu ung mo anh: phong to + mo dan tu thumbnail (thay shared-element,
     // can Compose 1.7+; hien tai dung 1.6 nen dung scale+fade tuong thich).
@@ -254,6 +257,78 @@ fun ImageViewerScreen(
         )
     }
 
+    // ============ EXIF DIALOG (NAS Rust kamadak-exif) ============
+    if (showExifDialog && imageFiles.isNotEmpty()) {
+        val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
+        val exifMap = fileBrowserVM.selectedMediaExif
+        AlertDialog(
+            onDismissRequest = { showExifDialog = false },
+            containerColor = DarkCard,
+            title = { Text("Thông tin EXIF", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(currentFile.name, color = TextSecondary, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (exifMap.isEmpty()) {
+                        Text("Không có dữ liệu EXIF hoặc đang tải từ NAS...", color = TextTertiary, fontSize = 13.sp)
+                    } else {
+                        exifMap.forEach { (k, v) ->
+                            Text("$k: $v", color = TextPrimary, fontSize = 13.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showExifDialog = false }) { Text("Đóng") }
+            }
+        )
+    }
+
+    // ============ SIMILAR IMAGES DIALOG (NAS Rust NEON Hamming) ============
+    if (showSimilarDialog && imageFiles.isNotEmpty()) {
+        val similar = smartToolsVM.similarImagesList
+        val loading = smartToolsVM.isLoadingSimilarImages
+        AlertDialog(
+            onDismissRequest = { showSimilarDialog = false },
+            containerColor = DarkCard,
+            title = { Text("Ảnh tương đồng (NAS)", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    when {
+                        loading -> Text("Đang tìm ảnh tương đồng bằng Rust NEON trên NAS...", color = TextSecondary, fontSize = 13.sp)
+                        similar.isEmpty() -> Text("Không tìm thấy ảnh tương đồng nào.", color = TextTertiary, fontSize = 13.sp)
+                        else -> {
+                            similar.take(10).forEach { sim ->
+                                val sizeTxt = com.nas.naswebdav.utils.FormatUtils.formatBytes(sim.contentLength)
+                                Text(
+                                    text = "• ${sim.name} ($sizeTxt)",
+                                    color = TextPrimary,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            val idx = imageFiles.indexOfFirst { it.path == sim.path || it.name == sim.name }
+                                            showSimilarDialog = false
+                                            if (idx >= 0) {
+                                                coroutineScope.launch {
+                                                    try { pagerState.scrollToPage(idx) } catch (_: Exception) {}
+                                                }
+                                            }
+                                        }
+                                        .padding(vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSimilarDialog = false }) { Text("Đóng") }
+            }
+        )
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -353,6 +428,32 @@ fun ImageViewerScreen(
                             contentDescription = "Trình chiếu",
                             tint = if (isSlideshowActive) AccentGreen else TextPrimary,
                             modifier = Modifier.size(28.dp)
+                        )
+                    }
+
+                    // EXIF Info (NAS Rust)
+                    IconButton(onClick = {
+                        val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
+                        fileBrowserVM.fetchMediaExif(currentFile.path)
+                        showExifDialog = true
+                    }) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = "Thông tin EXIF",
+                            tint = TextPrimary
+                        )
+                    }
+
+                    // Similar Images (NAS Rust NEON Hamming)
+                    IconButton(onClick = {
+                        val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
+                        smartToolsVM.findSimilarImages(currentFile.path)
+                        showSimilarDialog = true
+                    }) {
+                        Icon(
+                            Icons.Default.PhotoLibrary,
+                            contentDescription = "Ảnh tương đồng",
+                            tint = TextPrimary
                         )
                     }
 

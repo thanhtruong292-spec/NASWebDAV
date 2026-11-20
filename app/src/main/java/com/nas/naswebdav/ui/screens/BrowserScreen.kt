@@ -1877,13 +1877,22 @@ fun BrowserScreenFileItemGridCell(
                     },)
             }
 
-            // TÍNH NĂNG MỚI: Giải nén tại NAS
+            // TÍNH NĂNG MỚI: Giải nén / Nén ZIP tại NAS (Rust archive_worker)
             if (file.name.lowercase().endsWith(".zip")) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.action_extract_nas), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         smartToolsVM.unzipFile(file.path)
+                    }
+                )
+            }
+            if (file.isDirectory) {
+                DropdownMenuItem(
+                    text = { Text("Nén ZIP tại NAS", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold) },
+                    onClick = {
+                        showMenu = false
+                        smartToolsVM.zipFolder(file.path)
                     }
                 )
             }

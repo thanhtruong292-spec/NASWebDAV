@@ -284,6 +284,7 @@ fun FileItemGridCell(
                 onMove = { showActionSheet = false; pendingTransferOperation = "MOVE"; showTransferPickerDialog = true },
                 onRestore = { showActionSheet = false; fileBrowserVM.restoreFile(context, file) },
                 onUnzip = { showActionSheet = false; smartToolsVM.unzipFile(file.path) },
+                onZip = { showActionSheet = false; smartToolsVM.zipFolder(file.path) },
                 onOpenExternal = {
                     showActionSheet = false
                     val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
@@ -733,6 +734,7 @@ fun FileActionBottomSheet(
     onMove: () -> Unit,
     onRestore: () -> Unit,
     onUnzip: () -> Unit,
+    onZip: () -> Unit = {},
     onOpenExternal: () -> Unit,
     onRename: () -> Unit,
     onProperties: () -> Unit,
@@ -835,6 +837,9 @@ fun FileActionBottomSheet(
             }
             if (isZip) {
                 DetailRow(Icons.Default.Unarchive, "Giải nén tại NAS", AccentPurple) { onUnzip() }
+            }
+            if (file.isDirectory) {
+                DetailRow(Icons.Default.Archive, "Nén ZIP tại NAS", AccentPurple) { onZip() }
             }
             if (isVideo) {
                 DetailRow(Icons.Default.OpenInNew, "Mở bằng app ngoài", AccentOrange) { onOpenExternal() }
