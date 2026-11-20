@@ -21,6 +21,22 @@ pub struct ZipCreateResult {
     pub zip_size: u64,
 }
 
+#[derive(Debug, Serialize, Default, PartialEq)]
+pub struct TarBatchItem {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Serialize, Default, PartialEq)]
+pub struct TarBatchResult {
+    pub ok: bool,
+    pub files_extracted: u64,
+    pub bytes_extracted: u64,
+    pub items: Vec<TarBatchItem>,
+    pub error: Option<String>,
+}
+
 /// Giải nén ZIP an toàn tuyệt đối chống Zip-Slip và Symlink attack (chuẩn C-ABI).
 pub fn extract_zip_safe(archive_path: &Path, dest_dir: &Path) -> Result<ZipExtractResult, String> {
     if !archive_path.is_file() {
@@ -283,6 +299,117 @@ pub fn extract_tar_safe(archive_path: &Path, dest_dir: &Path) -> Result<ZipExtra
     }
 }
 
+fn extract_tar_batch_reader<R: Read>(
+    reader: R,
+    dest_real: &Path,
+) -> Result<TarBatchResult, String> {
+    use sha2::{Digest, Sha256};
+    let mut archive = Archive::new(reader);
+    let mut files_count = 0u64;
+    let mut bytes_count = 0u64;
+    let mut items = Vec::new();
+    let mut buf = [0u8; 65536];
+
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Invalid tar archive: {}", e))?;
+
+    for entry_res in entries {
+        let mut entry = entry_res.map_err(|e| format!("Read tar entry error: {}", e))?;
+        let etype = entry.header().entry_type();
+        let entry_path = entry
+            .path()
+            .map_err(|e| format!("Invalid tar path: {}", e))?
+            .into_owned();
+
+        if matches!(
+            etype,
+            EntryType::Symlink | EntryType::Link | EntryType::Char | EntryType::Block | EntryType::Fifo
+        ) {
+            return Err(format!("Unsafe archive entry: {:?}", entry_path));
+        }
+
+        if matches!(
+            etype,
+            EntryType::XHeader | EntryType::XGlobalHeader | EntryType::GNULongName | EntryType::GNULongLink
+        ) {
+            continue;
+        }
+
+        let clean_rel = validate_tar_rel_path(&entry_path)?;
+        let out_path = dest_real.join(&clean_rel);
+        if !out_path.starts_with(dest_real) {
+            return Err(format!("Unsafe archive entry: {:?}", entry_path));
+        }
+
+        if etype == EntryType::Directory {
+            fs::create_dir_all(&out_path)
+                .map_err(|e| format!("Cannot create dir {:?}: {}", out_path, e))?;
+        } else if etype == EntryType::Regular || etype == EntryType::Continuous {
+            if let Some(parent) = out_path.parent() {
+                if !parent.is_dir() {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| format!("Cannot create parent dir: {}", e))?;
+                }
+            }
+            let mut out_file = File::create(&out_path)
+                .map_err(|e| format!("Cannot create file {:?}: {}", out_path, e))?;
+            let mut file_hasher = Sha256::new();
+            let mut file_bytes = 0u64;
+            loop {
+                let n = entry
+                    .read(&mut buf)
+                    .map_err(|e| format!("Read tar stream error: {}", e))?;
+                if n == 0 {
+                    break;
+                }
+                out_file
+                    .write_all(&buf[..n])
+                    .map_err(|e| format!("Write tar file error: {}", e))?;
+                file_hasher.update(&buf[..n]);
+                bytes_count += n as u64;
+                file_bytes += n as u64;
+            }
+            files_count += 1;
+            let sha256_hex = format!("{:x}", file_hasher.finalize());
+            items.push(TarBatchItem {
+                path: clean_rel.to_string_lossy().to_string().replace('\\', "/"),
+                size: file_bytes,
+                sha256: sha256_hex,
+            });
+        } else {
+            return Err(format!("Unsupported tar entry type: {:?}", entry_path));
+        }
+    }
+
+    Ok(TarBatchResult {
+        ok: true,
+        files_extracted: files_count,
+        bytes_extracted: bytes_count,
+        items,
+        error: None,
+    })
+}
+
+/// Giải nén TAR batch và tính SHA256 song song zero-overhead cho AutoBackup.
+pub fn extract_tar_batch_safe(
+    archive_path: &Path,
+    dest_dir: &Path,
+) -> Result<TarBatchResult, String> {
+    if !archive_path.is_file() {
+        return Err("Archive file not found".into());
+    }
+    if !dest_dir.is_dir() {
+        fs::create_dir_all(dest_dir).map_err(|e| format!("Cannot create dest_dir: {}", e))?;
+    }
+    let dest_real =
+        fs::canonicalize(dest_dir).map_err(|e| format!("Canonicalize dest_dir failed: {}", e))?;
+
+    let file = File::open(archive_path).map_err(|e| format!("Cannot open archive: {}", e))?;
+    let reader = BufReader::with_capacity(64 * 1024, file);
+    extract_tar_batch_reader(reader, &dest_real)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +442,57 @@ mod tests {
         let res = extract_tar_safe(&tgz_path, &dest_dir).unwrap();
         assert_eq!(res.files_extracted, 1);
         assert_eq!(fs::read(dest_dir.join("sub").join("hello.txt")).unwrap(), b"Hello TAR.GZ from Rust!");
+        let _ = fs::remove_dir_all(&tmp_root);
+    }
+
+    #[test]
+    fn test_tar_batch_extract_with_hashes() {
+        let tmp_root = std::env::temp_dir().join(format!("rust_tarbatch_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp_root);
+        let dest_dir = tmp_root.join("dest");
+        fs::create_dir_all(&tmp_root).unwrap();
+
+        let tar_path = tmp_root.join("batch.tar");
+        let data1 = b"IMG_0001_DATA_FOR_TESTING";
+        let data2 = b"DCIM_CAMERA_IMG_0002_SECOND_PHOTO_PAYLOAD";
+        {
+            let f = File::create(&tar_path).unwrap();
+            let mut builder = tar::Builder::new(f);
+
+            let mut h1 = tar::Header::new_gnu();
+            h1.set_size(data1.len() as u64);
+            h1.set_mode(0o644);
+            h1.set_cksum();
+            builder.append_data(&mut h1, "DCIM/Camera/IMG_0001.jpg", &data1[..]).unwrap();
+
+            let mut h2 = tar::Header::new_gnu();
+            h2.set_size(data2.len() as u64);
+            h2.set_mode(0o644);
+            h2.set_cksum();
+            builder.append_data(&mut h2, "Pictures/Facebook/FB_0002.jpg", &data2[..]).unwrap();
+
+            builder.finish().unwrap();
+        }
+
+        let res = extract_tar_batch_safe(&tar_path, &dest_dir).unwrap();
+        assert!(res.ok);
+        assert_eq!(res.files_extracted, 2);
+        assert_eq!(res.bytes_extracted, (data1.len() + data2.len()) as u64);
+        assert_eq!(res.items.len(), 2);
+
+        // Kiểm tra file 1
+        assert_eq!(res.items[0].path, "DCIM/Camera/IMG_0001.jpg");
+        assert_eq!(res.items[0].size, data1.len() as u64);
+        use sha2::{Digest, Sha256};
+        let expected_sha1 = format!("{:x}", Sha256::digest(data1));
+        assert_eq!(res.items[0].sha256, expected_sha1);
+
+        // Kiểm tra file 2
+        assert_eq!(res.items[1].path, "Pictures/Facebook/FB_0002.jpg");
+        assert_eq!(res.items[1].size, data2.len() as u64);
+        let expected_sha2 = format!("{:x}", Sha256::digest(data2));
+        assert_eq!(res.items[1].sha256, expected_sha2);
+
         let _ = fs::remove_dir_all(&tmp_root);
     }
 

@@ -95,6 +95,9 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_extract_tar_json"):
                         lib.nas_hasher_extract_tar_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
                         lib.nas_hasher_extract_tar_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_extract_tar_batch_json"):
+                        lib.nas_hasher_extract_tar_batch_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                        lib.nas_hasher_extract_tar_batch_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_parse_media_header_json"):
                         lib.nas_hasher_parse_media_header_json.argtypes = [ctypes.c_char_p]
                         lib.nas_hasher_parse_media_header_json.restype = ctypes.c_void_p
@@ -1135,6 +1138,37 @@ def extract_tar_safe_rust(archive_path, dest_dir):
         return json.loads(raw_json)
     except Exception as e:
         log.warning("Rust extract_tar failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+            try:
+                _RUST_LIB.nas_hasher_free_string(ptr)
+            except Exception:
+                pass
+
+
+def extract_tar_batch_safe_rust(archive_path, dest_dir):
+    """
+    Giải nén TAR batch và tính SHA-256 song song zero-overhead cho AutoBackup.
+    Trả về dict {"ok": True, "files_extracted": N, "bytes_extracted": B, "items": [{"path": ..., "size": ..., "sha256": ...}]}
+    hoặc {"ok": False, "error": "..."} hoặc None.
+    """
+    if not archive_path or not os.path.isfile(archive_path) or not dest_dir:
+        return None
+    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_extract_tar_batch_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _RUST_LIB.nas_hasher_extract_tar_batch_json(
+            str(archive_path).encode("utf-8"),
+            str(dest_dir).encode("utf-8"),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust extract_tar_batch failed, fallback to python: %s", e)
         return None
     finally:
         if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):

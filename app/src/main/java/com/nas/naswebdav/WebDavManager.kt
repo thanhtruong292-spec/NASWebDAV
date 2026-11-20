@@ -53,6 +53,20 @@ import kotlinx.coroutines.sync.withLock
 
 
 
+data class TarBatchServerItem(
+    val path: String,
+    val size: Long,
+    val sha256: String
+)
+
+data class TarBatchUploadResult(
+    val ok: Boolean,
+    val filesExtracted: Long,
+    val bytesExtracted: Long,
+    val items: List<TarBatchServerItem> = emptyList(),
+    val error: String? = null
+)
+
 // @Immutable: toàn val immutable — Compose skip recomposition khi equals không đổi.
 @androidx.compose.runtime.Immutable
 data class NasFile(
@@ -507,6 +521,76 @@ object WebDavManager {
 
         }
 
+    }
+
+    /**
+     * Tải lên một lô nhiều tệp media bằng luồng TAR uncompressed (POSIX ustar)
+     * qua endpoint `/api/backup/batch_stream` của NAS Rust.
+     */
+    suspend fun uploadBatchTarStream(
+        targetFolder: String,
+        requestBody: RequestBody
+    ): TarBatchUploadResult? = withContext(Dispatchers.IO) {
+        val auth = currentAuthState()
+        if (auth.baseUrl.isEmpty()) return@withContext null
+        val apiBase = auth.baseUrl.toApiBaseUrl()
+        val encodedDest = java.net.URLEncoder.encode(targetFolder, "UTF-8").replace("+", "%20")
+        val url = "$apiBase/api/backup/batch_stream?dest=$encodedDest"
+
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .withAuth(auth)
+            .header("Authorization", auth.authHeader)
+            .header("Content-Type", "application/x-tar")
+            .build()
+
+        try {
+            optimizedClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errBody = response.body?.string().orEmpty()
+                    android.util.Log.w("WebDavManager", "uploadBatchTarStream failed: ${response.code} $errBody")
+                    return@withContext null
+                }
+                val jsonStr = response.body?.string() ?: return@withContext null
+                val obj = org.json.JSONObject(jsonStr)
+                val ok = obj.optBoolean("ok", false)
+                if (!ok) {
+                    return@withContext TarBatchUploadResult(
+                        ok = false,
+                        filesExtracted = 0,
+                        bytesExtracted = 0,
+                        error = obj.optString("error", "Batch extraction failed")
+                    )
+                }
+                val filesExtracted = obj.optLong("files_extracted", 0L)
+                val bytesExtracted = obj.optLong("bytes_extracted", 0L)
+                val itemsArr = obj.optJSONArray("items")
+                val itemsList = mutableListOf<TarBatchServerItem>()
+                if (itemsArr != null) {
+                    for (i in 0 until itemsArr.length()) {
+                        val itObj = itemsArr.getJSONObject(i)
+                        itemsList.add(
+                            TarBatchServerItem(
+                                path = itObj.optString("path"),
+                                size = itObj.optLong("size"),
+                                sha256 = itObj.optString("sha256")
+                            )
+                        )
+                    }
+                }
+                TarBatchUploadResult(
+                    ok = true,
+                    filesExtracted = filesExtracted,
+                    bytesExtracted = bytesExtracted,
+                    items = itemsList
+                )
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            android.util.Log.w("WebDavManager", "uploadBatchTarStream exception: ${e.message}")
+            null
+        }
     }
 
 

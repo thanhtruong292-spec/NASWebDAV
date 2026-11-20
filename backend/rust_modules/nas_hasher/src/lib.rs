@@ -12,7 +12,8 @@ pub mod mp4_parser;
 pub mod ts_merger;
 pub mod usb_importer;
 pub use archive_worker::{
-    create_zip_from_dir, extract_tar_safe, extract_zip_safe, ZipCreateResult, ZipExtractResult,
+    create_zip_from_dir, extract_tar_batch_safe, extract_tar_safe, extract_zip_safe,
+    TarBatchItem, TarBatchResult, ZipCreateResult, ZipExtractResult,
 };
 pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
@@ -501,6 +502,40 @@ pub unsafe extern "C" fn nas_hasher_extract_tar_json(
         Err(err_msg) => serde_json::json!({
             "ok": false,
             "error": err_msg
+        })
+        .to_string(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Giải nén `.tar` batch và tính SHA256 song song cho AutoBackup stream.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_extract_tar_batch_json(
+    archive_path_ptr: *const c_char,
+    dest_dir_ptr: *const c_char,
+) -> *mut c_char {
+    if archive_path_ptr.is_null() || dest_dir_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let arch_str = match CStr::from_ptr(archive_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let dest_str = match CStr::from_ptr(dest_dir_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match extract_tar_batch_safe(Path::new(arch_str), Path::new(dest_str)) {
+        Ok(r) => serde_json::to_string(&r).unwrap_or_else(|_| "{\"ok\":false}".to_string()),
+        Err(err_msg) => serde_json::json!({
+            "ok": false,
+            "error": err_msg,
+            "files_extracted": 0,
+            "bytes_extracted": 0,
+            "items": []
         })
         .to_string(),
     };

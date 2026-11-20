@@ -507,6 +507,7 @@ _NON_INTERACTIVE_HIT_PREFIXES = (
     "/api/duplicates/file", "/api/v1/duplicates/file",
     "/api/duplicates/hash", "/api/v1/duplicates/hash",
     "/api/duplicates/compute_hash", "/api/v1/duplicates/compute_hash",
+    "/api/backup/batch_stream", "/api/v1/backup/batch_stream",
     "/api/duplicates/content", "/api/v1/duplicates/content",
     "/api/thumb/exists", "/api/v1/thumb/exists",
     "/api/thumb/upload", "/api/v1/thumb/upload",
@@ -5065,11 +5066,10 @@ def api_metrics_history():
         hours = min(int(request.args.get("hours", 1)), 24)
     except (ValueError, TypeError):
         hours = 1
+    rows = []
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
+        conn = sqlite3.connect("file:" + DB_PATH + "?mode=ro", uri=True, timeout=30.0)
         cur = conn.cursor()
-        # QUAN TR?NG: Khong dung % operator vi conflict voi %Y, %m... trong strftime SQLite
-        # Tinh san WHERE time filter bang Python roi truyen vao query
         hours_filter = "-%d hours" % hours
         cur.execute(
             "SELECT strftime('%Y-%m-%dT%H:%M:%S', timestamp, 'localtime'),"
@@ -5082,9 +5082,26 @@ def api_metrics_history():
         )
         rows = cur.fetchall()
         conn.close()
-
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log.warning("[api_metrics_history] Read-only connect error: %s", e)
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            cur = conn.cursor()
+            hours_filter = "-%d hours" % hours
+            cur.execute(
+                "SELECT strftime('%Y-%m-%dT%H:%M:%S', timestamp, 'localtime'),"
+                " cpu_percent, ram_percent, cpu_temp, hdd_temp,"
+                " net_rx_kbps, net_tx_kbps"
+                " FROM system_metrics_history"
+                " WHERE timestamp >= datetime('now', ?)"
+                " ORDER BY timestamp ASC",
+                (hours_filter,)
+            )
+            rows = cur.fetchall()
+            conn.close()
+        except Exception as e2:
+            log.warning("[api_metrics_history] Fallback connect error: %s", e2)
+            rows = []
 
     # Resample: nếu nhiều hơn 120 điểm thì lấy đều nhau
     if len(rows) > 120:
@@ -8382,7 +8399,7 @@ def _duplicate_find_matches(sha256, size, after=''):
 @app.route('/api/duplicates/capabilities', methods=['GET', 'POST'])
 @requires_admin
 def api_duplicate_capabilities():
-    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True, 'server_side_hash': True})
+    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True, 'server_side_hash': True, 'batch_stream': True})
 
 
 @app.route('/api/duplicates/find', methods=['POST'])
@@ -8489,6 +8506,126 @@ def api_duplicate_compute_hash():
         return jsonify(result)
     except (OSError, ValueError) as error:
         return jsonify({'error': str(error)}), 409
+
+
+@app.route('/api/backup/batch_stream', methods=['POST'])
+@requires_admin
+def api_backup_batch_stream():
+    """
+    Tiep nhan luong TAR uncompressed chua nhieu tep media tu AutoBackup.
+    Ghi tam ra dia dem va goi Rust nas_hasher_extract_tar_batch_json de vua
+    giai nen an toan (chong Tar-Slip) vua tinh song song SHA-256 phan cung (ARM NEON SHA2).
+    Luu tu dong vao database verified_file_hashes va tra ve danh sach SHA-256 de client xoa tep an toan.
+    """
+    webdav_root = _get_webdav_root()
+    dest = (request.args.get('dest') or '/AutoBackup').strip()
+    dest_clean = dest.lstrip('/')
+    dest_dir = os.path.realpath(os.path.join(webdav_root, dest_clean))
+
+    root_real = os.path.realpath(webdav_root)
+    if not (dest_dir == root_real or dest_dir.startswith(root_real + os.sep)):
+        return jsonify({"ok": False, "error": "Invalid destination path"}), 400
+
+    os.makedirs(dest_dir, exist_ok=True)
+
+    tmp_dir = os.path.join(webdav_root, ".backup_tmp")
+    try:
+        os.makedirs(tmp_dir, exist_ok=True)
+    except Exception:
+        tmp_dir = "/tmp"
+
+    tar_path = os.path.join(tmp_dir, "batch_%d_%d.tar" % (os.getpid(), int(time.time() * 1000)))
+    total_received = 0
+    try:
+        with open(tar_path, "wb") as f:
+            while True:
+                chunk = request.stream.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                total_received += len(chunk)
+
+        if total_received == 0:
+            return jsonify({"ok": False, "error": "Empty stream"}), 400
+
+        _bridge = globals().get("rust_bridge")
+        res = None
+        if _bridge and hasattr(_bridge, "extract_tar_batch_safe_rust"):
+            res = _bridge.extract_tar_batch_safe_rust(tar_path, dest_dir)
+
+        if not res or not res.get("ok"):
+            err_msg = res.get("error") if res else "Rust bridge unavailable"
+            log.warning("[AutoBackup] Batch Rust extract failed (%s), fallback to python tarfile", err_msg)
+            import tarfile
+            import hashlib
+            items = []
+            files_extracted = 0
+            bytes_extracted = 0
+            with tarfile.open(tar_path, "r:*") as tf:
+                for member in tf.getmembers():
+                    if member.isdir():
+                        continue
+                    if not _archive_member_is_safe(member.name):
+                        continue
+                    target_path = _archive_member_target_path(dest_dir, member.name)
+                    if not _archive_member_within_dest(dest_dir, member.name):
+                        continue
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    src = tf.extractfile(member)
+                    if src is None:
+                        continue
+                    h = hashlib.sha256()
+                    f_sz = 0
+                    with src, open(target_path, "wb") as dst:
+                        while True:
+                            b = src.read(65536)
+                            if not b:
+                                break
+                            dst.write(b)
+                            h.update(b)
+                            f_sz += len(b)
+                    files_extracted += 1
+                    bytes_extracted += f_sz
+                    items.append({
+                        "path": str(member.name).replace("\\", "/"),
+                        "size": f_sz,
+                        "sha256": h.hexdigest()
+                    })
+            res = {
+                "ok": True,
+                "files_extracted": files_extracted,
+                "bytes_extracted": bytes_extracted,
+                "items": items
+            }
+
+        try:
+            now = time.time()
+            conn = _duplicate_db()
+            try:
+                for it in res.get("items", []):
+                    rel_p = (dest_clean + "/" + it.get("path", "")).strip("/")
+                    try:
+                        info = _duplicate_file_info(rel_p)
+                        conn.execute("INSERT OR REPLACE INTO verified_file_hashes(file_id,version,size,sha256,verified_at,path) VALUES(?,?,?,?,?,?)",
+                                     (info['file_id'], info['version'], it.get("size", 0), it.get("sha256", ""), now, rel_p))
+                    except Exception:
+                        pass
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("[AutoBackup] Luu verified_file_hashes that bai: %s", e)
+
+        return jsonify(res)
+    except Exception as e:
+        log.error("[AutoBackup] Batch stream loi: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if os.path.exists(tar_path):
+            try:
+                os.remove(tar_path)
+            except Exception:
+                pass
 
 
 @app.route('/api/duplicates/cleanup', methods=['POST'])

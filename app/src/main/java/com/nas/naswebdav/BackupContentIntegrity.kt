@@ -12,10 +12,10 @@ import java.security.MessageDigest
 internal enum class BackupContentState { MISSING, MATCH, DIFFERENT, UNVERIFIABLE }
 internal data class BackupSourceDigest(val sha256: String, val version: String?)
 internal data class BackupTargetPlan(val path: String, val skip: Boolean)
-private data class SourceFileVersion(val size: Long, val fileId: String, val value: String)
+internal data class SourceFileVersion(val size: Long, val fileId: String, val value: String)
 private const val LOCAL_BACKUP_HASH_ACCOUNT = "@local-backup-source-v1"
 
-private fun sourceFileVersion(context: Context, uri: Uri): SourceFileVersion? {
+internal fun sourceFileVersion(context: Context, uri: Uri): SourceFileVersion? {
     if (Build.VERSION.SDK_INT < 27) return null
     return try {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
@@ -152,10 +152,6 @@ internal suspend fun WebDavManager.inspectBackupDestination(url: String, size: L
                     BackupContentState.DIFFERENT else BackupContentState.UNVERIFIABLE
             }
         }
-        val proof = getCachedVerifiedSha256(url, size) ?: getFullSha256WithEtag(url, size)
-        if (proof != null) {
-            return if (proof.first == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
-        }
         val fp = NasApplication.instance.database.fingerprintDao().getFingerprint(url)
         if (fp != null && fp.contentHash == digest && fp.fileSize == size) {
             return BackupContentState.MATCH
@@ -163,6 +159,14 @@ internal suspend fun WebDavManager.inspectBackupDestination(url: String, size: L
         val vh = NasApplication.instance.database.verifiedHashDao().get(currentAccountKey(), url)
         if (vh != null && vh.sha256 == digest && vh.contentLength == size) {
             return BackupContentState.MATCH
+        }
+        val proof = getCachedVerifiedSha256(url, size) ?: getFullSha256WithEtag(url, size)
+        if (proof != null) {
+            return if (proof.first == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
+        }
+        val streamHash = if (size <= 50 * 1024 * 1024L) getFullSha256PhoneStream(url, size) else null
+        if (streamHash != null) {
+            return if (streamHash == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
         }
         return BackupContentState.UNVERIFIABLE
     } catch (error: CancellationException) { throw error }
@@ -194,6 +198,15 @@ internal suspend fun WebDavManager.requireBackupProtocol() {
         ?: throw IOException("Backend chưa hỗ trợ backup xác minh nội dung; cần cập nhật NAS")
     if (capabilities.optInt("backup_protocol",0) != 1 || !capabilities.optBoolean("shared_hash_catalogue")) {
         throw IOException("Backend chưa hỗ trợ backup xác minh nội dung; cần cập nhật NAS trước khi sao lưu")
+    }
+}
+
+internal suspend fun WebDavManager.supportsBatchStream(): Boolean {
+    return try {
+        val capabilities = duplicateRpc("capabilities", org.json.JSONObject(), currentAuthState())
+        capabilities?.optBoolean("batch_stream", false) ?: false
+    } catch (_: Exception) {
+        false
     }
 }
 
