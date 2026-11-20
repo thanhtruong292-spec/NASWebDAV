@@ -5,13 +5,17 @@ use std::os::raw::{c_char, c_int, c_longlong};
 
 pub mod diacritics;
 pub mod dir_scanner;
+pub mod fingerprint_search;
 pub mod media_queries;
 pub mod search;
+pub mod smart_organize;
 pub mod storage_summary;
 pub use diacritics::remove_diacritics;
 pub use dir_scanner::{scan_directory_entries, DirScanResult};
+pub use fingerprint_search::{find_similar_fingerprints, SimilarImageMatch};
 pub use media_queries::{query_photos_timeline, query_recent_media, RecentMediaItem, TimelineResult};
 pub use search::{build_fts_index, search_file_index};
+pub use smart_organize::{scan_smart_organize, SmartOrganizeResult};
 pub use storage_summary::{compute_storage_summary, StorageSummaryCore};
 
 pub mod streamer {
@@ -399,6 +403,94 @@ pub unsafe extern "C" fn nas_indexer_photos_timeline_json(
         Err(_) => return std::ptr::null_mut(),
     };
     let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Quét phân nhóm Smart Organize (YYYY/MM) 1 lượt zero-copy trên `file_index`.
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_smart_organize_scan_json(
+    db_path_ptr: *const c_char,
+    expected_root_ptr: *const c_char,
+    filter_mode: c_int,
+    now_secs: f64,
+    freshness_secs: f64,
+    tz_offset_secs: c_longlong,
+) -> *mut c_char {
+    if db_path_ptr.is_null() || expected_root_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let expected_root = match CStr::from_ptr(expected_root_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match scan_smart_organize(
+        db_path,
+        expected_root,
+        filter_mode.clamp(0, 2) as u8,
+        now_secs,
+        freshness_secs,
+        tz_offset_secs as i64,
+    ) {
+        Ok(res) => match serde_json::to_string(&res) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        },
+        Err(err_msg) => {
+            let err_obj = serde_json::json!({ "success": false, "error": err_msg });
+            err_obj.to_string()
+        }
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Tìm ảnh tương đồng theo khoảng cách Hamming trên `image_fingerprints` (ARM64 NEON VCNT popcount).
+#[no_mangle]
+pub unsafe extern "C" fn nas_indexer_find_similar_fingerprints_json(
+    db_path_ptr: *const c_char,
+    exclude_path_ptr: *const c_char,
+    target_hash_ptr: *const c_char,
+    threshold: c_int,
+    limit: c_int,
+) -> *mut c_char {
+    if db_path_ptr.is_null() || exclude_path_ptr.is_null() || target_hash_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let exclude_path = match CStr::from_ptr(exclude_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let target_hash = match CStr::from_ptr(target_hash_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let matches = match find_similar_fingerprints(
+        db_path,
+        exclude_path,
+        target_hash,
+        threshold.clamp(0, 64) as u32,
+        limit.max(1) as usize,
+    ) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&matches) {
         Ok(j) => j,
         Err(_) => return std::ptr::null_mut(),
     };

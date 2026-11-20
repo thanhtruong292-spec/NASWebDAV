@@ -5,6 +5,24 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-019 — Triển Khai Toàn Bộ Tối Ưu Hóa P1 & P2 (Streaming 128KB, Diệt N+1 Query, Rust Smart Organize, NEON Hamming & Kernel Zero-Copy `copy_file_range`)
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** 290 passed, 6 skipped (100% test pass) + 9/9 Rust unit tests (`nas_indexer`) + 9/9 Rust unit tests (`nas_hasher`). Production verified trên NAS thật qua mạng LAN (`192.168.100.254`, kernel `5.7.11-rockchip64`, CPU flags `asimd aes pmull sha1 sha2 crc32`).
+
+### 1. Nhóm P1 — Khẩn Cấp & ROI Cao Nhất:
+- **Streaming 128KB (`_iter_file_range`):** Hạ `chunk_size` từ `4MB` xuống `128KB` (giảm 32x áp lực cấp phát RAM heap Python và tránh nghẽn 6 worker threads Waitress khi tua video).
+- **Sửa Rò Rỉ Trạng Thái `_ytdlp_jobs` (`_reap_ytdlp_jobs_locked`):** Tự động dọn sạch các job yt-dlp đã hoàn thành trước khi đếm `_ydl_running` (chống lỗi `HTTP 429` vĩnh viễn), gỡ kẹt cờ block thumbnail daemon, và bổ sung `start_new_session=True` trên Linux.
+- **Đấu Nối Rust MP4 Parser vào `_livestream_video_is_playable`:** Sử dụng `rust_bridge.parse_mp4_header` (<0.1ms, zero-fork) cho `.mp4/.mov/.m4v` thay vì fork tiến trình `ffprobe` (timeout 15s) sau mỗi phiên livestream.
+- **Triệt Tiêu N+1 Query trong `api_hash_duplicates`:** Gom truy vấn metadata `file_hashes` bằng batch `WHERE path IN (...)` (chia chunk 500 phần tử tương thích giới hạn 999 bind variables của SQLite 3.16.2 trên Debian 9), giảm từ hàng nghìn lần mở/đóng kết nối SQLite xuống 1 kết nối duy nhất.
+- **Port `smart_organize_scan` sang Rust (`nas_indexer/src/smart_organize.rs`):** Quét 1 lượt streaming zero-copy (`row.get_ref`) trên `file_index` qua `rusqlite` Read-Only, tính `YYYY/MM` thuần số học (Howard Hinnant) kèm múi giờ địa phương, không tạo 468k Python tuples.
+
+### 2. Nhóm P2 — Hiệu Năng Cao & Tận Dụng Phần Cứng RK3328:
+- **Kernel Zero-Copy TS Merger (`nas_hasher/src/ts_merger.rs`):** Nối các segment quay màn hình `part_%06d.ts` bằng Linux syscall `SYS_copy_file_range` trực tiếp (tương thích `glibc 2.24` trên kernel `5.7.11-rockchip64`), fallback buffer 512KB an toàn, đồng thời tự động xóa `final_ts` trung gian sau khi remux MP4 thành công để tiết kiệm 50% dung lượng đĩa.
+- **aHash Hamming Similarity Search (`nas_indexer/src/fingerprint_search.rs`):** Quét bảng `image_fingerprints` trong Rust dùng `u64::count_ones()` (ARM64 NEON `VCNT` popcount), benchmark live trên NAS chỉ mất `2.82ms`.
+- **Kernel Zero-Copy USB Fast Copy (`nas_hasher/src/usb_importer.rs`):** Đấu nối vào `_usb_import_write_file_with_progress` với callback tiến độ & hủy tức thì (`progress_cb`). Benchmark thực tế trên NAS RK3328 (40MB): **zero-copy no-hash đạt `175.7 MB/s` (`0.228s`, `zero_copy=True`, zero-GIL)**; **single-pass + SHA-256 đạt `55.5 MB/s` (`0.720s`, 0 byte Python heap)**.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-018 — Nén & Giải Nén ZIP An Toàn Siêu Tốc Thuần Rust (Chống Zip-Slip & Symlink Traversal)
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** 283 passed, 6 skipped (100% test pass) + 7/7 Rust unit tests (`nas_hasher`). Production verified trên NAS thật qua mạng LAN (`192.168.100.254`).

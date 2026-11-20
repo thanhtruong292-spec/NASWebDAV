@@ -7,6 +7,8 @@ pub mod duplicates;
 pub mod exif_reader;
 pub mod image_thumb;
 pub mod mp4_parser;
+pub mod ts_merger;
+pub mod usb_importer;
 pub use archive_worker::{create_zip_from_dir, extract_zip_safe, ZipCreateResult, ZipExtractResult};
 pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
@@ -17,6 +19,8 @@ pub use image_thumb::{
     hamming_distance,
 };
 pub use mp4_parser::{parse_mp4_header, Mp4HeaderInfo};
+pub use ts_merger::{merge_ts_segments, MergeResult};
+pub use usb_importer::{fast_copy_file, FastCopyResult, ProgressCallback};
 
 /// Băm SHA256 toàn bộ file (chuẩn C-ABI).
 #[no_mangle]
@@ -379,6 +383,76 @@ pub unsafe extern "C" fn nas_hasher_create_zip_json(
         Err(_) => return std::ptr::null_mut(),
     };
     let res = match create_zip_from_dir(Path::new(src_str), Path::new(dst_str)) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Nối các file segment quay màn hình `part_000000.ts`.. thành 1 file `.ts` (zero-copy kernel `copy_file_range`).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_merge_ts_segments_json(
+    segments_dir_ptr: *const c_char,
+    total: c_int,
+    out_path_ptr: *const c_char,
+) -> *mut c_char {
+    if segments_dir_ptr.is_null() || out_path_ptr.is_null() || total < 0 {
+        return std::ptr::null_mut();
+    }
+    let seg_str = match CStr::from_ptr(segments_dir_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let out_str = match CStr::from_ptr(out_path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = match merge_ts_segments(Path::new(seg_str), total as usize, Path::new(out_str)) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Sao chép tệp siêu tốc cho USB Import (kernel `copy_file_range` zero-copy hoặc buffer 512KB + SHA-256).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_fast_copy_file_json(
+    src_ptr: *const c_char,
+    dst_ptr: *const c_char,
+    compute_sha256: c_int,
+    progress_cb: Option<ProgressCallback>,
+) -> *mut c_char {
+    if src_ptr.is_null() || dst_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let src_str = match CStr::from_ptr(src_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let dst_str = match CStr::from_ptr(dst_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = match fast_copy_file(
+        Path::new(src_str),
+        Path::new(dst_str),
+        compute_sha256 != 0,
+        progress_cb,
+    ) {
         Ok(r) => r,
         Err(_) => return std::ptr::null_mut(),
     };

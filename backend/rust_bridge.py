@@ -86,6 +86,12 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_create_zip_json"):
                         lib.nas_hasher_create_zip_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
                         lib.nas_hasher_create_zip_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_merge_ts_segments_json"):
+                        lib.nas_hasher_merge_ts_segments_json.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p]
+                        lib.nas_hasher_merge_ts_segments_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_fast_copy_file_json"):
+                        lib.nas_hasher_fast_copy_file_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]
+                        lib.nas_hasher_fast_copy_file_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_free_string"):
                         lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
                         lib.nas_hasher_free_string.restype = None
@@ -311,6 +317,18 @@ def _init_indexer_lib():
                     if hasattr(lib, "nas_indexer_photos_timeline_json"):
                         lib.nas_indexer_photos_timeline_json.argtypes = [ctypes.c_char_p, ctypes.c_longlong, ctypes.c_longlong, ctypes.c_int, ctypes.c_int]
                         lib.nas_indexer_photos_timeline_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_indexer_smart_organize_scan_json"):
+                        lib.nas_indexer_smart_organize_scan_json.argtypes = [
+                            ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int,
+                            ctypes.c_double, ctypes.c_double, ctypes.c_longlong
+                        ]
+                        lib.nas_indexer_smart_organize_scan_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_indexer_find_similar_fingerprints_json"):
+                        lib.nas_indexer_find_similar_fingerprints_json.argtypes = [
+                            ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                            ctypes.c_int, ctypes.c_int
+                        ]
+                        lib.nas_indexer_find_similar_fingerprints_json.restype = ctypes.c_void_p
                     _INDEXER_LIB = lib
                     _INDEXER_LIB_CHECKED = True
                     log.info("Rust indexer C-ABI loaded successfully from: %s", p)
@@ -896,6 +914,153 @@ def create_zip_from_dir_rust(src_dir, dst_zip):
                 except Exception:
                     pass
     return None
+
+
+_FAST_COPY_PROGRESS_CB_TYPE = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_uint64)
+
+
+def smart_organize_scan_rust(db_path, expected_root, filter_mode=0, now_secs=0.0, freshness_secs=300.0, tz_offset_secs=0):
+    """
+    Quét phân nhóm Smart Organize (YYYY/MM) 1 lượt zero-copy trên SQLite `file_index` bằng Rust.
+    Trả về dict {"success": True/False, ...} hoặc None để fallback về Python.
+    """
+    if not db_path or not os.path.isfile(db_path) or not expected_root:
+        return None
+    if not _init_indexer_lib() or not hasattr(_INDEXER_LIB, "nas_indexer_smart_organize_scan_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _INDEXER_LIB.nas_indexer_smart_organize_scan_json(
+            str(db_path).encode("utf-8"),
+            str(expected_root).encode("utf-8"),
+            int(filter_mode),
+            float(now_secs),
+            float(freshness_secs),
+            int(tz_offset_secs),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust smart_organize_scan failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_INDEXER_LIB, "nas_indexer_free_string"):
+            try:
+                _INDEXER_LIB.nas_indexer_free_string(ptr)
+            except Exception:
+                pass
+
+
+def find_similar_fingerprints_rust(db_path, exclude_path, target_hash, threshold=5, limit=50):
+    """
+    Tìm ảnh tương đồng theo khoảng cách Hamming trên `image_fingerprints` bằng Rust (ARM64 NEON VCNT).
+    Trả về list dict matches hoặc None để fallback về Python.
+    """
+    if not db_path or not os.path.isfile(db_path) or not target_hash or len(target_hash) != 16:
+        return None
+    if not _init_indexer_lib() or not hasattr(_INDEXER_LIB, "nas_indexer_find_similar_fingerprints_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _INDEXER_LIB.nas_indexer_find_similar_fingerprints_json(
+            str(db_path).encode("utf-8"),
+            str(exclude_path or "").encode("utf-8"),
+            str(target_hash).encode("utf-8"),
+            int(threshold),
+            int(limit),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust find_similar_fingerprints failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_INDEXER_LIB, "nas_indexer_free_string"):
+            try:
+                _INDEXER_LIB.nas_indexer_free_string(ptr)
+            except Exception:
+                pass
+
+
+def merge_ts_segments_rust(segments_dir, total, out_path):
+    """
+    Nối các file segment quay màn hình `part_000000.ts`.. thành 1 file `.ts` bằng Rust
+    (dùng kernel zero-copy `copy_file_range` trên Linux 5.7+, fallback buffer 512KB).
+    Trả về dict {"segments_merged", "total_bytes", "used_zero_copy"} hoặc None.
+    """
+    if not segments_dir or not os.path.isdir(segments_dir) or not out_path or int(total) < 0:
+        return None
+    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_merge_ts_segments_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _RUST_LIB.nas_hasher_merge_ts_segments_json(
+            str(segments_dir).encode("utf-8"),
+            int(total),
+            str(out_path).encode("utf-8"),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust merge_ts_segments failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+            try:
+                _RUST_LIB.nas_hasher_free_string(ptr)
+            except Exception:
+                pass
+
+
+def fast_copy_file_rust(src, dst, compute_sha256=False, progress_cb=None):
+    """
+    Sao chép tệp siêu tốc cho USB Import bằng Rust (kernel `copy_file_range` zero-copy hoặc buffer 512KB + SHA-256).
+    `progress_cb(bytes_copied)` trả về 0 để tiếp tục hoặc != 0 để hủy ngay.
+    Trả về dict {"bytes_copied", "sha256", "used_zero_copy", "cancelled"} hoặc None để fallback Python.
+    """
+    if not src or not os.path.isfile(src) or not dst:
+        return None
+    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_fast_copy_file_json"):
+        return None
+    ptr = None
+    c_cb = None
+    try:
+        if progress_cb is not None:
+            def _wrapped_cb(copied_bytes):
+                try:
+                    return 1 if progress_cb(int(copied_bytes)) else 0
+                except Exception:
+                    return 0
+            c_cb = _FAST_COPY_PROGRESS_CB_TYPE(_wrapped_cb)
+            cb_ptr = ctypes.cast(c_cb, ctypes.c_void_p)
+        else:
+            cb_ptr = ctypes.c_void_p(0)
+        ptr = _RUST_LIB.nas_hasher_fast_copy_file_json(
+            str(src).encode("utf-8"),
+            str(dst).encode("utf-8"),
+            1 if compute_sha256 else 0,
+            cb_ptr,
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust fast_copy_file failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+            try:
+                _RUST_LIB.nas_hasher_free_string(ptr)
+            except Exception:
+                pass
+
 
 
 
