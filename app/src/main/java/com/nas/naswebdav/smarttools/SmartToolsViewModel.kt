@@ -290,7 +290,7 @@ class SmartToolsViewModel(
                         val relPath = filesArr.optString(j, "").trim()
                         if (relPath.isEmpty()) continue
                         val cleanRel = relPath.removePrefix("/webdav/").removePrefix("/")
-                        val fullUrl = "$webdavRoot/$cleanRel"
+                        val fullUrl = com.nas.naswebdav.toValidUrl("$webdavRoot/$cleanRel")
                         val name = cleanRel.substringAfterLast('/')
                         out.add(
                             com.nas.naswebdav.NasFile(
@@ -344,7 +344,7 @@ class SmartToolsViewModel(
                                     found.add(
                                         com.nas.naswebdav.NasFile(
                                             name = p.substringAfterLast('/'),
-                                            path = "$webdavRoot/$p",
+                                            path = com.nas.naswebdav.toValidUrl("$webdavRoot/$p"),
                                             isDirectory = false,
                                             contentType = "image/*",
                                             contentLength = m.optLong("size", 0L),
@@ -430,9 +430,27 @@ class SmartToolsViewModel(
         if (files.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             val db = NasApplication.instance.database
+            val accountKey = com.nas.naswebdav.currentAccountKey()
             val selected = files.map { it.path }.toSet()
+            val roomCandidates = db.fileDao().getVerifiedDuplicateFiles(accountKey)
+            val serverCandidates = duplicateFilesList
+                .filter { !it.isDirectory && (it.partialHash?.length == 64) }
+                .map { f ->
+                    com.nas.naswebdav.CachedFile(
+                        path = f.path,
+                        name = f.name,
+                        isDirectory = false,
+                        contentType = f.contentType,
+                        parentPath = f.path.substringBeforeLast('/', ""),
+                        contentLength = f.contentLength,
+                        lastModified = f.lastModified,
+                        partialHash = f.partialHash,
+                        fullHash = f.partialHash,
+                        accountKey = accountKey
+                    )
+                }
             val plan = com.nas.naswebdav.planVerifiedDuplicateCleanup(
-                db.fileDao().getVerifiedDuplicateFiles(com.nas.naswebdav.currentAccountKey()), selected)
+                roomCandidates + serverCandidates, selected)
             val deleted = mutableSetOf<String>()
             for ((victim, keeper) in plan) {
                 try {
@@ -444,7 +462,7 @@ class SmartToolsViewModel(
                     android.util.Log.w("SmartToolsVM", "Verified cleanup skipped: ${victim.path}", error)
                 }
             }
-            val remaining = repository.getDuplicateFiles()
+            val remaining = fetchServerDuplicates() ?: repository.getDuplicateFiles()
             withContext(Dispatchers.Main) {
                 duplicateFilesList = remaining
                 selectedDuplicates.clear()
