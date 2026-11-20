@@ -537,9 +537,37 @@
           <span class="badge" id="abSpeedBadge" style="color:var(--ux-green);">--</span>
         </div>
         <div id="abPathLine" style="font-size:11px;color:var(--ux-text-3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
-        <div class="bar-track" style="margin:8px 0 6px;"><div class="bar-fill" id="abProgFill" style="width:0%;background:var(--ux-green);"></div></div>
+        
+        <!-- Pipeline Ảnh (Photo Stream) -->
+        <div id="abImageRow" style="margin-top:8px;padding-top:6px;border-top:1px dashed rgba(148,163,184,0.18);">
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-cyan);">
+            <span id="abImageFile" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;">📷 Ảnh: Đang đợi...</span>
+            <span id="abImageSpeed">--</span>
+          </div>
+          <div class="bar-track" style="margin:4px 0;"><div class="bar-fill" id="abImageProgFill" style="width:0%;background:var(--ux-cyan);"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);">
+            <span id="abImageCount">0 / 0 ảnh</span>
+            <b id="abImagePct" style="color:var(--ux-cyan);">0.0%</b>
+          </div>
+        </div>
+
+        <!-- Pipeline Video (Video Direct) -->
+        <div id="abVideoRow" style="margin-top:6px;padding-top:6px;border-top:1px dashed rgba(148,163,184,0.18);">
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-yellow);">
+            <span id="abVideoFile" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;">🎬 Video: Đang đợi...</span>
+            <span id="abVideoSpeed">--</span>
+          </div>
+          <div class="bar-track" style="margin:4px 0;"><div class="bar-fill" id="abVideoProgFill" style="width:0%;background:var(--ux-yellow);"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);">
+            <span id="abVideoCount">0 / 0 video</span>
+            <b id="abVideoPct" style="color:var(--ux-yellow);">0.0%</b>
+          </div>
+        </div>
+
+        <!-- Tổng hợp -->
+        <div class="bar-track" style="margin:10px 0 6px;"><div class="bar-fill" id="abProgFill" style="width:0%;background:var(--ux-green);"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-text-2);">
-          <span id="abCountLine">0 / 0 tệp</span>
+          <span id="abCountLine">Tổng: 0 / 0 tệp</span>
           <b id="abPctLine" style="color:var(--ux-green);">0.0%</b>
         </div>
       </div>

@@ -668,27 +668,57 @@ fun MainMenuSystemStatusCards(
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Đồng Bộ NAS", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Spacer(Modifier.height(4.dp))
-                                    
-                                    val speed = if (autoBackupVM.autoBackupUploadSpeedBps > 0L) {
+                                    val overallSpeed = if (autoBackupVM.autoBackupUploadSpeedBps > 0L) {
                                         "${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupUploadSpeedBps)}/s"
                                     } else if (autoBackupVM.autoBackupElapsedTime > 1000L) {
                                         "Đang đối chiếu..."
                                     } else "Đang chuẩn bị..."
 
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("Tệp: ${autoBackupVM.autoBackupCurrentFile}", style = MaterialTheme.typography.bodySmall, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        Text(speed, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(start = 4.dp))
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Đồng Bộ NAS Song Song", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                        Text(overallSpeed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
                                     }
 
-                                    if (autoBackupVM.autoBackupSourcePath.isNotEmpty()) {
-                                        val src = autoBackupVM.autoBackupSourcePath.substringAfterLast("0/").trim('/')
-                                        Text("Từ: /$src", style = MaterialTheme.typography.labelMedium, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    // ── PIPELINE 1: ẢNH (Photo Pipeline) ──
+                                    if (autoBackupVM.autoBackupImageTotalCount > 0 || autoBackupVM.autoBackupImageCurrentFile.isNotEmpty()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        val imgSpeed = if (autoBackupVM.autoBackupImageSpeedBps > 0L) " • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupImageSpeedBps)}/s" else ""
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Ảnh: ${autoBackupVM.autoBackupImageCurrentFile}", style = MaterialTheme.typography.bodySmall, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Text("${autoBackupVM.autoBackupImageProcessedCount}/${autoBackupVM.autoBackupImageTotalCount}$imgSpeed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
+                                        }
+                                        Spacer(Modifier.height(2.dp))
+                                        LinearProgressIndicator(
+                                            progress = {
+                                                if (autoBackupVM.autoBackupImageTotalCount > 0)
+                                                    (autoBackupVM.autoBackupImageProcessedCount.toFloat() / autoBackupVM.autoBackupImageTotalCount).coerceIn(0f, 1f)
+                                                else autoBackupVM.autoBackupImageProgress.coerceIn(0f, 1f)
+                                            },
+                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = DarkCard
+                                        )
                                     }
-                                    if (autoBackupVM.autoBackupDestPath.isNotEmpty()) {
-                                        val dst = autoBackupVM.autoBackupDestPath.substringAfter("/webdav/").trim('/')
-                                        Text("Lưu: /$dst", style = MaterialTheme.typography.labelMedium, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                                    // ── PIPELINE 2: VIDEO (Video Pipeline) ──
+                                    if (autoBackupVM.autoBackupVideoTotalCount > 0 || autoBackupVM.autoBackupVideoCurrentFile.isNotEmpty()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        val vidSpeed = if (autoBackupVM.autoBackupVideoSpeedBps > 0L) " • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupVideoSpeedBps)}/s" else ""
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Video: ${autoBackupVM.autoBackupVideoCurrentFile}", style = MaterialTheme.typography.bodySmall, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Text("${autoBackupVM.autoBackupVideoProcessedCount}/${autoBackupVM.autoBackupVideoTotalCount}$vidSpeed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(start = 4.dp))
+                                        }
+                                        Spacer(Modifier.height(2.dp))
+                                        LinearProgressIndicator(
+                                            progress = {
+                                                if (autoBackupVM.autoBackupVideoTotalCount > 0)
+                                                    (autoBackupVM.autoBackupVideoProcessedCount.toFloat() / autoBackupVM.autoBackupVideoTotalCount).coerceIn(0f, 1f)
+                                                else autoBackupVM.autoBackupVideoProgress.coerceIn(0f, 1f)
+                                            },
+                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            trackColor = DarkCard
+                                        )
                                     }
 
                                     Spacer(Modifier.height(6.dp))

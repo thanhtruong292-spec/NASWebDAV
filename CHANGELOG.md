@@ -5,6 +5,37 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-030 — Tách 2 Tiến Trình Sao Lưu Song Song (Ảnh & Video) & Giao Diện Dual Progress Bar Độc Lập
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Android Unit Tests: `AutoBackupDedupRegressionTest` PASS, `AutoBackupServerHashAndDeleteTest` PASS, `AutoBackupLockTest` PASS, `Html5BridgeContractTest` PASS, `TarStreamRequestBodyTest` PASS (100% PASS in 2m 46s).
+- Backend Tests: 299 passed, 6 skipped in 29.67s (100% tests backend Python PASS).
+- Build APK: `:app:assembleDebug` BUILD SUCCESSFUL in 2m 30s (`app-debug.apk` v1.0.198).
+- Triển khai thực tế: Đã cài đặt APK trực tiếp lên điện thoại Samsung Galaxy S21 Ultra `R5CR61F6L3V` qua ADB (`Streamed Install -> Success`).
+
+### 1. Tách 2 Tiến Trình Sao Lưu Song Song Thực Thụ (Concurrent Coroutine Pipelines):
+- **Kiến trúc Coroutines bên trong `AutoBackupWorker.kt`:**
+  - Thay vì duyệt tuần tự từng URI của MediaStore, worker phân chia thành 2 luồng độc lập chạy đồng thời qua `coroutineScope`:
+    1. **Pipeline 1 (Photo Stream):** Quét `MediaStore.Images.Media.EXTERNAL_CONTENT_URI`. Tận dụng Gom Batch Streaming TAR-over-HTTP (`TarStreamRequestBody`), gom các ảnh nhỏ (<=50MB) thành các mẻ (batch) đẩy thẳng vào `/api/backup/batch_stream`. Đo tốc độ và tiến trình riêng cho ảnh (`imageSpeedBps`, `imageProgress`, `imageProcessedCount`, `imageTotalCount`).
+    2. **Pipeline 2 (Video Direct):** Quét `MediaStore.Video.Media.EXTERNAL_CONTENT_URI`. Video thường có dung lượng lớn được upload độc lập trực tiếp qua WebDAV PUT/Stream, không phải chờ đợi các đợt gom batch ảnh. Đo tốc độ và tiến trình riêng cho video (`videoSpeedBps`, `videoProgress`, `videoProcessedCount`, `videoTotalCount`).
+  - **Tối ưu hóa Băng thông & I/O:** Bão hòa tối đa thông lượng mạng Wi-Fi và I/O của NAS RK3328 khi cả 2 luồng cùng ghi xuống đĩa không bị nghẽn CPU nhờ Rust multi-threading & zero-GIL.
+  - **Thread-Safe & Cross-Pipeline Dedup:**
+    - Sử dụng `shaMutexMap = ConcurrentHashMap<String, Mutex>()`: Khóa đồng bộ theo `sha256` của tệp. Nếu 1 ảnh và 1 video có cùng nội dung (như trong các bài test dedup regression), chỉ có 1 bên thực hiện PUT, bên còn lại tự động chờ và nhận diện bản sao trùng lặp (`isSkipped = true`) ngay khi bên kia hoàn tất mà không upload thừa.
+    - Bảo vệ Room Database (`verifiedHashDao`, `fingerprintDao`, `checkpointDao`) bằng `dbMutex` và các thư mục WebDAV bằng `folderMutex`.
+
+### 2. Giao Diện Người Dùng Dual Progress Bar Độc Lập (Compose & HTML5 Dashboard):
+- **`AutoBackupViewModel.kt`:** Bổ sung các State flow riêng biệt cho Ảnh (`autoBackupImageProgress`, `autoBackupImageSpeedBps`, `autoBackupImageProcessedCount`, `autoBackupImageTotalCount`, `autoBackupImageCurrentFile`) và Video (`autoBackupVideoProgress`, `autoBackupVideoSpeedBps`, `autoBackupVideoProcessedCount`, `autoBackupVideoTotalCount`, `autoBackupVideoCurrentFile`).
+- **Compose UI (`SystemStatusCards.kt` & `MainMenuPanels.kt`):**
+  - Hiển thị 2 thanh tiến trình song song trực quan:
+    + Thanh 1 (Ảnh - Màu Cyan / Primary): Biểu tượng 📷 Ảnh, tên tệp ảnh hiện tại, số lượng đã xử lý, tốc độ tải lên ảnh.
+    + Thanh 2 (Video - Màu Orange / Amber / Tertiary): Biểu tượng 🎬 Video, tên video hiện tại, số lượng video, tốc độ tải video.
+    + Thanh tổng hợp: Thanh tiến trình tổng % và tổng tốc độ kết hợp của cả 2 pipeline.
+- **HTML5 Dashboard (`NasHtmlDashboard.kt`, `index.html`, `app.js`):**
+  - Mở rộng JSON payload `backup` gửi sang WebView với 2 đối tượng con `images` và `videos`.
+  - Cập nhật modal `#abProgressBox` và widget trang chủ `bgTasks` hiển thị 2 thanh tiến trình con cho Ảnh và Video bên cạnh tổng tiến trình chung.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-029 — Gom Tệp Truyền Stream (TAR-over-HTTP Batch Streaming) Tăng Tốc Sao Lưu & Đối Chiếu SHA-256 Phần Cứng Zero-Disk
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:**

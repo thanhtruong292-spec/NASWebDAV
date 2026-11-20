@@ -655,8 +655,42 @@
           pathEl.textContent = (src ? ("Từ: /" + src.replace(/^\/+|\/+$/g, "")) : "") + (dst ? (" → /" + dst.replace(/^\/+|\/+$/g, "")) : "");
         }
         if (fillEl) fillEl.style.width = pct.toFixed(1) + "%";
-        if (cntEl) cntEl.textContent = "Tiến trình: " + (bak.processed || 0) + " / " + (bak.total || 0) + " tệp";
+        if (cntEl) cntEl.textContent = "Tổng: " + (bak.processed || 0) + " / " + (bak.total || 0) + " tệp";
         if (pctEl) pctEl.textContent = pct.toFixed(1) + "%";
+
+        // Cập nhật Pipeline Ảnh (Photo Stream)
+        var img = bak.images || {};
+        var imgEl = document.getElementById("abImageRow");
+        if (imgEl) {
+          var imgFileEl = document.getElementById("abImageFile");
+          var imgSpdEl = document.getElementById("abImageSpeed");
+          var imgFillEl = document.getElementById("abImageProgFill");
+          var imgCntEl = document.getElementById("abImageCount");
+          var imgPctEl = document.getElementById("abImagePct");
+          var imgPct = img.total > 0 ? Math.min(100, (img.processed * 100) / img.total) : Math.min(100, Math.max(0, (img.progress || 0) * 100));
+          if (imgFileEl) imgFileEl.textContent = "📷 Ảnh: " + (img.currentFile || "Đang đợi...");
+          if (imgSpdEl) imgSpdEl.textContent = img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--";
+          if (imgFillEl) imgFillEl.style.width = imgPct.toFixed(1) + "%";
+          if (imgCntEl) imgCntEl.textContent = (img.processed || 0) + " / " + (img.total || 0) + " ảnh";
+          if (imgPctEl) imgPctEl.textContent = imgPct.toFixed(1) + "%";
+        }
+
+        // Cập nhật Pipeline Video (Video Direct)
+        var vid = bak.videos || {};
+        var vidEl = document.getElementById("abVideoRow");
+        if (vidEl) {
+          var vidFileEl = document.getElementById("abVideoFile");
+          var vidSpdEl = document.getElementById("abVideoSpeed");
+          var vidFillEl = document.getElementById("abVideoProgFill");
+          var vidCntEl = document.getElementById("abVideoCount");
+          var vidPctEl = document.getElementById("abVideoPct");
+          var vidPct = vid.total > 0 ? Math.min(100, (vid.processed * 100) / vid.total) : Math.min(100, Math.max(0, (vid.progress || 0) * 100));
+          if (vidFileEl) vidFileEl.textContent = "🎬 Video: " + (vid.currentFile || "Đang đợi...");
+          if (vidSpdEl) vidSpdEl.textContent = vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--";
+          if (vidFillEl) vidFillEl.style.width = vidPct.toFixed(1) + "%";
+          if (vidCntEl) vidCntEl.textContent = (vid.processed || 0) + " / " + (vid.total || 0) + " video";
+          if (vidPctEl) vidPctEl.textContent = vidPct.toFixed(1) + "%";
+        }
       }
     }
     var pBtn = document.getElementById("abPauseBtn");
@@ -907,10 +941,22 @@
       var bp = Math.min(100, Math.max(0, (bak.progress || 0) * 100));
       var bSpd = bak.speedBps > 0 ? (fmtBytes(bak.speedBps) + "/s") : "Đang đối chiếu...";
       html += '<div id="bgBakOpen" style="padding:8px 0;border-bottom:1px solid rgba(148,163,184,0.12);cursor:pointer;">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;"><div class="list-title">Đồng bộ NAS</div><span class="badge" style="color:var(--ux-green);">' + bSpd + '</span></div>' +
-        '<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Tệp: ' + String(bak.currentFile || "...").replace(/</g, "&lt;") + '</div>' +
-        '<div class="bar-track" style="margin:6px 0;"><div class="bar-fill" style="width:' + bp.toFixed(1) + '%;background:var(--ux-green);"></div></div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>Tiến trình: ' + (bak.processed || 0) + ' / ' + (bak.total || 0) + ' tệp</span><b>' + bp.toFixed(1) + '%</b></div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;"><div class="list-title">Đồng bộ NAS Song Song</div><span class="badge" style="color:var(--ux-green);">' + bSpd + '</span></div>' +
+        '<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + String(bak.currentFile || "...").replace(/</g, "&lt;") + '</div>';
+
+      var img = bak.images || {};
+      var vid = bak.videos || {};
+      if (img.total > 0 || vid.total > 0) {
+        var ip = img.total > 0 ? Math.min(100, (img.processed * 100) / img.total) : 0;
+        var vp = vid.total > 0 ? Math.min(100, (vid.processed * 100) / vid.total) : 0;
+        html += '<div style="display:flex;gap:8px;margin-top:5px;">' +
+          '<div style="flex:1;"><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-cyan);"><span>📷 Ảnh: ' + (img.processed || 0) + '/' + (img.total || 0) + '</span><span>' + (img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--") + '</span></div><div class="bar-track" style="margin:2px 0;"><div class="bar-fill" style="width:' + ip.toFixed(1) + '%;background:var(--ux-cyan);"></div></div></div>' +
+          '<div style="flex:1;"><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-yellow);"><span>🎬 Video: ' + (vid.processed || 0) + '/' + (vid.total || 0) + '</span><span>' + (vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--") + '</span></div><div class="bar-track" style="margin:2px 0;"><div class="bar-fill" style="width:' + vp.toFixed(1) + '%;background:var(--ux-yellow);"></div></div></div>' +
+        '</div>';
+      }
+
+      html += '<div class="bar-track" style="margin:6px 0;"><div class="bar-fill" style="width:' + bp.toFixed(1) + '%;background:var(--ux-green);"></div></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>Tổng: ' + (bak.processed || 0) + ' / ' + (bak.total || 0) + ' tệp</span><b>' + bp.toFixed(1) + '%</b></div>' +
       '</div>';
     }
     if (usb.running) {

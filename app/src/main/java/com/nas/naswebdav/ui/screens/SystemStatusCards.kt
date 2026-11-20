@@ -468,31 +468,58 @@ fun DashboardSystemStatusCards(
 
                                 Spacer(Modifier.height(4.dp))
 
-                                val fileProgress = when {
-                                    autoBackupVM.autoBackupIsPaused -> "Đã tạm dừng"
-                                    autoBackupVM.autoBackupFileBytesTotal > 0L -> {
-                                        val written = com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupFileBytesWritten)
-                                        val total = com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupFileBytesTotal)
-                                        val speedStr = if (autoBackupVM.autoBackupUploadSpeedBps > 0L)
-                                            " • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupUploadSpeedBps)}/s"
-                                        else ""
-                                        "$written / $total$speedStr"
+                                val overallSpeed = if (autoBackupVM.autoBackupUploadSpeedBps > 0L) {
+                                    "${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupUploadSpeedBps)}/s"
+                                } else if (autoBackupVM.autoBackupElapsedTime > 1000L) {
+                                    "Đang đối chiếu..."
+                                } else "Đang chuẩn bị..."
+
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Đồng bộ Song Song (Ảnh & Video)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text(overallSpeed, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                        color = if (autoBackupVM.autoBackupIsPaused) AccentOrange else AccentGreen)
+                                }
+
+                                // ── PIPELINE 1: ẢNH (Photo Pipeline) ──
+                                if (autoBackupVM.autoBackupImageTotalCount > 0 || autoBackupVM.autoBackupImageCurrentFile.isNotEmpty()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    val imgSpeed = if (autoBackupVM.autoBackupImageSpeedBps > 0L) " • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupImageSpeedBps)}/s" else ""
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Ảnh: ${autoBackupVM.autoBackupImageCurrentFile}", fontSize = 11.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        Text("${autoBackupVM.autoBackupImageProcessedCount}/${autoBackupVM.autoBackupImageTotalCount}$imgSpeed", fontSize = 11.sp, color = AccentCyan, modifier = Modifier.padding(start = 4.dp))
                                     }
-                                    autoBackupVM.autoBackupElapsedTime > 1000L -> "Đang đối chiếu..."
-                                    else -> "Đang chuẩn bị..."
+                                    Spacer(Modifier.height(2.dp))
+                                    LinearProgressIndicator(
+                                        progress = {
+                                            if (autoBackupVM.autoBackupImageTotalCount > 0)
+                                                (autoBackupVM.autoBackupImageProcessedCount.toFloat() / autoBackupVM.autoBackupImageTotalCount).coerceIn(0f, 1f)
+                                            else autoBackupVM.autoBackupImageProgress.coerceIn(0f, 1f)
+                                        },
+                                        modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = AccentCyan,
+                                        trackColor = DarkSurface
+                                    )
                                 }
 
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Tệp: ${autoBackupVM.autoBackupCurrentFile}", fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    Text(fileProgress, fontSize = 12.sp,
-                                        color = if (autoBackupVM.autoBackupIsPaused) AccentOrange else AccentGreen,
-                                        modifier = Modifier.padding(start = 4.dp))
-                                }
-
-                                if (autoBackupVM.autoBackupSourcePath.isNotEmpty()) {
-                                    val srcDir = autoBackupVM.autoBackupSourcePath.substringBeforeLast("/")
-                                    val src = srcDir.substringAfterLast("0/").trim('/')
-                                    Text("Từ: /$src", fontSize = 12.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                // ── PIPELINE 2: VIDEO (Video Pipeline) ──
+                                if (autoBackupVM.autoBackupVideoTotalCount > 0 || autoBackupVM.autoBackupVideoCurrentFile.isNotEmpty()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    val vidSpeed = if (autoBackupVM.autoBackupVideoSpeedBps > 0L) " • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupVideoSpeedBps)}/s" else ""
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Video: ${autoBackupVM.autoBackupVideoCurrentFile}", fontSize = 11.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        Text("${autoBackupVM.autoBackupVideoProcessedCount}/${autoBackupVM.autoBackupVideoTotalCount}$vidSpeed", fontSize = 11.sp, color = AccentOrange, modifier = Modifier.padding(start = 4.dp))
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    LinearProgressIndicator(
+                                        progress = {
+                                            if (autoBackupVM.autoBackupVideoTotalCount > 0)
+                                                (autoBackupVM.autoBackupVideoProcessedCount.toFloat() / autoBackupVM.autoBackupVideoTotalCount).coerceIn(0f, 1f)
+                                             else autoBackupVM.autoBackupVideoProgress.coerceIn(0f, 1f)
+                                        },
+                                        modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = AccentOrange,
+                                        trackColor = DarkSurface
+                                    )
                                 }
 
                                 Spacer(Modifier.height(6.dp))

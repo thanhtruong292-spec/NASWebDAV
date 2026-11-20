@@ -57,6 +57,30 @@ class AutoBackupViewModel(
     var autoBackupUploadSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
         private set
 
+    // ═══ DUAL PIPELINE PARALLEL STATES (IMAGE & VIDEO) ═══
+
+    var autoBackupImageProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
+        private set
+    var autoBackupImageCurrentFile by androidx.compose.runtime.mutableStateOf("")
+        private set
+    var autoBackupImageProcessedCount by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var autoBackupImageTotalCount by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var autoBackupImageSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+
+    var autoBackupVideoProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
+        private set
+    var autoBackupVideoCurrentFile by androidx.compose.runtime.mutableStateOf("")
+        private set
+    var autoBackupVideoProcessedCount by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var autoBackupVideoTotalCount by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var autoBackupVideoSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+
     // ═══ BACKUP SCHEDULE ═══
 
     var backupSchedule by androidx.compose.runtime.mutableStateOf(BackupSchedule())
@@ -106,6 +130,20 @@ class AutoBackupViewModel(
                             autoBackupFileBytesWritten = workInfo.progress.getLong("bytesWritten", 0L)
                             autoBackupFileBytesTotal = workInfo.progress.getLong("bytesTotal", 0L)
                             autoBackupUploadSpeedBps = workInfo.progress.getLong("uploadSpeedBps", 0L)
+
+                            // Cập nhật trạng thái chi tiết 2 pipeline song song
+                            autoBackupImageProgress = workInfo.progress.getFloat("imageProgress", 0f)
+                            autoBackupImageCurrentFile = workInfo.progress.getString("imageFileName") ?: ""
+                            autoBackupImageProcessedCount = workInfo.progress.getInt("imageProcessedCount", 0)
+                            autoBackupImageTotalCount = workInfo.progress.getInt("imageTotalCount", 0)
+                            autoBackupImageSpeedBps = workInfo.progress.getLong("imageSpeedBps", 0L)
+
+                            autoBackupVideoProgress = workInfo.progress.getFloat("videoProgress", 0f)
+                            autoBackupVideoCurrentFile = workInfo.progress.getString("videoFileName") ?: ""
+                            autoBackupVideoProcessedCount = workInfo.progress.getInt("videoProcessedCount", 0)
+                            autoBackupVideoTotalCount = workInfo.progress.getInt("videoTotalCount", 0)
+                            autoBackupVideoSpeedBps = workInfo.progress.getLong("videoSpeedBps", 0L)
+
                             autoBackupIsPaused = com.nas.naswebdav.AutoBackupState.isPaused.value
                         } else {
                             isAutoBackupRunning = false

@@ -207,7 +207,11 @@ fun NasHtmlDashboardScreen(
         autoBackupVM.autoBackupProcessedCount,
         autoBackupVM.autoBackupCurrentFile,
         autoBackupVM.autoBackupProgress,
-        autoBackupVM.autoBackupIsPaused
+        autoBackupVM.autoBackupIsPaused,
+        autoBackupVM.autoBackupImageProcessedCount,
+        autoBackupVM.autoBackupImageSpeedBps,
+        autoBackupVM.autoBackupVideoProcessedCount,
+        autoBackupVM.autoBackupVideoSpeedBps
     ) {
         if (!pageLoaded) return@LaunchedEffect
         val payload = buildHtml5StateJson(
@@ -1284,6 +1288,20 @@ private fun buildHtml5StateJson(
             put("bytesWritten", autoBackupVM.autoBackupFileBytesWritten)
             put("bytesTotal", autoBackupVM.autoBackupFileBytesTotal)
             put("isPaused", autoBackupVM.autoBackupIsPaused)
+            put("images", JSONObject().apply {
+                put("currentFile", autoBackupVM.autoBackupImageCurrentFile)
+                put("progress", autoBackupVM.autoBackupImageProgress.toDouble())
+                put("processed", autoBackupVM.autoBackupImageProcessedCount)
+                put("total", autoBackupVM.autoBackupImageTotalCount)
+                put("speedBps", autoBackupVM.autoBackupImageSpeedBps)
+            })
+            put("videos", JSONObject().apply {
+                put("currentFile", autoBackupVM.autoBackupVideoCurrentFile)
+                put("progress", autoBackupVM.autoBackupVideoProgress.toDouble())
+                put("processed", autoBackupVM.autoBackupVideoProcessedCount)
+                put("total", autoBackupVM.autoBackupVideoTotalCount)
+                put("speedBps", autoBackupVM.autoBackupVideoSpeedBps)
+            })
         })
     })
 

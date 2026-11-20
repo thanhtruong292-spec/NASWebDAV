@@ -32,7 +32,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.URI
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 object AutoBackupState {
@@ -165,8 +168,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             try { webDavManager.createFolder(backupFolderBase) } catch (e: Exception) { SystemLogger.log("WARNING", "AutoBackup", "Tạo thư mục backup thất bại: ${e.message}") }
             
             // Cache để lưu các thư mục đã tạo nhằm tránh gọi MKCOL liên tục
-            val createdFolders = hashSetOf<String>()
+            val createdFolders = java.util.Collections.synchronizedSet(hashSetOf<String>())
             createdFolders.add(backupFolderBase)
+            val folderMutex = Mutex()
+            val dbMutex = Mutex()
+            val progressMutex = Mutex()
 
             // Hàm đệ quy tạo thư mục cha trên NAS
             suspend fun ensureFolderExists(nasRelativePath: String): String {
@@ -174,24 +180,26 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 var currentPath = backupFolderBase
                 for (segment in segments) {
                     currentPath += java.net.URLEncoder.encode(segment,"UTF-8").replace("+","%20") + "/"
-                    if (!createdFolders.contains(currentPath)) {
-                        try {
-                            webDavManager.createFolder(currentPath)
-                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
-                            // Ignored (thư mục có thể đã tồn tại)
+                    folderMutex.withLock {
+                        if (!createdFolders.contains(currentPath)) {
+                            try {
+                                webDavManager.createFolder(currentPath)
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
+                                // Ignored (thư mục có thể đã tồn tại)
+                            }
+                            createdFolders.add(currentPath)
                         }
-                        createdFolders.add(currentPath)
                     }
                 }
                 return currentPath
             }
 
-            var backupCount = 0
-            var skippedCount = 0
-            var failedCount = 0
-            var deletedCount = 0
-            var deletePermissionWarned = false
-            val urisToQuery = listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+            val backupCount = AtomicInteger(0)
+            val skippedCount = AtomicInteger(0)
+            val failedCount = AtomicInteger(0)
+            val deletedCount = AtomicInteger(0)
+            val isDeletePermissionWarned = AtomicBoolean(false)
+
             val projection = arrayOf(
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
@@ -199,39 +207,114 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 MediaStore.MediaColumns.SIZE,
                 MediaStore.MediaColumns.DATE_MODIFIED
             )
-            
-            var totalFilesToProcess = 0
-            for (mediaUri in urisToQuery) {
-                try {
-                    applicationContext.contentResolver.query(mediaUri, projection, null, null, null)?.use { cursor ->
-                        totalFilesToProcess += cursor.count
+
+            var totalImageFiles = 0
+            var totalVideoFiles = 0
+            try {
+                applicationContext.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, null)?.use { cursor ->
+                    totalImageFiles = cursor.count
+                }
+            } catch(e: Exception) {
+                android.util.Log.w("AutoBackup", "Image media query failed: ${e.message}")
+            }
+            try {
+                applicationContext.contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, null, null, null)?.use { cursor ->
+                    totalVideoFiles = cursor.count
+                }
+            } catch(e: Exception) {
+                android.util.Log.w("AutoBackup", "Video media query failed: ${e.message}")
+            }
+            val totalFilesToProcess = totalImageFiles + totalVideoFiles
+            val startTime = System.currentTimeMillis()
+
+            val imageProcessedCount = AtomicInteger(0)
+            val imageTotalCount = AtomicInteger(totalImageFiles)
+            val imageSpeedBps = AtomicLong(0L)
+            val imageCurrentFile = AtomicReference<String>("Sẵn sàng...")
+            val imageProgress = AtomicReference<Float>(0f)
+
+            val videoProcessedCount = AtomicInteger(0)
+            val videoTotalCount = AtomicInteger(totalVideoFiles)
+            val videoSpeedBps = AtomicLong(0L)
+            val videoCurrentFile = AtomicReference<String>("Sẵn sàng...")
+            val videoProgress = AtomicReference<Float>(0f)
+
+            val shaMutexMap = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+            val queuedDigests = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+            var lastProgressPushTime = 0L
+
+            suspend fun pushProgress(force: Boolean = false) {
+                val now = System.currentTimeMillis()
+                if (!force && now - lastProgressPushTime < 250) return
+                progressMutex.withLock {
+                    if (!force && now - lastProgressPushTime < 250) return
+                    lastProgressPushTime = now
+
+                    val totalProc = imageProcessedCount.get() + videoProcessedCount.get()
+                    val totalAll = imageTotalCount.get() + videoTotalCount.get()
+                    val overallPercent = if (totalAll > 0) totalProc.toFloat() / totalAll else 0f
+                    val combinedSpeed = imageSpeedBps.get() + videoSpeedBps.get()
+
+                    val imgFile = imageCurrentFile.get().ifEmpty { "Đang đợi..." }
+                    val vidFile = videoCurrentFile.get().ifEmpty { "Đang đợi..." }
+                    val displayFileName = when {
+                        totalImageFiles > 0 && totalVideoFiles > 0 -> "Ảnh: $imgFile | Video: $vidFile"
+                        totalImageFiles > 0 -> imgFile
+                        else -> vidFile
                     }
-                } catch(e: Exception) {
-                    android.util.Log.w("AutoBackup", "Media query failed: ${e.message}")
+
+                    setProgressAsync(workDataOf(
+                        "fileName" to safeWorkerText(displayFileName, 180),
+                        "sourcePath" to "Thiết bị máy trạm",
+                        "destPath" to safeWorkerText(backupFolderBase, 220),
+                        "progress" to overallPercent,
+                        "processedCount" to totalProc,
+                        "totalCount" to totalAll,
+                        "elapsedTime" to (now - startTime),
+                        "uploadSpeedBps" to combinedSpeed,
+
+                        // Thống kê riêng cho Ảnh (Photo Pipeline)
+                        "imageFileName" to safeWorkerText(imgFile, 180),
+                        "imageProgress" to imageProgress.get(),
+                        "imageProcessedCount" to imageProcessedCount.get(),
+                        "imageTotalCount" to imageTotalCount.get(),
+                        "imageSpeedBps" to imageSpeedBps.get(),
+
+                        // Thống kê riêng cho Video (Video Pipeline)
+                        "videoFileName" to safeWorkerText(vidFile, 180),
+                        "videoProgress" to videoProgress.get(),
+                        "videoProcessedCount" to videoProcessedCount.get(),
+                        "videoTotalCount" to videoTotalCount.get(),
+                        "videoSpeedBps" to videoSpeedBps.get()
+                    ))
+
+                    try {
+                        val progressInt = (overallPercent * 100).toInt()
+                        val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(combinedSpeed)
+                        val speedNotice = if (combinedSpeed > 0) " ($formattedSpeed/s)" else ""
+                        val notifContent = "Ảnh: ${imageProcessedCount.get()}/${imageTotalCount.get()} • Video: ${videoProcessedCount.get()}/${videoTotalCount.get()}"
+                        val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                            .setSmallIcon(android.R.drawable.ic_menu_upload)
+                            .setContentTitle("Đang sao lưu song song: $progressInt%$speedNotice")
+                            .setContentText(safeWorkerText(notifContent, 120))
+                            .setProgress(100, progressInt, false)
+                            .setOnlyAlertOnce(true)
+                            .setSilent(true)
+                            .setOngoing(true)
+                        if (Build.VERSION.SDK_INT < 33 || applicationContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
+                        }
+                    } catch (_: Exception) {}
                 }
             }
-            var processedFilesCount = 0
-            val startTime = System.currentTimeMillis()
-            
-            // Đẩy trạng thái ban đầu để UI không bị kẹt ở "0 / 0 tệp"
-            setProgressAsync(workDataOf(
-                "fileName" to "Đang chuẩn bị danh sách...",
-                "sourcePath" to "Thiết bị máy trạm",
-                "destPath" to safeWorkerText(backupFolderBase, 220),
-                "progress" to 0f,
-                "processedCount" to 0,
-                "totalCount" to totalFilesToProcess,
-                "elapsedTime" to 0L
-            ))
-            
-            var lastSkipProgressTime = 0L
-            var currentSpeedBps = 0L
-            val canBatchStream = webDavManager.supportsBatchStream()
-            val pendingTarBatch = mutableListOf<PendingTarBackupItem>()
-            var pendingTarBatchBytes = 0L
-            val pendingBatchDigests = mutableMapOf<String, String>()
 
-            suspend fun uploadSingleFileDirect(item: PendingTarBackupItem) {
+            // Đẩy trạng thái ban đầu để UI không bị kẹt ở "0 / 0 tệp"
+            pushProgress(force = true)
+
+            val canBatchStream = webDavManager.supportsBatchStream()
+
+            suspend fun uploadSingleFileDirect(item: PendingTarBackupItem, isImage: Boolean) {
                 val mimeType = try {
                     applicationContext.contentResolver.getType(ContentUris.withAppendedId(item.mediaUri, item.id)) ?: "application/octet-stream"
                 } catch (e: Exception) {
@@ -239,9 +322,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     "application/octet-stream"
                 }
                 var effectiveTarget = item.targetFileNasPath
-                var lastProgressTime = 0L
                 var lastSpeedCalcTime = System.currentTimeMillis()
                 var lastSpeedCalcBytes = 0L
+
+                val speedTarget = if (isImage) imageSpeedBps else videoSpeedBps
+                val progressTarget = if (isImage) imageProgress else videoProgress
+                val fileTarget = if (isImage) imageCurrentFile else videoCurrentFile
+
+                fileTarget.set(item.fileName)
 
                 run {
                     if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
@@ -258,42 +346,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         val now = System.currentTimeMillis()
                                         val dt = (now - lastSpeedCalcTime) / 1000.0
                                         if (dt >= 0.4 || bytesWritten == totalBytes) {
-                                            if (dt > 0) currentSpeedBps = ((bytesWritten - lastSpeedCalcBytes) / dt).toLong().coerceAtLeast(0L)
+                                            if (dt > 0) speedTarget.set(((bytesWritten - lastSpeedCalcBytes) / dt).toLong().coerceAtLeast(0L))
                                             lastSpeedCalcTime = now
                                             lastSpeedCalcBytes = bytesWritten
                                         }
-                                        if (now - lastProgressTime > 750 || bytesWritten == totalBytes) {
-                                            lastProgressTime = now
-                                            val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
-                                            val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
-                                            setProgressAsync(workDataOf(
-                                                "fileName" to safeWorkerText(item.fileName, 180),
-                                                "sourcePath" to safeWorkerText(item.dataPath, 220),
-                                                "destPath" to safeWorkerText(item.targetFileNasPath, 220),
-                                                "progress" to percent,
-                                                "processedCount" to processedFilesCount,
-                                                "totalCount" to totalFilesToProcess,
-                                                "elapsedTime" to (now - startTime),
-                                                "bytesWritten" to bytesWritten,
-                                                "bytesTotal" to totalBytes,
-                                                "uploadSpeedBps" to currentSpeedBps
-                                            ))
-                                            try {
-                                                val progressInt = (percent * 100).toInt()
-                                                val speedNotice = if (currentSpeedBps > 0) " ($formattedSpeed/s)" else ""
-                                                val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
-                                                    .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                                    .setContentTitle("Đang sao lưu lên NAS: $progressInt%$speedNotice")
-                                                    .setContentText(safeWorkerText("${item.fileName}\n${item.parentRelativePath}", 120))
-                                                    .setProgress(100, progressInt, false)
-                                                    .setOnlyAlertOnce(true)
-                                                    .setSilent(true)
-                                                    .setOngoing(true)
-                                                if (Build.VERSION.SDK_INT < 33 || applicationContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                                    androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
-                                                }
-                                            } catch (_: Exception) {}
-                                        }
+                                        val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                        progressTarget.set(percent)
+                                        runBlocking { pushProgress() }
                                     }
                                     webDavManager.uploadStreamWithProgress(tmpNasPath, input2, item.fileSize, mimeType, onUploadProgress, null)
                                 }
@@ -377,167 +436,150 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     webDavManager.inspectBackupDestination(verifyTarget, item.fileSize, item.sourceProof.sha256) == BackupContentState.MATCH
                 if (!uploadVerified) {
                     SystemLogger.log("WARNING", "AutoBackup", "Bản tải lên chưa xác minh đầy đủ; giữ nguồn: ${item.fileName}")
-                    failedCount++
+                    failedCount.incrementAndGet()
                     return
                 }
 
-                db.fingerprintDao().insertFingerprint(FileFingerprint(
-                    filePath = verifyTarget, hash = "", fileName = item.fileName,
-                    fileSize = item.fileSize, accountKey = backupAccountKey, sourceKey = item.sourceKey,
-                    contentHash = item.sourceProof.sha256
-                ))
-                db.verifiedHashDao().put(VerifiedHashCache(
-                    accountKey = backupAccountKey, path = verifyTarget, contentLength = item.fileSize,
-                    version = item.sourceProof.version ?: "", sha256 = item.sourceProof.sha256, fileId = ""
-                ))
+                dbMutex.withLock {
+                    db.fingerprintDao().insertFingerprint(FileFingerprint(
+                        filePath = verifyTarget, hash = "", fileName = item.fileName,
+                        fileSize = item.fileSize, accountKey = backupAccountKey, sourceKey = item.sourceKey,
+                        contentHash = item.sourceProof.sha256
+                    ))
+                    db.verifiedHashDao().put(VerifiedHashCache(
+                        accountKey = backupAccountKey, path = verifyTarget, contentLength = item.fileSize,
+                        version = item.sourceProof.version ?: "", sha256 = item.sourceProof.sha256, fileId = ""
+                    ))
+                }
                 if (deleteAfterBackup) {
                     if (deleteVerifiedBackupSource(applicationContext, item.uri, item.dataPath, item.sourceProof)) {
-                        deletedCount++
-                    } else if (!deletePermissionWarned && Build.VERSION.SDK_INT >= 27) {
-                        deletePermissionWarned = true
+                        deletedCount.incrementAndGet()
+                    } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
                         SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup nhưng chưa xóa được nguồn (${item.fileName}) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
                     }
                 }
-                backupCount++
+                backupCount.incrementAndGet()
             }
 
-            suspend fun flushTarBatch() {
-                if (pendingTarBatch.isEmpty()) return
-                val batch = pendingTarBatch.toList()
-                pendingTarBatch.clear()
-                pendingTarBatchBytes = 0L
-                pendingBatchDigests.clear()
+            suspend fun processPipeline(isImage: Boolean, mediaUri: Uri) {
+                val processedCounter = if (isImage) imageProcessedCount else videoProcessedCount
+                val totalCounter = if (isImage) imageTotalCount else videoTotalCount
+                val speedTarget = if (isImage) imageSpeedBps else videoSpeedBps
+                val progressTarget = if (isImage) imageProgress else videoProgress
+                val fileTarget = if (isImage) imageCurrentFile else videoCurrentFile
 
-                val byFolder = batch.groupBy { it.targetFolder }
-                for ((folder, items) in byFolder) {
-                    if (isStopped) break
-                    val tarFiles = items.map { itm: PendingTarBackupItem ->
-                        val relPathInTar = if (itm.targetFileNasPath.startsWith(itm.targetFolder)) {
-                            itm.targetFileNasPath.removePrefix(itm.targetFolder).removePrefix("/")
-                        } else {
-                            itm.targetFileNasPath.removePrefix("/")
-                        }
-                        TarBatchFileItem(
-                            uri = itm.uri,
-                            relativePath = relPathInTar,
-                            size = itm.fileSize,
-                            mtimeSec = itm.mtimeSec,
-                            sourceProofSha256 = itm.sourceProof.sha256,
-                            dataPath = itm.dataPath
-                        )
-                    }
-                    val tarBody = TarStreamRequestBody(
-                        context = applicationContext,
-                        items = tarFiles,
-                        onProgress = { bytesWritten: Long, totalBytes: Long, speedBps: Long ->
-                            if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
-                            currentSpeedBps = speedBps
-                            val now = System.currentTimeMillis()
-                            if (now - lastSkipProgressTime > 250 || bytesWritten == totalBytes) {
-                                lastSkipProgressTime = now
-                                val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
-                                val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
-                                setProgressAsync(workDataOf(
-                                    "fileName" to safeWorkerText("Gom Stream: ${items.size} tệp", 180),
-                                    "sourcePath" to safeWorkerText("${bytesWritten / 1024 / 1024}MB / ${totalBytes / 1024 / 1024}MB", 220),
-                                    "destPath" to safeWorkerText(folder, 220),
-                                    "progress" to percent,
-                                    "processedCount" to processedFilesCount,
-                                    "totalCount" to totalFilesToProcess,
-                                    "elapsedTime" to (now - startTime),
-                                    "bytesWritten" to bytesWritten,
-                                    "bytesTotal" to totalBytes,
-                                    "uploadSpeedBps" to currentSpeedBps
-                                ))
-                                try {
-                                    val progressInt = (percent * 100).toInt()
-                                    val speedNotice = if (currentSpeedBps > 0) " ($formattedSpeed/s)" else ""
-                                    val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
-                                        .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                        .setContentTitle("Đang sao lưu Stream: $progressInt%$speedNotice")
-                                        .setContentText(safeWorkerText("Gom ${items.size} tệp vào NAS", 120))
-                                        .setProgress(100, progressInt, false)
-                                        .setOnlyAlertOnce(true)
-                                        .setSilent(true)
-                                        .setOngoing(true)
-                                    if (Build.VERSION.SDK_INT < 33 || applicationContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                        }
-                    )
-                    val res = try {
-                        webDavManager.uploadBatchTarStream(folder, tarBody)
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        null
-                    }
-                    if (res != null && res.ok) {
-                        val serverMap = res.items.associateBy { it.path }
-                        for (itm in items) {
-                            val rel = if (itm.targetFileNasPath.startsWith(itm.targetFolder)) {
+                val pendingTarBatch = mutableListOf<PendingTarBackupItem>()
+                var pendingTarBatchBytes = 0L
+                val pendingBatchDigests = mutableMapOf<String, String>()
+
+                suspend fun flushTarBatch() {
+                    if (pendingTarBatch.isEmpty()) return
+                    val batch = pendingTarBatch.toList()
+                    pendingTarBatch.clear()
+                    pendingTarBatchBytes = 0L
+                    pendingBatchDigests.clear()
+
+                    val byFolder = batch.groupBy { it.targetFolder }
+                    for ((folder, items) in byFolder) {
+                        if (isStopped) break
+                        fileTarget.set("Gom Stream: ${items.size} ảnh")
+                        val tarFiles = items.map { itm: PendingTarBackupItem ->
+                            val relPathInTar = if (itm.targetFileNasPath.startsWith(itm.targetFolder)) {
                                 itm.targetFileNasPath.removePrefix(itm.targetFolder).removePrefix("/")
                             } else {
                                 itm.targetFileNasPath.removePrefix("/")
                             }
-                            val srv = serverMap[rel]
-                            if (srv != null && srv.sha256.equals(itm.sourceProof.sha256, ignoreCase = true)) {
-                                db.fingerprintDao().insertFingerprint(FileFingerprint(
-                                    filePath = itm.targetFileNasPath, hash = "", fileName = itm.fileName,
-                                    fileSize = itm.fileSize, accountKey = backupAccountKey, sourceKey = itm.sourceKey,
-                                    contentHash = itm.sourceProof.sha256
-                                ))
-                                db.verifiedHashDao().put(VerifiedHashCache(
-                                    accountKey = backupAccountKey, path = itm.targetFileNasPath, contentLength = itm.fileSize,
-                                    version = itm.sourceProof.version ?: "", sha256 = itm.sourceProof.sha256, fileId = ""
-                                ))
-                                if (deleteAfterBackup) {
-                                    if (deleteVerifiedBackupSource(applicationContext, itm.uri, itm.dataPath, itm.sourceProof)) {
-                                        deletedCount++
-                                    } else if (!deletePermissionWarned && Build.VERSION.SDK_INT >= 27) {
-                                        deletePermissionWarned = true
-                                        SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup nhưng chưa xóa được nguồn (${itm.fileName}) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                            TarBatchFileItem(
+                                uri = itm.uri,
+                                relativePath = relPathInTar,
+                                size = itm.fileSize,
+                                mtimeSec = itm.mtimeSec,
+                                sourceProofSha256 = itm.sourceProof.sha256,
+                                dataPath = itm.dataPath
+                            )
+                        }
+                        val tarBody = TarStreamRequestBody(
+                            context = applicationContext,
+                            items = tarFiles,
+                            onProgress = { bytesWritten: Long, totalBytes: Long, speedBps: Long ->
+                                if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
+                                speedTarget.set(speedBps)
+                                val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                progressTarget.set(percent)
+                                runBlocking { pushProgress() }
+                            }
+                        )
+                        val res = try {
+                            webDavManager.uploadBatchTarStream(folder, tarBody)
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            null
+                        }
+                        if (res != null && res.ok) {
+                            val serverMap = res.items.associateBy { it.path }
+                            for (itm in items) {
+                                val rel = if (itm.targetFileNasPath.startsWith(itm.targetFolder)) {
+                                    itm.targetFileNasPath.removePrefix(itm.targetFolder).removePrefix("/")
+                                } else {
+                                    itm.targetFileNasPath.removePrefix("/")
+                                }
+                                val srv = serverMap[rel]
+                                if (srv != null && srv.sha256.equals(itm.sourceProof.sha256, ignoreCase = true)) {
+                                    dbMutex.withLock {
+                                        db.fingerprintDao().insertFingerprint(FileFingerprint(
+                                            filePath = itm.targetFileNasPath, hash = "", fileName = itm.fileName,
+                                            fileSize = itm.fileSize, accountKey = backupAccountKey, sourceKey = itm.sourceKey,
+                                            contentHash = itm.sourceProof.sha256
+                                        ))
+                                        db.verifiedHashDao().put(VerifiedHashCache(
+                                            accountKey = backupAccountKey, path = itm.targetFileNasPath, contentLength = itm.fileSize,
+                                            version = itm.sourceProof.version ?: "", sha256 = itm.sourceProof.sha256, fileId = ""
+                                        ))
+                                    }
+                                    if (deleteAfterBackup) {
+                                        if (deleteVerifiedBackupSource(applicationContext, itm.uri, itm.dataPath, itm.sourceProof)) {
+                                            deletedCount.incrementAndGet()
+                                        } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
+                                            SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup nhưng chưa xóa được nguồn (${itm.fileName}) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                                        }
+                                    }
+                                    backupCount.incrementAndGet()
+                                } else {
+                                    try {
+                                        uploadSingleFileDirect(itm, isImage = true)
+                                    } catch (e: Exception) {
+                                        failedCount.incrementAndGet()
                                     }
                                 }
-                                backupCount++
-                            } else {
-                                try {
-                                    uploadSingleFileDirect(itm)
-                                } catch (e: Exception) {
-                                    failedCount++
+                            }
+                        } else {
+                            for (itm in items) {
+                                if (isStopped) break
+                                val cached = db.verifiedHashDao().get(backupAccountKey, itm.targetFileNasPath)
+                                if (cached != null && cached.sha256.equals(itm.sourceProof.sha256, ignoreCase = true)) {
+                                    skippedCount.incrementAndGet()
+                                    continue
                                 }
-                            }
-                        }
-                    } else {
-                        for (itm in items) {
-                            if (isStopped) break
-                            val cached = db.verifiedHashDao().get(backupAccountKey, itm.targetFileNasPath)
-                            if (cached != null && cached.sha256.equals(itm.sourceProof.sha256, ignoreCase = true)) {
-                                skippedCount++
-                                continue
-                            }
-                            try {
-                                uploadSingleFileDirect(itm)
-                            } catch (e: Exception) {
-                                failedCount++
+                                try {
+                                    uploadSingleFileDirect(itm, isImage = true)
+                                } catch (e: Exception) {
+                                    failedCount.incrementAndGet()
+                                }
                             }
                         }
                     }
                 }
-            }
-            
-            for (mediaUri in urisToQuery) {
-                if (isStopped) break
+
                 applicationContext.contentResolver.query(mediaUri, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
                     val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
                     val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
                     val dateModifiedIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
-                    
+
                     while (cursor.moveToNext() && !isStopped) {
-                        if (processedFilesCount % 500 == 0) {
+                        val currentCount = processedCounter.incrementAndGet()
+                        if (currentCount % 500 == 0) {
                             if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
                                 SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
                                 (SecurePrefsHelper.getUrlList(applicationContext) + SecurePrefsHelper.getTailscaleBaseUrl(applicationContext))
@@ -546,35 +588,27 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             }
                         }
                         while (AutoBackupState.isPaused.value && !isStopped) { kotlinx.coroutines.delay(500) }
-                        processedFilesCount++
+
                         val rawFileName = cursor.getString(nameIndex) ?: continue
                         val fileName = com.nas.naswebdav.utils.FormatUtils.sanitizeFileName(rawFileName)
                         val dataPath = cursor.getString(dataIndex) ?: continue
                         val id = cursor.getLong(idIndex)
-                        
-                        // Loại bỏ tiền tố /storage/emulated/0/ để lấy đường dẫn tương đối đẹp nhất
+
                         val externalStorageRoot = android.os.Environment.getExternalStorageDirectory().absolutePath
                         val cleanRelativePath = if (dataPath.startsWith(externalStorageRoot)) {
                             dataPath.substring(externalStorageRoot.length).trimStart('/')
                         } else {
-                            // Fallback nếu không thuộc emulated storage (ít gặp)
                             val segments = dataPath.split("/")
                             if (segments.size >= 2) "${segments[segments.size - 2]}/${segments.last()}" else fileName
                         }
-                        
-                        // Ví dụ: DCIM/Camera/IMG_123.jpg
+
                         val parentRelativePath = cleanRelativePath.substringBeforeLast("/", "")
                         val targetFolder = if (parentRelativePath.isNotEmpty()) {
                             ensureFolderExists(parentRelativePath)
                         } else {
                             backupFolderBase
                         }
-                        
-                        // FIX-REVIEW-24/09-#5/#12: remote name on dinh theo NGUON + giu
-                        // extension dung (suffix truoc extension). Ban cu
-                        // `photo.jpg__id42` lam hong nhan dien extension phia
-                        // scanner/thumbnail (phan loai theo extension). Dinh dang
-                        // moi: `photo__id42.jpg` — vua tach biet vua giu type.
+
                         val encodedFileName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
                         val dotIdx = encodedFileName.lastIndexOf('.')
                         val stableRemoteName = if (dotIdx > 0) {
@@ -586,160 +620,137 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
 
                         val fileSize = cursor.getLong(sizeIndex)
                         if (fileSize == 0L) {
-                            // FIX counter sum: file rong duoc bo qua phai duoc cong vao skipped
-                            // de tong (success + skipped + failed) khop voi totalFilesToProcess
-                            // trong dialog ket qua cuoi.
-                            skippedCount++
+                            skippedCount.incrementAndGet()
                             continue
                         }
                         val fileUri = android.content.ContentUris.withAppendedId(mediaUri, id)
-                        val now = System.currentTimeMillis()
-                        if (now - lastSkipProgressTime > 250) {
-                            lastSkipProgressTime = now
-                            val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
-                            setProgressAsync(workDataOf(
-                                "fileName" to safeWorkerText(fileName, 180),
-                                "sourcePath" to safeWorkerText(dataPath, 220),
-                                "destPath" to safeWorkerText(targetFileNasPath, 220),
-                                "progress" to percent,
-                                "processedCount" to processedFilesCount,
-                                "totalCount" to totalFilesToProcess,
-                                "elapsedTime" to (now - startTime),
-                                "uploadSpeedBps" to currentSpeedBps
-                            ))
-                        }
-                        try {
-                            // FAST-PATH: Kiểm tra nếu tệp đã được đồng bộ trong phiên trước với cùng kích thước và phiên bản nguồn
-                            val localCached = db.verifiedHashDao().get(backupAccountKey, targetFileNasPath)
-                            val currentSourceVer = sourceFileVersion(applicationContext, fileUri)
-                            val isLocallyVerifiedMatch = localCached != null && localCached.contentLength == fileSize &&
-                                localCached.sha256.isNotBlank() && currentSourceVer != null && localCached.version == currentSourceVer.value
 
-                            val sourceProof = if (isLocallyVerifiedMatch) {
-                                BackupSourceDigest(localCached!!.sha256, currentSourceVer!!.value)
+                        fileTarget.set(fileName)
+                        pushProgress()
+
+                        try {
+                            val localCachedFast = dbMutex.withLock { db.verifiedHashDao().get(backupAccountKey, targetFileNasPath) }
+                            val currentSourceVer = sourceFileVersion(applicationContext, fileUri)
+                            val isLocallyVerifiedMatchFast = localCachedFast != null && localCachedFast.contentLength == fileSize &&
+                                localCachedFast.sha256.isNotBlank() && currentSourceVer != null && localCachedFast.version == currentSourceVer.value
+
+                            val sourceProof = if (isLocallyVerifiedMatchFast) {
+                                BackupSourceDigest(localCachedFast!!.sha256, currentSourceVer!!.value)
                             } else {
                                 backupSourceDigest(applicationContext, fileUri, fileSize)
                             }
                             val sourceKey = fileUri.toString()
-                            var fileHash: String? = null
-                            val queuedTarget = if (canBatchStream) pendingBatchDigests[sourceProof.sha256] else null
-                            val plan = if (isLocallyVerifiedMatch || queuedTarget != null) {
-                                BackupTargetPlan(queuedTarget ?: targetFileNasPath, true)
-                            } else {
-                                webDavManager.planBackupTarget(targetFileNasPath, fileSize, sourceProof.sha256, backupAccountKey)
-                            }
-                            targetFileNasPath = plan.path
-                            if (!backupSourceStillCurrent(applicationContext, fileUri, sourceProof)) {
-                                throw java.io.IOException("Nguồn thay đổi trong lúc kiểm tra backup")
-                            }
-                            val isSkipped = plan.skip
 
-                            if (isSkipped) {
-                                if (!isLocallyVerifiedMatch) {
-                                    // Lưu ngay vào cache cục bộ trên điện thoại để các lần quét sau khớp tức thì (0.01ms)
-                                    db.verifiedHashDao().put(VerifiedHashCache(
-                                        accountKey = backupAccountKey,
-                                        path = plan.path,
-                                        contentLength = fileSize,
-                                        version = sourceProof.version ?: "",
-                                        sha256 = sourceProof.sha256,
-                                        fileId = ""
-                                    ))
-                                    if (plan.path != targetFileNasPath) {
-                                        db.verifiedHashDao().put(VerifiedHashCache(
-                                            accountKey = backupAccountKey,
-                                            path = targetFileNasPath,
-                                            contentLength = fileSize,
-                                            version = sourceProof.version ?: "",
-                                            sha256 = sourceProof.sha256,
-                                            fileId = ""
-                                        ))
-                                    }
-                                    db.fingerprintDao().insertFingerprint(FileFingerprint(
-                                        filePath = plan.path,
-                                        hash = "",
-                                        fileName = fileName,
-                                        fileSize = fileSize,
-                                        accountKey = backupAccountKey,
-                                        sourceKey = sourceKey,
-                                        contentHash = sourceProof.sha256
-                                    ))
-                                }
-                                if (deleteAfterBackup) {
-                                    if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
-                                        deletedCount++
-                                    } else if (!deletePermissionWarned && Build.VERSION.SDK_INT >= 27) {
-                                        deletePermissionWarned = true
-                                        SystemLogger.log("WARNING", "AutoBackup", "Không thể xóa tệp đã có trên NAS ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
-                                    }
-                                }
-                                val now = System.currentTimeMillis()
-                                if (now - lastSkipProgressTime > 250) {
-                                    lastSkipProgressTime = now
-                                    val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
-                                    setProgressAsync(workDataOf(
-                                        "fileName" to safeWorkerText("Bỏ qua (đã đồng bộ): $fileName", 180),
-                                        "sourcePath" to safeWorkerText(dataPath, 220),
-                                        "destPath" to safeWorkerText(targetFileNasPath, 220),
-                                        "progress" to percent,
-                                        "processedCount" to processedFilesCount,
-                                        "totalCount" to totalFilesToProcess,
-                                        "elapsedTime" to (now - startTime),
-                                        "uploadSpeedBps" to currentSpeedBps
-                                    ))
-                                }
-                                skippedCount++
-                                continue
-                            }
-                            
-                            val mtimeSec = if (dateModifiedIndex >= 0) {
-                                val dm = cursor.getLong(dateModifiedIndex)
-                                if (dm > 0L) dm else System.currentTimeMillis() / 1000L
-                            } else {
-                                System.currentTimeMillis() / 1000L
-                            }
-                            val pendingItem = PendingTarBackupItem(
-                                uri = fileUri,
-                                id = id,
-                                mediaUri = mediaUri,
-                                fileName = fileName,
-                                dataPath = dataPath,
-                                targetFileNasPath = targetFileNasPath,
-                                targetFolder = targetFolder,
-                                stableRemoteName = stableRemoteName,
-                                parentRelativePath = parentRelativePath,
-                                fileSize = fileSize,
-                                mtimeSec = mtimeSec,
-                                sourceProof = sourceProof,
-                                sourceKey = sourceKey
-                            )
+                            val shaMutex = shaMutexMap.computeIfAbsent(sourceProof.sha256) { Mutex() }
+                            shaMutex.withLock {
+                                val localCached = dbMutex.withLock { db.verifiedHashDao().get(backupAccountKey, targetFileNasPath) }
+                                val isLocallyVerifiedMatch = localCached != null && localCached.contentLength == fileSize &&
+                                    localCached.sha256.isNotBlank() && currentSourceVer != null && localCached.version == currentSourceVer.value
 
-                            if (canBatchStream && fileSize in 1L..(50L * 1024 * 1024) && sourceProof.sha256.isNotBlank()) {
-                                pendingTarBatch.add(pendingItem)
-                                pendingTarBatchBytes += fileSize
-                                pendingBatchDigests[sourceProof.sha256] = targetFileNasPath
-                                if (pendingTarBatch.size >= 100 || pendingTarBatchBytes >= 100L * 1024 * 1024) {
-                                    flushTarBatch()
+                                val queuedTarget = if (canBatchStream && isImage) pendingBatchDigests[sourceProof.sha256] else queuedDigests[sourceProof.sha256]
+                                val plan = if (isLocallyVerifiedMatch || queuedTarget != null) {
+                                    BackupTargetPlan(queuedTarget ?: targetFileNasPath, true)
+                                } else {
+                                    webDavManager.planBackupTarget(targetFileNasPath, fileSize, sourceProof.sha256, backupAccountKey)
                                 }
-                            } else {
-                                if (pendingTarBatch.isNotEmpty()) {
-                                    flushTarBatch()
+                                targetFileNasPath = plan.path
+                                if (!backupSourceStillCurrent(applicationContext, fileUri, sourceProof)) {
+                                    throw java.io.IOException("Nguồn thay đổi trong lúc kiểm tra backup")
                                 }
-                                uploadSingleFileDirect(pendingItem)
+                                val isSkipped = plan.skip
+
+                                if (isSkipped) {
+                                    if (!isLocallyVerifiedMatch) {
+                                        dbMutex.withLock {
+                                            db.verifiedHashDao().put(VerifiedHashCache(
+                                                accountKey = backupAccountKey,
+                                                path = plan.path,
+                                                contentLength = fileSize,
+                                                version = sourceProof.version ?: "",
+                                                sha256 = sourceProof.sha256,
+                                                fileId = ""
+                                            ))
+                                            if (plan.path != targetFileNasPath) {
+                                                db.verifiedHashDao().put(VerifiedHashCache(
+                                                    accountKey = backupAccountKey,
+                                                    path = targetFileNasPath,
+                                                    contentLength = fileSize,
+                                                    version = sourceProof.version ?: "",
+                                                    sha256 = sourceProof.sha256,
+                                                    fileId = ""
+                                                ))
+                                            }
+                                            db.fingerprintDao().insertFingerprint(FileFingerprint(
+                                                filePath = plan.path,
+                                                hash = "",
+                                                fileName = fileName,
+                                                fileSize = fileSize,
+                                                accountKey = backupAccountKey,
+                                                sourceKey = sourceKey,
+                                                contentHash = sourceProof.sha256
+                                            ))
+                                        }
+                                    }
+                                    if (deleteAfterBackup) {
+                                        if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
+                                            deletedCount.incrementAndGet()
+                                        } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
+                                            SystemLogger.log("WARNING", "AutoBackup", "Không thể xóa tệp đã có trên NAS ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                                        }
+                                    }
+                                    skippedCount.incrementAndGet()
+                                    fileTarget.set("Bỏ qua: $fileName")
+                                    pushProgress()
+                                    return@withLock
+                                }
+
+                                val mtimeSec = if (dateModifiedIndex >= 0) {
+                                    val dm = cursor.getLong(dateModifiedIndex)
+                                    if (dm > 0L) dm else System.currentTimeMillis() / 1000L
+                                } else {
+                                    System.currentTimeMillis() / 1000L
+                                }
+                                val pendingItem = PendingTarBackupItem(
+                                    uri = fileUri,
+                                    id = id,
+                                    mediaUri = mediaUri,
+                                    fileName = fileName,
+                                    dataPath = dataPath,
+                                    targetFileNasPath = targetFileNasPath,
+                                    targetFolder = targetFolder,
+                                    stableRemoteName = stableRemoteName,
+                                    parentRelativePath = parentRelativePath,
+                                    fileSize = fileSize,
+                                    mtimeSec = mtimeSec,
+                                    sourceProof = sourceProof,
+                                    sourceKey = sourceKey
+                                )
+
+                                queuedDigests[sourceProof.sha256] = targetFileNasPath
+
+                                if (isImage && canBatchStream && fileSize in 1L..(50L * 1024 * 1024) && sourceProof.sha256.isNotBlank()) {
+                                    pendingTarBatch.add(pendingItem)
+                                    pendingTarBatchBytes += fileSize
+                                    pendingBatchDigests[sourceProof.sha256] = targetFileNasPath
+                                    if (pendingTarBatch.size >= 100 || pendingTarBatchBytes >= 100L * 1024 * 1024) {
+                                        flushTarBatch()
+                                    }
+                                } else {
+                                    if (isImage && pendingTarBatch.isNotEmpty()) {
+                                        flushTarBatch()
+                                    }
+                                    uploadSingleFileDirect(pendingItem, isImage = isImage)
+                                }
                             }
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            // FIX: partial access trên Android 14+ khiến openInputStream() hoặc
-                            // ImageFingerprint.computeFromUri() throw SecurityException /
-                            // FileNotFoundException với "has no access" message.
-                            // Skip file thay vì count as failed — tránh log spam 161+ lỗi.
                             val isAccessDenied = e is SecurityException
                                 || (e.message ?: "").contains("has no access")
                                 || (e.message ?: "").contains("Permission denied")
                             if (isAccessDenied) {
-                                skippedCount++ // skip, NOT fail
+                                skippedCount.incrementAndGet()
                             } else {
-                                failedCount++
+                                failedCount.incrementAndGet()
                                 if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) {
                                     if (e is java.net.ConnectException || e is java.net.SocketTimeoutException || e is java.net.UnknownHostException) {
                                         SmartNetworkManager.invalidateCache()
@@ -749,53 +760,57 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     }
                                 }
                             }
-                            val now = System.currentTimeMillis()
-                            if (now - lastSkipProgressTime > 300) {
-                                lastSkipProgressTime = now
-                                val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
-                                setProgressAsync(workDataOf(
-                                    "fileName" to safeWorkerText(fileName, 180),
-                                    "sourcePath" to safeWorkerText(dataPath, 220),
-                                    "destPath" to safeWorkerText(backupFolderBase, 220),
-                                    "progress" to percent,
-                                    "processedCount" to processedFilesCount,
-                                    "totalCount" to totalFilesToProcess,
-                                    "elapsedTime" to (now - startTime),
-                                    "uploadSpeedBps" to currentSpeedBps
-                                ))
-                            }
                         }
-                        // Nhường luồng coroutine mà không ngủ 100ms lãng phí sau mỗi tệp
+                        pushProgress()
                         kotlinx.coroutines.yield()
-                        // CC-005 P1: checkpoint mỗi 25 file — worker bị kill thì lần
-                        // sau resume từ checkpoint (qua checkpointDao), không quét lại từ đầu.
-                        if (processedFilesCount % 25 == 0) {
+                        if (currentCount % 25 == 0) {
                             runCatching {
-                                db.checkpointDao().saveCheckpoint(
-                                    ScanCheckpoint(
-                                        workerName = "AutoBackup",
-                                        lastProcessedFolder = fileName,
-                                        scannedCount = processedFilesCount,
-                                        foundCount = backupCount
+                                dbMutex.withLock {
+                                    db.checkpointDao().saveCheckpoint(
+                                        ScanCheckpoint(
+                                            workerName = "AutoBackup",
+                                            lastProcessedFolder = fileName,
+                                            scannedCount = imageProcessedCount.get() + videoProcessedCount.get(),
+                                            foundCount = backupCount.get()
+                                        )
                                     )
-                                )
+                                }
                             }.onFailure { e -> SystemLogger.log("WARNING", "AutoBackup", "saveCheckpoint runCatching: ${e.message}") }
                         }
                     }
                 }
+
+                if (isImage && pendingTarBatch.isNotEmpty()) {
+                    flushTarBatch()
+                }
             }
-            if (pendingTarBatch.isNotEmpty()) {
-                flushTarBatch()
+
+            // Chạy 2 pipeline song song: Ảnh (Image Pipeline) và Video (Video Pipeline)
+            coroutineScope {
+                val imageJob = async(Dispatchers.IO) {
+                    processPipeline(isImage = true, mediaUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                }
+                val videoJob = async(Dispatchers.IO) {
+                    processPipeline(isImage = false, mediaUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                }
+                imageJob.await()
+                videoJob.await()
             }
-            val deletedSuffix = if (deletedCount > 0) ", Đã giải phóng trên điện thoại: $deletedCount tệp" else ""
-            val logMessage = "Đồng bộ khép kín: Thành công $backupCount tệp, Bỏ qua $skippedCount tệp tập tin trùng lặp, Thất bại: $failedCount tệp$deletedSuffix."
-            if (backupCount > 0 || failedCount > 0) {
-                SystemLogger.log(if (failedCount > 0) "WARNING" else "SUCCESS", "AutoBackup", logMessage)
+
+            val bCount = backupCount.get()
+            val sCount = skippedCount.get()
+            val fCount = failedCount.get()
+            val dCount = deletedCount.get()
+
+            val deletedSuffix = if (dCount > 0) ", Đã giải phóng trên điện thoại: $dCount tệp" else ""
+            val logMessage = "Đồng bộ khép kín song song: Thành công $bCount tệp, Bỏ qua $sCount tệp tập tin trùng lặp, Thất bại: $fCount tệp$deletedSuffix."
+            if (bCount > 0 || fCount > 0) {
+                SystemLogger.log(if (fCount > 0) "WARNING" else "SUCCESS", "AutoBackup", logMessage)
             } else {
                 SystemLogger.log("INFO", "AutoBackup", logMessage)
             }
-            SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (success=$backupCount skipped=$skippedCount failed=$failedCount)")
-            
+            SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền song song (success=$bCount skipped=$sCount failed=$fCount)")
+
             if (totalFilesToProcess == 0) {
                 AutoBackupState.resultTotal.value = 0
                 AutoBackupState.resultSuccess.value = 0
@@ -804,14 +819,16 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 AutoBackupState.showResultDialog.value = true
                 return@withContext Result.success()
             }
-            
+
             AutoBackupState.resultTotal.value = totalFilesToProcess
-            AutoBackupState.resultSuccess.value = backupCount
-            AutoBackupState.resultSkipped.value = skippedCount
-            AutoBackupState.resultFailed.value = failedCount
+            AutoBackupState.resultSuccess.value = bCount
+            AutoBackupState.resultSkipped.value = sCount
+            AutoBackupState.resultFailed.value = fCount
             AutoBackupState.showResultDialog.value = true
             // CC-005 P1: xong -> xóa checkpoint (lần sau quét mới từ đầu).
-            runCatching { db.checkpointDao().clearCheckpoint("AutoBackup") }.onFailure { e -> SystemLogger.log("WARNING", "AutoBackup", "clearCheckpoint runCatching: ${e.message}") }
+            runCatching {
+                dbMutex.withLock { db.checkpointDao().clearCheckpoint("AutoBackup") }
+            }.onFailure { e -> SystemLogger.log("WARNING", "AutoBackup", "clearCheckpoint runCatching: ${e.message}") }
 
             SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (trả Result.success)")
             return@withContext Result.success()
