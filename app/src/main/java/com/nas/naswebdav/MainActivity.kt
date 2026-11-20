@@ -182,20 +182,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         }
 
-        // FIX IMAGE CACHE LEAK: Dọn disk cache khi bộ nhớ thấp
-
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-
-            // FIX BUG #6: Dùng lifecycleScope thay vì GlobalScope — tránh rò rỉ khi Activity bị hủy
-
-            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-
-                coil.Coil.imageLoader(this@MainActivity).diskCache?.clear()
-
-            }
-
-        }
-
     }
 
 

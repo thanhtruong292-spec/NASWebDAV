@@ -887,8 +887,6 @@ class DeviceManagementViewModel(
                 val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val request = okhttp3.Request.Builder()
                     .url("$apiBaseUrl/api/disk/speedtest").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
-                val speedTestClient = NasApplication.instance.fastApiClient.newBuilder()
-                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
                 speedTestClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val json = org.json.JSONObject(response.body?.string() ?: "")
@@ -1072,6 +1070,11 @@ class DeviceManagementViewModel(
                 chain.proceed(request)
             }
             .build()
+    }
+
+    private val speedTestClient: okhttp3.OkHttpClient by lazy {
+        NasApplication.instance.fastApiClient.newBuilder()
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
     }
 
     internal suspend fun fetchUsbImportStatusSuspend(compact: Boolean = false, minIntervalMs: Long = 0L) {

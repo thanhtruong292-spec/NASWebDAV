@@ -916,44 +916,56 @@ class FileBrowserViewModel(
 
     fun deleteMultipleFiles(context: Context, filesToDelete: List<NasFile>) {
         if (filesToDelete.isEmpty()) return
-        enqueueBatchOperation(context, "DELETE", filesToDelete, "")
+        viewModelScope.launch(Dispatchers.IO) {
+            enqueueBatchOperation(context, "DELETE", filesToDelete, "")
+        }
     }
 
     fun batchCopyFiles(context: Context, filesToCopy: List<NasFile>, destUrl: String) {
         if (filesToCopy.isEmpty()) return
-        enqueueBatchOperation(context, "COPY", filesToCopy, destUrl)
+        viewModelScope.launch(Dispatchers.IO) {
+            enqueueBatchOperation(context, "COPY", filesToCopy, destUrl)
+        }
     }
 
     fun batchMoveFiles(context: Context, filesToMove: List<NasFile>, destUrl: String) {
         if (filesToMove.isEmpty()) return
-        enqueueBatchOperation(context, "MOVE", filesToMove, destUrl)
+        viewModelScope.launch(Dispatchers.IO) {
+            enqueueBatchOperation(context, "MOVE", filesToMove, destUrl)
+        }
     }
 
-    private fun enqueueBatchOperation(context: Context, operation: String, files: List<NasFile>, destUrl: String) {
-        isBatchProcessing = true
-        batchProcessType = operation
-        batchProcessProgress = 0f
-
-        val payloadFile = try {
-            val payloadDir = java.io.File(context.cacheDir, "batch_payloads").apply { mkdirs() }
-            val file = java.io.File(payloadDir, "batch_${operation}_${System.currentTimeMillis()}.json")
-            val payloadItems = org.json.JSONArray()
-            files.forEach { item ->
-                payloadItems.put(org.json.JSONObject().apply {
-                    put("path", item.path)
-                    put("name", item.name)
-                })
-            }
-            file.writeText(
-                org.json.JSONObject().put("files", payloadItems).toString(),
-                Charsets.UTF_8
-            )
-            file
-        } catch (e: Exception) {
-            isBatchProcessing = false
-            errorMessage = context.getString(R.string.browser_batch_prepare_error, e.message.orEmpty())
-            return
+    private suspend fun enqueueBatchOperation(context: Context, operation: String, files: List<NasFile>, destUrl: String) {
+        withContext(Dispatchers.Main) {
+            isBatchProcessing = true
+            batchProcessType = operation
+            batchProcessProgress = 0f
         }
+
+        val payloadFile = withContext(Dispatchers.IO) {
+            try {
+                val payloadDir = java.io.File(context.cacheDir, "batch_payloads").apply { mkdirs() }
+                val file = java.io.File(payloadDir, "batch_${operation}_${System.currentTimeMillis()}.json")
+                val payloadItems = org.json.JSONArray()
+                files.forEach { item ->
+                    payloadItems.put(org.json.JSONObject().apply {
+                        put("path", item.path)
+                        put("name", item.name)
+                    })
+                }
+                file.writeText(
+                    org.json.JSONObject().put("files", payloadItems).toString(),
+                    Charsets.UTF_8
+                )
+                file
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isBatchProcessing = false
+                    errorMessage = context.getString(R.string.browser_batch_prepare_error, e.message.orEmpty())
+                }
+                return@withContext null
+            }
+        } ?: return
 
         val inputData = androidx.work.Data.Builder()
             .putString("operation", operation)
@@ -967,10 +979,12 @@ class FileBrowserViewModel(
             .addTag("BATCH_OPERATION")
             .build()
 
-        androidx.work.WorkManager.getInstance(context)
-            .enqueueUniqueWork("BatchOperation_$operation", androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, workRequest)
+        withContext(Dispatchers.IO) {
+            androidx.work.WorkManager.getInstance(context)
+                .enqueueUniqueWork("BatchOperation_$operation", androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, workRequest)
+        }
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Main) {
             androidx.work.WorkManager.getInstance(context)
                 .getWorkInfoByIdFlow(workRequest.id)
                 .collect { workInfo ->
@@ -1068,7 +1082,9 @@ class FileBrowserViewModel(
 
     fun restoreMultipleFiles(context: Context, filesToRestore: List<NasFile>) {
         if (filesToRestore.isEmpty()) return
-        enqueueBatchOperation(context, "RESTORE", filesToRestore, "")
+        viewModelScope.launch(Dispatchers.IO) {
+            enqueueBatchOperation(context, "RESTORE", filesToRestore, "")
+        }
     }
 
     fun unzipFile(context: Context, filePath: String) {

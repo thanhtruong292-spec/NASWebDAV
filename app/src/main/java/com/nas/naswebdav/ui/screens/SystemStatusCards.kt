@@ -63,6 +63,22 @@ import com.nas.naswebdav.NasFile
 // ============ SystemStatusCards (tách từ MainMenuSections.kt — không đổi logic) ============
 
 @Composable
+private fun LivestreamDurationText(jobId: String, initialSeconds: Long) {
+    var localSeconds by remember(jobId) { androidx.compose.runtime.mutableStateOf(initialSeconds) }
+    LaunchedEffect(jobId, initialSeconds) {
+        localSeconds = initialSeconds
+    }
+    LaunchedEffect(jobId) {
+        while (isActive) {
+            kotlinx.coroutines.delay(1000)
+            localSeconds++
+        }
+    }
+    val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
+    Text(displayDur, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentOrange)
+}
+
+@Composable
 fun DashboardSystemStatusCards(
     mContext: android.content.Context,
     onOpenAutoBackup: () -> Unit = {},
@@ -591,17 +607,8 @@ fun DashboardSystemStatusCards(
                                 androidx.compose.runtime.key(job.jobId) {
                                     val jobPlatformName = when (job.platform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
                                     
-                                    var localSeconds by remember(job.jobId) { androidx.compose.runtime.mutableStateOf(job.durationSeconds) }
-                                    LaunchedEffect(job.jobId, job.durationSeconds) {
-                                        localSeconds = job.durationSeconds
-                                    }
-                                    LaunchedEffect(job.jobId) {
-                                        while (isActive) {
-                                            kotlinx.coroutines.delay(1000)
-                                            localSeconds++
-                                        }
-                                    }
-                                    val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
+                                    // Thời lượng livestream tính bởi LivestreamDurationText (composable lá:
+                                    // mỗi giây chỉ recompose 1 Text, không recompose toàn bộ row/card).
 
                                     Column(
                                         Modifier
@@ -620,7 +627,7 @@ fun DashboardSystemStatusCards(
                                             "$jobPlatformName • ${job.jobId.takeLast(6)}"
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text(primaryLabel, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-                                            Text(displayDur, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentOrange)
+                                            LivestreamDurationText(job.jobId, job.durationSeconds)
                                         }
                                         Spacer(Modifier.height(2.dp))
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

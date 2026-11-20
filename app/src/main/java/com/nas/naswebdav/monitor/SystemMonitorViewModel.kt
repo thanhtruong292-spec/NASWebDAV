@@ -191,6 +191,12 @@ class SystemMonitorViewModel(
 
     private var statusPollingJob: Job? = null
     private val statusFetchMutex = Mutex()
+    private val summaryClient: okhttp3.OkHttpClient by lazy {
+        NasApplication.instance.fastApiClient.newBuilder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
     private val dailyReportLock = Any()
     private val dailyReportRequestsInFlight = mutableSetOf<String>()
     private var latestDailyReportRequestKey = ""
@@ -217,7 +223,7 @@ class SystemMonitorViewModel(
                 }
                 // CC-004 P1-3: chi poll khi app foreground — tiet kiem CPU/battery.
                 if (!com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND) {
-                    delay(15_000L)
+                    delay(60_000L)
                     continue
                 }
                 val ok = fetchStatusNow()
@@ -824,11 +830,8 @@ class SystemMonitorViewModel(
                 val url = "$apiBase/api/storage/summary" + if (force) "?force=1" else ""
                 val req = okhttp3.Request.Builder().url(url).get().let(WebDavManager::tagCurrentAuth).build()
                 // Quet full-disk lan dau mat toi 25s (server) + Tailscale cham ->
-                // fastApiClient 30s de timeout trang. Client rieng 60s cho endpoint nay.
-                val summaryClient = NasApplication.instance.fastApiClient.newBuilder()
-                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
+                // fastApiClient 30s de timeout trang. Client rieng 60s cho endpoint nay (chia
+                // chung connection pool voi fastApiClient qua newBuilder(), tao 1 lan lazy).
                 summaryClient.newCall(req).execute().use { resp ->
                     val raw = runCatching { resp.body?.string() ?: "{}" }.getOrDefault("{}")
                     // 429 rate-limit force van kem cache cu + retry_after -> van hien so.

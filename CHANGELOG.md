@@ -5,6 +5,24 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-023 — Gắn Nút UI Compose Mới (ZIP/EXIF/Similar) & Tối Ưu Hóa Toàn Diện Hiệu Năng Front-end Android
+**Tác nhân thực hiện:** Antigravity + Claude Code (`--model opus --effort max`).
+**Kết quả kiểm thử:** `:app:testDebugUnitTest` & `:app:assembleDebug` **BUILD SUCCESSFUL** (0 lỗi, 0 warning mới trên toàn bộ file chỉnh sửa).
+
+### 1. Gắn Nút UI Compose Cho Các API Rust Mới (`BrowserScreen.kt`, `BrowserComponents.kt`, `MediaScreens.kt`):
+- Thêm nút **"Nén ZIP tại NAS"** cho thư mục ở cả menu 3 chấm và ActionSheet (`POST /api/zip`).
+- Thêm 2 nút trên thanh công cụ `ImageViewerScreen`: **Thông tin EXIF** (`GET /api/media/exif`) và **Ảnh tương đồng** (`GET /api/fingerprint/similar`) kèm hộp thoại xem trực tiếp và nhảy nhanh tới ảnh tương đồng.
+
+### 2. Tối Ưu Hóa Hiệu Năng Thuần Front-end Android (7 File Kotlin, `+87/-70` dòng):
+- **`MediaScreens.kt` (`VideoPlayerScreen`):** Chỉ cập nhật `playbackPositionMs` mỗi 500ms khi overlay đang mở (`showOverlayButtons == true`), khi ẩn giảm xuống 2000ms (chống recompose toàn màn hình 2 lần/giây khi xem video full-screen).
+- **`NasApplication.kt`:** Hạ Coil `memoryCache.maxSizePercent` từ `0.35 ➔ 0.18` (giảm nguy cơ OOM khi kết hợp ExoPlayer buffer).
+- **`SystemMonitorViewModel.kt` & `DeviceManagementViewModel.kt`:** Cache `summaryClient` & `speedTestClient` thành `by lazy` chia sẻ chung connection pool thay vì tạo mới mỗi lần gọi; tăng interval background polling dashboard từ `15s ➔ 60s` tiết kiệm pin.
+- **`SystemStatusCards.kt`:** Tách đồng hồ đếm giây livestream ra Composable lá `LivestreamDurationText` để mỗi giây chỉ recompose đúng 1 `Text`.
+- **`FileBrowserViewModel.kt`:** Chuyển `enqueueBatchOperation()` (`file.writeText`) sang `Dispatchers.IO`, loại bỏ file I/O trên Main Thread.
+- **`MainActivity.kt`:** Bỏ xóa Coil `diskCache` trong `onTrimMemory(TRIM_MEMORY_RUNNING_LOW)` để giữ lại cache thumbnail trên đĩa (chỉ xóa `memoryCache`).
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-022 — Tách Biệt Triệt Để Front-end Android Khỏi Các Tác Vụ Nặng Của Back-end (Đấu Nối Trực Tiếp NAS Rust API)
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** `:app:compileDebugKotlin` **BUILD SUCCESSFUL** (0 lỗi, 0 warning mới trên 4 file Kotlin) + `test_extract_api_endpoints.py` PASS.

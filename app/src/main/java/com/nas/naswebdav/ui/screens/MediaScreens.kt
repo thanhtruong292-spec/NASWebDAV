@@ -1092,11 +1092,13 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
     LaunchedEffect(isRepeat) {
         exoPlayer.repeatMode = if (isRepeat) androidx.media3.common.Player.REPEAT_MODE_ALL else androidx.media3.common.Player.REPEAT_MODE_OFF
     }
-    LaunchedEffect(exoPlayer) {
+    LaunchedEffect(exoPlayer, showOverlayButtons) {
         while (isActive) {
-            playbackPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            playbackDurationMs = exoPlayer.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET } ?: 0L
-            delay(500)
+            if (showOverlayButtons) {
+                playbackPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+                playbackDurationMs = exoPlayer.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET } ?: 0L
+            }
+            delay(if (showOverlayButtons) 500 else 2000)
         }
     }
 

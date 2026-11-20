@@ -77,7 +77,7 @@ open class NasApplication : Application(), ImageLoaderFactory {
         return ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.35) // Tăng RAM cache từ 15% lên 35%
+                    .maxSizePercent(0.18) // Giảm RAM cache xuống 18% để tránh OOM khi kết hợp ExoPlayer buffer
                     .build()
             }
             .diskCache {
