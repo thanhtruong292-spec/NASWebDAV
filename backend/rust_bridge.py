@@ -98,6 +98,12 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_parse_media_header_json"):
                         lib.nas_hasher_parse_media_header_json.argtypes = [ctypes.c_char_p]
                         lib.nas_hasher_parse_media_header_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_dir_usage_json"):
+                        lib.nas_hasher_dir_usage_json.argtypes = [ctypes.c_char_p, ctypes.c_ulonglong, ctypes.c_double]
+                        lib.nas_hasher_dir_usage_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_scan_broken_mp4_json"):
+                        lib.nas_hasher_scan_broken_mp4_json.argtypes = [ctypes.c_char_p, ctypes.c_int]
+                        lib.nas_hasher_scan_broken_mp4_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_free_string"):
                         lib.nas_hasher_free_string.argtypes = [ctypes.c_void_p]
                         lib.nas_hasher_free_string.restype = None
@@ -1163,6 +1169,69 @@ def parse_media_header(filepath):
     if str(filepath).lower().endswith((".mp4", ".m4v", ".mov")):
         return parse_mp4_header(filepath)
     return None
+
+
+def dir_usage_rust(path, max_files=8000, max_seconds=1.5):
+    """
+    Tính nhanh dung lượng thư mục bằng Rust `walkdir` (zero-GIL, dừng sớm theo max_files/max_seconds).
+    Trả về tuple (total_bytes, file_count, partial_bool) hoặc None để fallback Python.
+    """
+    if not path or not os.path.exists(path):
+        return (0, 0, False)
+    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_dir_usage_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _RUST_LIB.nas_hasher_dir_usage_json(
+            str(path).encode("utf-8"),
+            int(max(0, max_files)),
+            float(max(0.05, max_seconds)),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        data = json.loads(raw_json)
+        return (int(data.get("total", 0)), int(data.get("count", 0)), bool(data.get("partial", False)))
+    except Exception as e:
+        log.warning("Rust dir_usage failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+            try:
+                _RUST_LIB.nas_hasher_free_string(ptr)
+            except Exception:
+                pass
+
+
+def scan_broken_mp4_candidates_rust(scan_dir, workers=4):
+    """
+    Quét thư mục song song bằng Rust `walkdir` + `rayon` + `mp4_parser` tìm các file `.mp4` nghi ngờ hỏng.
+    Trả về dict {"total_scanned": N, "suspect_files": [...]} hoặc None để fallback Python.
+    """
+    if not scan_dir or not os.path.isdir(scan_dir):
+        return None
+    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_scan_broken_mp4_json"):
+        return None
+    ptr = None
+    try:
+        ptr = _RUST_LIB.nas_hasher_scan_broken_mp4_json(
+            str(scan_dir).encode("utf-8"),
+            int(max(1, min(4, workers))),
+        )
+        if not ptr:
+            return None
+        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
+        return json.loads(raw_json)
+    except Exception as e:
+        log.warning("Rust scan_broken_mp4 failed, fallback to python: %s", e)
+        return None
+    finally:
+        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
+            try:
+                _RUST_LIB.nas_hasher_free_string(ptr)
+            except Exception:
+                pass
+
 
 
 

@@ -5,6 +5,20 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-021 — Hoàn Tất Đợt Cuối P4 (Rust `dir_usage` Nhanh 13.95x & Parallel `scan_broken_mp4` Quét 4.157 Video Zero-GIL)
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** 295 passed, 6 skipped (100% test pass) + 12/12 Rust unit tests (`nas_hasher`). Production verified trên NAS thật qua mạng LAN (`192.168.100.254`).
+
+### 1. Rust Directory Usage Scanner (`nas_hasher/src/fs_scanner.rs` -> `nas_hasher_dir_usage_json`):
+- Port `_safe_dir_usage` sang Rust `walkdir` (0 crate mới), bỏ qua `.nas_meta`, `.thumbnails`, `@eaDir`, hỗ trợ dừng sớm theo `max_files` và `max_seconds`, giải phóng hoàn toàn GIL trên HTTP critical path `/api/storage/usage`.
+- **Benchmark thực tế trên NAS RK3328 (thư mục `10092026`, 2.049 tệp):** Python `0.3499s` ➔ Rust **`0.0251s` (Nhanh gấp `13.95x`)**.
+
+### 2. Rust Parallel Broken MP4 Scanner (`nas_hasher/src/fs_scanner.rs` -> `nas_hasher_scan_broken_mp4_json`):
+- Quét toàn cây thư mục song song bằng `walkdir` + `rayon` + tái sử dụng 100% `mp4_parser.rs` (bỏ qua `_broken_quarantine`), chỉ trả về các file `.mp4` nghi ngờ thiếu `moov` để Python xác nhận `ffprobe` và cách ly (giữ nguyên 0 false positive).
+- **Benchmark thực tế trên NAS RK3328 (`AutoBackup/DCIM`, 4.157 video MP4 thật):** Quét toàn bộ 4.157 video trong **`49.081s`** (~11.8ms/video trên HDD cơ, zero-GIL), lọc chính xác còn 16 file nghi ngờ cần xác minh.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-020 — Hoàn Tất Nhóm P3 (Rust `photo_tagger` Streaming Cứu 140MB RAM, TAR/TAR.GZ Safe Extractor 6.03x & EBML/FLV Binary Header Parser)
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** 293 passed, 6 skipped (100% test pass) + 10/10 Rust unit tests (`nas_indexer`) + 11/11 Rust unit tests (`nas_hasher`). Production verified trên NAS thật qua mạng LAN (`192.168.100.254`).

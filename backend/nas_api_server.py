@@ -3794,6 +3794,12 @@ def _safe_dir_usage(path, max_files=8000, max_seconds=1.5):
     count = 0
     if not os.path.exists(path):
         return 0, 0, False
+    # Fast-path Rust walkdir (zero-GIL, dung som theo max_files & max_seconds)
+    _bridge = globals().get("rust_bridge")
+    if _bridge is not None and hasattr(_bridge, "dir_usage_rust"):
+        _rusage = _bridge.dir_usage_rust(path, max_files=max_files, max_seconds=max_seconds)
+        if _rusage is not None:
+            return _rusage
     try:
         for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if d not in (".nas_meta", ".thumbnails", "@eaDir")]
@@ -6001,74 +6007,82 @@ def api_scan_broken_mp4():
             quarantine_name = "_broken_quarantine_{0}".format(time.strftime('%Y%m%d'))
             quarantine_dir = os.path.join(os.path.dirname(scan_dir), quarantine_name)
 
-            for root, _dirs, files in os.walk(scan_dir):
-                # Skip quarantine dirs themselves
-                if "_broken_quarantine" in root:
-                    continue
-                for fname in files:
-                    if not fname.lower().endswith(".mp4"):
+            # Fast-path Rust song song walkdir + rayon + mp4_parser (chi dua file nghi ngo hong vao ffprobe)
+            _mp4_bridge = globals().get("rust_bridge")
+            _rust_candidates = None
+            if _mp4_bridge and hasattr(_mp4_bridge, "scan_broken_mp4_candidates_rust"):
+                _rust_candidates = _mp4_bridge.scan_broken_mp4_candidates_rust(scan_dir, workers=4)
+
+            if isinstance(_rust_candidates, dict):
+                total_scanned += int(_rust_candidates.get("total_scanned") or 0)
+                _candidate_paths = list(_rust_candidates.get("suspect_files") or [])
+            else:
+                _candidate_paths = []
+                for root, _dirs, files in os.walk(scan_dir):
+                    if "_broken_quarantine" in root:
                         continue
-                    total_scanned += 1
-                    fpath = os.path.join(root, fname)
-
-                    # Fast path: Rust MP4 atom parser (<0.1ms, khong fork ffprobe cho file lanh).
-                    # File nghi ngo hong van de ffprobe xac nhan truoc khi cach ly (0 false positive).
-                    _mp4_bridge = globals().get("rust_bridge")
-                    if _mp4_bridge and hasattr(_mp4_bridge, "parse_mp4_header"):
-                        try:
-                            _mp4_info = _mp4_bridge.parse_mp4_header(fpath)
-                            if _mp4_info and _mp4_info.get("valid") and _mp4_info.get("has_moov"):
-                                continue
-                        except Exception:
-                            pass
-
-                    # ffprobe: check for moov atom (Python 3.5 compatible: no capture_output)
-                    try:
-                        result = _sp.run(
-                            ["ffprobe", "-v", "error",
-                             "-show_entries", "format=format_name",
-                             "-of", "csv=p=0", fpath],
-                            stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=30, check=False
-                        )
-                        format_name = (result.stdout or b"").decode("utf-8", errors="ignore").strip()
-                        if result.returncode == 0 and format_name:
-                            # moov atom present — file OK
+                    for fname in files:
+                        if not fname.lower().endswith(".mp4"):
                             continue
-                    except Exception as _probe_err:
-                        # ffprobe could not execute or timed out — do NOT quarantine healthy files!
-                        log.warning("[BrokenScan] Skip %s (ffprobe error: %s)", fpath, _probe_err)
+                        total_scanned += 1
+                        fpath = os.path.join(root, fname)
+                        if _mp4_bridge and hasattr(_mp4_bridge, "parse_mp4_header"):
+                            try:
+                                _mp4_info = _mp4_bridge.parse_mp4_header(fpath)
+                                if _mp4_info and _mp4_info.get("valid") and _mp4_info.get("has_moov"):
+                                    continue
+                            except Exception:
+                                pass
+                        _candidate_paths.append(fpath)
+
+            for fpath in _candidate_paths:
+                # ffprobe: check for moov atom (Python 3.5 compatible: no capture_output)
+                try:
+                    result = _sp.run(
+                        ["ffprobe", "-v", "error",
+                         "-show_entries", "format=format_name",
+                         "-of", "csv=p=0", fpath],
+                        stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=30, check=False
+                    )
+                    format_name = (result.stdout or b"").decode("utf-8", errors="ignore").strip()
+                    if result.returncode == 0 and format_name:
+                        # moov atom present — file OK
                         continue
+                except Exception as _probe_err:
+                    # ffprobe could not execute or timed out — do NOT quarantine healthy files!
+                    log.warning("[BrokenScan] Skip %s (ffprobe error: %s)", fpath, _probe_err)
+                    continue
 
-                    # File is broken — quarantine
-                    rel_path = os.path.relpath(fpath, scan_dir)
-                    dest = os.path.join(quarantine_dir, rel_path)
-                    dest_dir = os.path.dirname(dest)
+                # File is broken — quarantine
+                rel_path = os.path.relpath(fpath, scan_dir)
+                dest = os.path.join(quarantine_dir, rel_path)
+                dest_dir = os.path.dirname(dest)
 
-                    if dry_run:
+                if dry_run:
+                    quarantined.append({
+                        "path": rel_path,
+                        "size": os.path.getsize(fpath),
+                        "action": "would_quarantine"
+                    })
+                else:
+                    try:
+                        os.makedirs(dest_dir, exist_ok=True)
+                        if os.path.exists(dest):
+                            dest = dest + ".{0}".format(int(time.time()))
+                        os.rename(fpath, dest)
+                        changed_dirs.update((os.path.dirname(fpath), os.path.dirname(dest)))
                         quarantined.append({
                             "path": rel_path,
-                            "size": os.path.getsize(fpath),
-                            "action": "would_quarantine"
+                            "size": os.path.getsize(dest) if os.path.exists(dest) else 0,
+                            "action": "quarantined",
+                            "dest": os.path.relpath(dest, scan_dir)
                         })
-                    else:
-                        try:
-                            os.makedirs(dest_dir, exist_ok=True)
-                            if os.path.exists(dest):
-                                dest = dest + ".{0}".format(int(time.time()))
-                            os.rename(fpath, dest)
-                            changed_dirs.update((os.path.dirname(fpath), os.path.dirname(dest)))
-                            quarantined.append({
-                                "path": rel_path,
-                                "size": os.path.getsize(dest) if os.path.exists(dest) else 0,
-                                "action": "quarantined",
-                                "dest": os.path.relpath(dest, scan_dir)
-                            })
-                        except Exception as e:
-                            quarantined.append({
-                                "path": rel_path,
-                                "action": "error",
-                                "error": str(e)
-                            })
+                    except Exception as e:
+                        quarantined.append({
+                            "path": rel_path,
+                            "action": "error",
+                            "error": str(e)
+                        })
 
         _index_mutated_directories(changed_dirs)
         log.info("[BackupScan] scanned=%d broken=%d dry_run=%s", total_scanned, len(quarantined), dry_run)

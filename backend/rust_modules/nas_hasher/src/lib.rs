@@ -5,6 +5,7 @@ use std::path::Path;
 pub mod archive_worker;
 pub mod duplicates;
 pub mod exif_reader;
+pub mod fs_scanner;
 pub mod image_thumb;
 pub mod media_header_parser;
 pub mod mp4_parser;
@@ -17,6 +18,9 @@ pub use duplicates::{
     batch_md5_1mb_parallel, compute_md5_1mb_path, compute_sha256_path, find_duplicates_in_dir,
 };
 pub use exif_reader::{read_batch_exif, read_image_exif, ExifMetadata};
+pub use fs_scanner::{
+    compute_dir_usage, scan_broken_mp4_candidates, BrokenMp4ScanResult, DirUsageResult,
+};
 pub use image_thumb::{
     compute_batch_ahash, compute_frame_brightness, compute_image_ahash, generate_image_thumbnail,
     hamming_distance,
@@ -523,6 +527,55 @@ pub unsafe extern "C" fn nas_hasher_parse_media_header_json(
         Err(_) => return std::ptr::null_mut(),
     };
     let json = match serde_json::to_string(&info) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Tính nhanh dung lượng thư mục (dừng sớm theo `max_files` và `max_seconds`, bỏ qua `.nas_meta/.thumbnails/@eaDir`).
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_dir_usage_json(
+    path_ptr: *const c_char,
+    max_files: c_ulonglong,
+    max_seconds: f64,
+) -> *mut c_char {
+    if path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = match CStr::from_ptr(path_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = compute_dir_usage(Path::new(path_str), max_files as u64, max_seconds);
+    let json = match serde_json::to_string(&res) {
+        Ok(j) => j,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// C-ABI: Quét thư mục song song bằng Rust `walkdir` + `rayon` + `mp4_parser` tìm các file `.mp4` nghi ngờ hỏng.
+#[no_mangle]
+pub unsafe extern "C" fn nas_hasher_scan_broken_mp4_json(
+    scan_dir_ptr: *const c_char,
+    workers: c_int,
+) -> *mut c_char {
+    if scan_dir_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let dir_str = match CStr::from_ptr(scan_dir_ptr).to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let res = scan_broken_mp4_candidates(Path::new(dir_str), workers.max(1) as usize);
+    let json = match serde_json::to_string(&res) {
         Ok(j) => j,
         Err(_) => return std::ptr::null_mut(),
     };
