@@ -203,9 +203,16 @@ class AutoBackupViewModel(
             }
             try {
                 val workManager = androidx.work.WorkManager.getInstance(context)
+                val delAfter = com.nas.naswebdav.utils.PreferencesRepository(context).isDeleteAfterBackup()
                 val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
                     .addTag("com.nas.naswebdav.AutoBackupWorker")
-                    .addTag("MANUAL_AUTO_BACKUP").build()
+                    .addTag("MANUAL_AUTO_BACKUP")
+                    .setInputData(
+                        androidx.work.workDataOf(
+                            "delete_after_backup" to delAfter
+                        )
+                    )
+                    .build()
                 workManager.enqueueUniqueWork("ManualAutoBackupWork",
                     androidx.work.ExistingWorkPolicy.REPLACE, request)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

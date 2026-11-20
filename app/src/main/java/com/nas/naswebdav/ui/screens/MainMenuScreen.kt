@@ -565,7 +565,10 @@ fun MainMenuScreen(
             isAutoBackupRunning = autoBackupVM.isAutoBackupRunning,
             onAutoBackupEnabledChange = { isAutoBackupEnabled = it },
             deleteAfterBackup = deleteAfterBackup,
-            onDeleteAfterBackupChange = { deleteAfterBackup = it },
+            onDeleteAfterBackupChange = {
+                deleteAfterBackup = it
+                prefsRepo.setDeleteAfterBackup(it)
+            },
             onSaveAndSchedule = {
                 if (isAutoBackupEnabled) {
                     // FIX: Kiểm tra quyền TRƯỚC khi ghi prefs & enqueue worker.
@@ -618,6 +621,7 @@ fun MainMenuScreen(
                 showAutoBackupDialog = false
             },
             onTriggerManualSync = {
+                prefsRepo.setDeleteAfterBackup(deleteAfterBackup)
                 autoBackupVM.triggerManualBackup(mContext) { msg ->
                     commonDialogMessage = msg
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS

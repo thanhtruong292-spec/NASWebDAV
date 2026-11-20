@@ -98,8 +98,8 @@ internal fun deleteVerifiedBackupSource(
     proof: BackupSourceDigest
 ): Boolean {
     if (Build.VERSION.SDK_INT < 27) return false
-    val stillMatches = if (proof.version != null) {
-        sourceFileVersion(context, uri)?.value == proof.version
+    val stillMatches = if (proof.version != null && sourceFileVersion(context, uri)?.value == proof.version) {
+        true
     } else {
         sourceMatchesDigestSync(context, uri, proof.sha256)
     }
@@ -116,14 +116,17 @@ internal fun deleteVerifiedBackupSource(
         android.os.Environment.isExternalStorageManager() &&
         dataPath.isNotBlank()
     ) {
-        val recheck = if (proof.version != null) {
-            sourceFileVersion(context, uri)?.value == proof.version
+        val recheck = if (proof.version != null && sourceFileVersion(context, uri)?.value == proof.version) {
+            true
         } else {
             sourceMatchesDigestSync(context, uri, proof.sha256)
         }
         if (!recheck) return false
         val targetFile = java.io.File(dataPath)
         if (targetFile.isFile && targetFile.delete()) {
+            runCatching {
+                context.contentResolver.delete(uri, null, null)
+            }
             runCatching {
                 android.media.MediaScannerConnection.scanFile(context, arrayOf(dataPath), null, null)
             }

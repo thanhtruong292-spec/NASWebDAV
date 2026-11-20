@@ -155,7 +155,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             "$backupUser@$host:$port$root"
         }.getOrDefault("$backupUser@$baseUrl")
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
-        val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
+        val deleteAfterBackup = inputData.getBoolean("delete_after_backup", settingsPrefs.getBoolean("delete_after_backup", false))
+        val hasAllFilesAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+        SystemLogger.log(
+            "INFO",
+            "AutoBackup",
+            "Khởi động sao lưu nền [Chế độ: ${if (deleteAfterBackup) "Sao lưu & Xóa nguồn (Move)" else "Chỉ sao lưu (Copy)"}, Full Access: $hasAllFilesAccess]"
+        )
         val webDavManager = WebDavManager
         if (runAttemptCount >= 3) {
             SystemLogger.log("WARNING", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
@@ -454,6 +460,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 if (deleteAfterBackup) {
                     if (deleteVerifiedBackupSource(applicationContext, item.uri, item.dataPath, item.sourceProof)) {
                         deletedCount.incrementAndGet()
+                        android.util.Log.i("AutoBackup", "Đã xóa nguồn sau khi tải trực tiếp: ${item.fileName}")
                     } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
                         SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup nhưng chưa xóa được nguồn (${item.fileName}) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
                     }
@@ -539,6 +546,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     if (deleteAfterBackup) {
                                         if (deleteVerifiedBackupSource(applicationContext, itm.uri, itm.dataPath, itm.sourceProof)) {
                                             deletedCount.incrementAndGet()
+                                            android.util.Log.i("AutoBackup", "Đã xóa nguồn ảnh sau batch upload: ${itm.fileName}")
                                         } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
                                             SystemLogger.log("WARNING", "AutoBackup", "Đã xác minh backup nhưng chưa xóa được nguồn (${itm.fileName}) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
                                         }
@@ -570,6 +578,22 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     }
                 }
 
+                val checkpointName = if (isImage) "AutoBackup_Image" else "AutoBackup_Video"
+                val savedCheckpoint = runCatching {
+                    dbMutex.withLock { db.checkpointDao().getCheckpoint(checkpointName) }
+                }.getOrNull()
+
+                val resumeTargetFolder = savedCheckpoint?.lastProcessedFolder ?: ""
+                val resumeTargetId = resumeTargetFolder.substringBefore(":").toLongOrNull() ?: -1L
+                var hasResumed = (savedCheckpoint == null || savedCheckpoint.scannedCount <= 0 || resumeTargetId <= 0L)
+
+                if (!hasResumed && savedCheckpoint != null) {
+                    val initialCount = minOf(savedCheckpoint.scannedCount, totalCounter.get())
+                    processedCounter.set(initialCount)
+                    fileTarget.set("Tiếp tục: $initialCount/${totalCounter.get()}")
+                    pushProgress(force = true)
+                }
+
                 applicationContext.contentResolver.query(mediaUri, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
                     val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
@@ -578,15 +602,6 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     val dateModifiedIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
 
                     while (cursor.moveToNext() && !isStopped) {
-                        val currentCount = processedCounter.incrementAndGet()
-                        if (currentCount % 500 == 0) {
-                            if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
-                                SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
-                                (SecurePrefsHelper.getUrlList(applicationContext) + SecurePrefsHelper.getTailscaleBaseUrl(applicationContext))
-                                    .none { it.trimEnd('/') == backupAuth.baseUrl.trimEnd('/') }) {
-                                throw CancellationException("Backup account changed")
-                            }
-                        }
                         while (AutoBackupState.isPaused.value && !isStopped) { kotlinx.coroutines.delay(500) }
 
                         val rawFileName = cursor.getString(nameIndex) ?: continue
@@ -624,6 +639,39 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             continue
                         }
                         val fileUri = android.content.ContentUris.withAppendedId(mediaUri, id)
+
+                        if (!hasResumed) {
+                            if (id == resumeTargetId) {
+                                hasResumed = true
+                            }
+                            val currentSourceVer = sourceFileVersion(applicationContext, fileUri)
+                            val localCachedFast = dbMutex.withLock { db.verifiedHashDao().get(backupAccountKey, targetFileNasPath) }
+                            val isLocallyVerifiedMatchFast = localCachedFast != null && localCachedFast.contentLength == fileSize &&
+                                localCachedFast.sha256.isNotBlank() && currentSourceVer != null && localCachedFast.version == currentSourceVer.value
+
+                            if (isLocallyVerifiedMatchFast) {
+                                if (deleteAfterBackup) {
+                                    val sourceProof = BackupSourceDigest(localCachedFast!!.sha256, currentSourceVer!!.value)
+                                    if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
+                                        deletedCount.incrementAndGet()
+                                        android.util.Log.i("AutoBackup", "Đã xóa nguồn khớp cục bộ (fast-path): $fileName")
+                                    }
+                                }
+                                continue
+                            } else {
+                                hasResumed = true
+                            }
+                        }
+
+                        val currentCount = processedCounter.incrementAndGet()
+                        if (currentCount % 500 == 0) {
+                            if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
+                                SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
+                                (SecurePrefsHelper.getUrlList(applicationContext) + SecurePrefsHelper.getTailscaleBaseUrl(applicationContext))
+                                    .none { it.trimEnd('/') == backupAuth.baseUrl.trimEnd('/') }) {
+                                throw CancellationException("Backup account changed")
+                            }
+                        }
 
                         fileTarget.set(fileName)
                         pushProgress()
@@ -694,6 +742,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     if (deleteAfterBackup) {
                                         if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
                                             deletedCount.incrementAndGet()
+                                            android.util.Log.i("AutoBackup", "Đã xóa nguồn đã có trên NAS: $fileName")
                                         } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
                                             SystemLogger.log("WARNING", "AutoBackup", "Không thể xóa tệp đã có trên NAS ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
                                         }
@@ -768,9 +817,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 dbMutex.withLock {
                                     db.checkpointDao().saveCheckpoint(
                                         ScanCheckpoint(
-                                            workerName = "AutoBackup",
-                                            lastProcessedFolder = fileName,
-                                            scannedCount = imageProcessedCount.get() + videoProcessedCount.get(),
+                                            workerName = checkpointName,
+                                            lastProcessedFolder = "$id:$dataPath",
+                                            scannedCount = currentCount,
                                             foundCount = backupCount.get()
                                         )
                                     )
@@ -782,6 +831,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
 
                 if (isImage && pendingTarBatch.isNotEmpty()) {
                     flushTarBatch()
+                }
+
+                if (!isStopped) {
+                    runCatching {
+                        dbMutex.withLock { db.checkpointDao().clearCheckpoint(checkpointName) }
+                    }.onFailure { e -> SystemLogger.log("WARNING", "AutoBackup", "clearCheckpoint runCatching: ${e.message}") }
                 }
             }
 
@@ -812,6 +867,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền song song (success=$bCount skipped=$sCount failed=$fCount)")
 
             if (totalFilesToProcess == 0) {
+                runCatching {
+                    dbMutex.withLock {
+                        db.checkpointDao().clearCheckpoint("AutoBackup")
+                        db.checkpointDao().clearCheckpoint("AutoBackup_Image")
+                        db.checkpointDao().clearCheckpoint("AutoBackup_Video")
+                    }
+                }
                 AutoBackupState.resultTotal.value = 0
                 AutoBackupState.resultSuccess.value = 0
                 AutoBackupState.resultSkipped.value = 0
@@ -827,7 +889,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             AutoBackupState.showResultDialog.value = true
             // CC-005 P1: xong -> xóa checkpoint (lần sau quét mới từ đầu).
             runCatching {
-                dbMutex.withLock { db.checkpointDao().clearCheckpoint("AutoBackup") }
+                dbMutex.withLock {
+                    db.checkpointDao().clearCheckpoint("AutoBackup")
+                    db.checkpointDao().clearCheckpoint("AutoBackup_Image")
+                    db.checkpointDao().clearCheckpoint("AutoBackup_Video")
+                }
             }.onFailure { e -> SystemLogger.log("WARNING", "AutoBackup", "clearCheckpoint runCatching: ${e.message}") }
 
             SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (trả Result.success)")
@@ -835,6 +901,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
+            e.printStackTrace()
             if (isStopped) {
                 // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
                 // (system stop ≠ fatal error, WorkManager sẽ reschedule sau backoff)

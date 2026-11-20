@@ -141,7 +141,10 @@ fun rememberNasToolboxHost(
             isAutoBackupRunning = autoBackupVM.isAutoBackupRunning,
             onAutoBackupEnabledChange = { isAutoBackupEnabled = it },
             deleteAfterBackup = deleteAfterBackup,
-            onDeleteAfterBackupChange = { deleteAfterBackup = it },
+            onDeleteAfterBackupChange = {
+                deleteAfterBackup = it
+                prefsRepo.setDeleteAfterBackup(it)
+            },
             onSaveAndSchedule = {
                 if (isAutoBackupEnabled) {
                     val hasFullAccess = MediaPermissionHelper.canRunPeriodicBackup(context)
@@ -183,6 +186,7 @@ fun rememberNasToolboxHost(
                 showAutoBackupDialog = false
             },
             onTriggerManualSync = {
+                prefsRepo.setDeleteAfterBackup(deleteAfterBackup)
                 autoBackupVM.triggerManualBackup(context) { msg ->
                     commonDialogType = DialogType.SUCCESS
                     commonDialogMessage = msg

@@ -5,6 +5,35 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-031 — Tách Biệt Checkpoint Độc Lập Cho Từng Pipeline, Lưu Cấu Hình Xóa Nguồn & Cấp Toàn Quyền Cho Knox User 150 (Secure Folder)
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Android Unit Tests: `AutoBackupServerHashAndDeleteTest` PASS, `AutoBackupDedupRegressionTest` PASS, `AutoBackupLockTest` PASS, `TarStreamRequestBodyTest` PASS (161/161 unit tests PASS 100% in 4m 15s).
+- Backend Tests: 299 passed, 6 skipped in 58.45s (100% backend Python tests PASS).
+- Build APK: `:app:assembleDebug` BUILD SUCCESSFUL in 3m 44s (`app-debug.apk` v1.0.199).
+- Triển khai thực tế: Đã cài đặt APK trực tiếp lên điện thoại Samsung Galaxy S21 Ultra `R5CR61F6L3V` cho tất cả người dùng (`adb install -r --user all -> Success`).
+- Trực tiếp kiểm chứng trên Knox User 150 (Samsung Secure Folder): Đã cấp toàn quyền `MANAGE_EXTERNAL_STORAGE allow`, `WRITE_MEDIA_IMAGES allow`, `WRITE_MEDIA_VIDEO allow`, `WRITE_EXTERNAL_STORAGE allow`.
+
+### 1. Phân Tách Checkpoint Độc Lập Cho Từng Pipeline (Per-Pipeline Checkpoints):
+- **Nguyên nhân gốc:** Trước đây chỉ có 1 checkpoint chung tên `"AutoBackup"`. Vì luồng Ảnh và Video chạy song song với tốc độ khác nhau, checkpoint của luồng này liên tục ghi đè vị trí của luồng kia, dẫn đến khi khởi động lại app không thể xác định chính xác vị trí tiếp tục của từng loại phương tiện.
+- **Giải pháp:** Tách thành 2 checkpoint độc lập: `"AutoBackup_Image"` và `"AutoBackup_Video"`.
+  - Định dạng lưu điểm dừng: `"$id:$dataPath"` kèm số lượng đã quét (`scannedCount`).
+  - Khi worker khởi động lại: Nạp checkpoint tương ứng của từng pipeline, cập nhật số lượng đã duyệt và nhảy cóc (skip-ahead) qua các tệp đã đối chiếu mà không cần gửi RPC/HTTP lên NAS.
+  - Đồng thời, trong giai đoạn skip-ahead, nếu bật chế độ `deleteAfterBackup`, các tệp đã được kiểm chứng tính toàn vẹn (SHA-256 đối khớp trên NAS) sẽ được tự động xóa trên điện thoại ngay lập tức.
+  - Sau khi mỗi pipeline hoàn thành toàn bộ danh sách, tự động xóa checkpoint của pipeline đó.
+
+### 2. Phá Băng Quyền Truy Cập & Xóa Tệp Trong Samsung Secure Folder (Knox User 150):
+- **Phát hiện hệ thống:** Người dùng vận hành ứng dụng trong không gian riêng biệt **Samsung Secure Folder (User 150)**. Toàn bộ quyền cấp từ ngoài máy chính (User 0) không có hiệu lực trong User 150; hệ điều hành Knox ghi nhận `MANAGE_EXTERNAL_STORAGE: default; rejectTime` khiến mọi lệnh xóa tệp nguồn bị Android chặn (`Permission denied`).
+- **Khắc phục quyền User 150:** Cấp quyền toàn diện cấp OS cho User 150 qua `appops set --user 150 com.nas.naswebdav MANAGE_EXTERNAL_STORAGE allow`, `WRITE_MEDIA_IMAGES allow`, `WRITE_MEDIA_VIDEO allow`, `WRITE_EXTERNAL_STORAGE allow`.
+- **Cơ chế Fallback Xóa Tệp An Toàn (`BackupContentIntegrity.kt`):**
+  - Trước đây, nếu `proof.version` (dựa trên `st_ctim`/`st_mtim`) bị thay đổi nhỏ do FUSE/MediaStore truy cập, kiểm tra tính toàn vẹn bị trả về `false` sớm và bỏ qua xóa tệp.
+  - Sửa đổi: Bổ sung fallback kiểm tra băm `sourceMatchesDigestSync(context, uri, proof.sha256)`. Nếu SHA-256 hoàn toàn khớp với bản sao lưu trên NAS thì tệp vẫn được xác nhận 100% toàn vẹn để xóa an toàn.
+  - Khi xóa vật lý thành công qua `targetFile.delete()`, bổ sung gọi đồng thời `context.contentResolver.delete(...)` và `MediaScannerConnection.scanFile(...)` để MediaStore cập nhật ngay lập tức và giải phóng dung lượng trong Thư viện ảnh (Gallery).
+- **Truyền InputData Độc Lập Cho WorkManager (`AutoBackupViewModel.kt` & `AutoBackupWorker.kt`):**
+  - `triggerManualBackup` chủ động đóng gói `delete_after_backup` vào `inputData` gửi thẳng vào WorkManager để Worker nhận cờ ngay lập tức mà không phụ thuộc vào độ trễ flush đĩa của `SharedPreferences`.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-030 — Tách 2 Tiến Trình Sao Lưu Song Song (Ảnh & Video) & Giao Diện Dual Progress Bar Độc Lập
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:**
