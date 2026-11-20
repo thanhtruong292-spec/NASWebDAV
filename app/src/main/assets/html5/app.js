@@ -646,7 +646,8 @@
         var fillEl = document.getElementById("abProgFill");
         var cntEl = document.getElementById("abCountLine");
         var pctEl = document.getElementById("abPctLine");
-        var pct = bak.total > 0 ? Math.min(100, (bak.processed * 100) / bak.total) : Math.min(100, Math.max(0, (bak.progress || 0) * 100));
+        var totalProc = Math.min(bak.processed || 0, bak.total || 0);
+        var pct = bak.total > 0 ? Math.min(100, (totalProc * 100) / bak.total) : Math.min(100, Math.max(0, (bak.progress || 0) * 100));
         if (fEl) fEl.textContent = "Tệp: " + (bak.currentFile || tb.autoBackupFile || "Đang quét tệp...");
         if (sEl) sEl.textContent = bak.speedBps > 0 ? (fmtBytes(bak.speedBps) + "/s") : "Đang đối chiếu...";
         if (pathEl) {
@@ -655,7 +656,7 @@
           pathEl.textContent = (src ? ("Từ: /" + src.replace(/^\/+|\/+$/g, "")) : "") + (dst ? (" → /" + dst.replace(/^\/+|\/+$/g, "")) : "");
         }
         if (fillEl) fillEl.style.width = pct.toFixed(1) + "%";
-        if (cntEl) cntEl.textContent = "Tổng: " + (bak.processed || 0) + " / " + (bak.total || 0) + " tệp";
+        if (cntEl) cntEl.textContent = "Tổng: " + totalProc + " / " + (bak.total || 0) + " tệp";
         if (pctEl) pctEl.textContent = pct.toFixed(1) + "%";
 
         // Cập nhật Pipeline Ảnh (Photo Stream)
@@ -667,11 +668,12 @@
           var imgFillEl = document.getElementById("abImageProgFill");
           var imgCntEl = document.getElementById("abImageCount");
           var imgPctEl = document.getElementById("abImagePct");
-          var imgPct = img.total > 0 ? Math.min(100, (img.processed * 100) / img.total) : Math.min(100, Math.max(0, (img.progress || 0) * 100));
+          var imgProc = Math.min(img.processed || 0, img.total || 0);
+          var imgPct = img.total > 0 ? Math.min(100, (imgProc * 100) / img.total) : Math.min(100, Math.max(0, (img.progress || 0) * 100));
           if (imgFileEl) imgFileEl.textContent = "📷 Ảnh: " + (img.currentFile || "Đang đợi...");
           if (imgSpdEl) imgSpdEl.textContent = img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--";
           if (imgFillEl) imgFillEl.style.width = imgPct.toFixed(1) + "%";
-          if (imgCntEl) imgCntEl.textContent = (img.processed || 0) + " / " + (img.total || 0) + " ảnh";
+          if (imgCntEl) imgCntEl.textContent = imgProc + " / " + (img.total || 0) + " ảnh";
           if (imgPctEl) imgPctEl.textContent = imgPct.toFixed(1) + "%";
         }
 
@@ -681,14 +683,34 @@
         if (vidEl) {
           var vidFileEl = document.getElementById("abVideoFile");
           var vidSpdEl = document.getElementById("abVideoSpeed");
+          var vidSizeEl = document.getElementById("abVideoFileSize");
+          var vidFilePctEl = document.getElementById("abVideoFilePct");
+          var vidFileFillEl = document.getElementById("abVideoFileProgFill");
           var vidFillEl = document.getElementById("abVideoProgFill");
           var vidCntEl = document.getElementById("abVideoCount");
           var vidPctEl = document.getElementById("abVideoPct");
-          var vidPct = vid.total > 0 ? Math.min(100, (vid.processed * 100) / vid.total) : Math.min(100, Math.max(0, (vid.progress || 0) * 100));
+
+          var vidProc = Math.min(vid.processed || 0, vid.total || 0);
+          var vidPct = vid.total > 0 ? Math.min(100, (vidProc * 100) / vid.total) : Math.min(100, Math.max(0, (vid.progress || 0) * 100));
           if (vidFileEl) vidFileEl.textContent = "🎬 Video: " + (vid.currentFile || "Đang đợi...");
           if (vidSpdEl) vidSpdEl.textContent = vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--";
+
+          // Tiến trình file video đang tải
+          var bTotal = vid.bytesTotal || 0;
+          var bWritten = vid.bytesWritten || 0;
+          if (bTotal > 0) {
+            var fPct = Math.min(100, Math.max(0, (vid.fileProgress != null && vid.fileProgress > 0) ? (vid.fileProgress * 100) : ((bWritten * 100) / bTotal)));
+            if (vidSizeEl) vidSizeEl.textContent = fmtBytes(bWritten) + " / " + fmtBytes(bTotal);
+            if (vidFilePctEl) vidFilePctEl.textContent = fPct.toFixed(1) + "%";
+            if (vidFileFillEl) vidFileFillEl.style.width = fPct.toFixed(1) + "%";
+          } else {
+            if (vidSizeEl) vidSizeEl.textContent = "-- / --";
+            if (vidFilePctEl) vidFilePctEl.textContent = "--";
+            if (vidFileFillEl) vidFileFillEl.style.width = "0%";
+          }
+
           if (vidFillEl) vidFillEl.style.width = vidPct.toFixed(1) + "%";
-          if (vidCntEl) vidCntEl.textContent = (vid.processed || 0) + " / " + (vid.total || 0) + " video";
+          if (vidCntEl) vidCntEl.textContent = vidProc + " / " + (vid.total || 0) + " video";
           if (vidPctEl) vidPctEl.textContent = vidPct.toFixed(1) + "%";
         }
       }

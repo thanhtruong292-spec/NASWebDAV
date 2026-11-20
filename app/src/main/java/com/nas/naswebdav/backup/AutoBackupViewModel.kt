@@ -80,6 +80,12 @@ class AutoBackupViewModel(
         private set
     var autoBackupVideoSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
         private set
+    var autoBackupVideoBytesWritten by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupVideoBytesTotal by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupVideoFileProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
+        private set
 
     // ═══ BACKUP SCHEDULE ═══
 
@@ -143,6 +149,9 @@ class AutoBackupViewModel(
                             autoBackupVideoProcessedCount = workInfo.progress.getInt("videoProcessedCount", 0)
                             autoBackupVideoTotalCount = workInfo.progress.getInt("videoTotalCount", 0)
                             autoBackupVideoSpeedBps = workInfo.progress.getLong("videoSpeedBps", 0L)
+                            autoBackupVideoBytesWritten = workInfo.progress.getLong("videoFileBytesWritten", 0L)
+                            autoBackupVideoBytesTotal = workInfo.progress.getLong("videoFileBytesTotal", 0L)
+                            autoBackupVideoFileProgress = workInfo.progress.getFloat("videoFileProgress", 0f)
 
                             autoBackupIsPaused = com.nas.naswebdav.AutoBackupState.isPaused.value
                         } else {

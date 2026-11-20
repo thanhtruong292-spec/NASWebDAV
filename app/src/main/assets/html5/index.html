@@ -557,7 +557,18 @@
             <span id="abVideoFile" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;">🎬 Video: Đang đợi...</span>
             <span id="abVideoSpeed">--</span>
           </div>
-          <div class="bar-track" style="margin:4px 0;"><div class="bar-fill" id="abVideoProgFill" style="width:0%;background:var(--ux-yellow);"></div></div>
+
+          <!-- Tiến trình file video đang tải lên -->
+          <div id="abVideoFileBox" style="margin-top:4px;">
+            <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);">
+              <span id="abVideoFileSize">-- / --</span>
+              <span id="abVideoFilePct" style="color:var(--ux-yellow);font-weight:600;">--</span>
+            </div>
+            <div class="bar-track" style="margin:2px 0 4px;height:4px;"><div class="bar-fill" id="abVideoFileProgFill" style="width:0%;background:var(--ux-yellow);"></div></div>
+          </div>
+
+          <!-- Tiến trình tổng số lượng video -->
+          <div class="bar-track" style="margin:4px 0;"><div class="bar-fill" id="abVideoProgFill" style="width:0%;background:rgba(234,179,8,0.5);"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);">
             <span id="abVideoCount">0 / 0 video</span>
             <b id="abVideoPct" style="color:var(--ux-yellow);">0.0%</b>

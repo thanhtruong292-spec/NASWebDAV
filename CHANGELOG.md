@@ -5,6 +5,36 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-032 — Khắc Phục Mâu Thuẫn Số Lượng Tiến Trình, Bổ Sung Dung Lượng & Thanh Tiến Trình Riêng Cho Tệp Video Đang Tải
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Android Unit Tests: `AutoBackupServerHashAndDeleteTest` PASS, `AutoBackupDedupRegressionTest` PASS, `AutoBackupLockTest` PASS, `TarStreamRequestBodyTest` PASS (100% unit tests PASS in 11m 43s).
+- Build APK: `:app:assembleDebug` BUILD SUCCESSFUL in 2m 39s (`app-debug.apk` tại `app/build/outputs/apk/debug/app-debug.apk`).
+
+### 1. Khắc Phục Triệt Để Mâu Thuẫn Số Lượng Tiến Trình (`processed > total`, ví dụ `11432 / 8987 ảnh`):
+- **Nguyên nhân gốc:** Khi ứng dụng nạp lại checkpoint từ phiên trước (ví dụ `scannedCount = 5000`), biến `processedCounter` được gán sẵn là `5000`. Khi con trỏ `cursor` duyệt qua các tệp còn lại (8987 hàng), logic cũ lại gọi `processedCounter.incrementAndGet()` cộng dồn thêm các hàng mới vào con số 5000 ban đầu, dẫn đến `5000 + 6432 = 11432 > 8987`!
+- **Giải pháp dứt điểm:**
+  - Trong vòng lặp `while (cursor.moveToNext())`, vị trí duyệt chính xác luôn là `cursor.position + 1` (từ `1` đến `cursor.count`).
+  - Sử dụng trực tiếp `val currentCount = minOf(cursor.position + 1, totalCounter.get())` và `processedCounter.set(currentCount)`.
+  - Cập nhật đồng bộ trong `pushProgress()`: chặn trên `minOf(imageProcessedCount, imageTotalCount)`, `minOf(videoProcessedCount, videoTotalCount)` và `totalProc = minOf(imgProc + vidProc, totalAll)`.
+  - Trên giao diện HTML5 (`app.js`): bổ sung `Math.min(processed, total)` cho cả luồng ảnh, video và tổng hợp, loại bỏ 100% khả năng hiển thị vượt trần.
+
+### 2. Bổ Sung Hiển Thị Dung Lượng File Đang Tải & Thanh Progress Bar Riêng Cho Video:
+- **Theo yêu cầu:** Chỉ áp dụng cho luồng Video (ảnh dạng nhỏ được gom stream batch nên không cần thanh riêng).
+- **AutoBackupWorker.kt:**
+  - Bổ sung các biến nguyên tử theo dõi tệp video đang tải: `videoFileBytesWritten`, `videoFileBytesTotal`, `videoFileProgress`.
+  - Trong callback `onUploadProgress(bytesWritten, totalBytes)` của `uploadStreamWithProgress`: cập nhật tức thời số byte đã ghi và phần trăm tải lên của video hiện tại, đẩy sang `workDataOf`.
+- **AutoBackupViewModel.kt & NasHtmlDashboard.kt:**
+  - Khai báo và hứng các trường: `autoBackupVideoBytesWritten`, `autoBackupVideoBytesTotal`, `autoBackupVideoFileProgress`.
+  - Bổ sung các trường vào gói JSON cập nhật `videos` trong `buildHtml5StateJson` và kích hoạt `LaunchedEffect` theo thời gian thực.
+- **Giao diện HTML5 Dashboard (`index.html` & `app.js`):**
+  - Bổ sung khối tiến trình tệp video `#abVideoFileBox` với nhãn dung lượng `#abVideoFileSize` (`xx MB / yy MB`), phần trăm `#abVideoFilePct` và thanh fill `#abVideoFileProgFill`.
+  - Thanh tiến trình tổng thể số lượng video `#abVideoProgFill` hiển thị độc lập bên dưới (`xx / yy video`).
+- **Giao diện Native Compose (`MainMenuPanels.kt` & `SystemStatusCards.kt`):**
+  - Hiển thị song song: dung lượng tệp video hiện tại kèm thanh tiến trình riêng, và thanh tiến trình tổng số lượng video bên dưới.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-031 — Tách Biệt Checkpoint Độc Lập Cho Từng Pipeline, Lưu Cấu Hình Xóa Nguồn & Cấp Toàn Quyền Cho Knox User 150 (Secure Folder)
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:**

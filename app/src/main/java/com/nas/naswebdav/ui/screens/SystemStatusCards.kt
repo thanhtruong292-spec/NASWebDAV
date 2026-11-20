@@ -509,6 +509,28 @@ fun DashboardSystemStatusCards(
                                         Text("Video: ${autoBackupVM.autoBackupVideoCurrentFile}", fontSize = 11.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                         Text("${autoBackupVM.autoBackupVideoProcessedCount}/${autoBackupVM.autoBackupVideoTotalCount}$vidSpeed", fontSize = 11.sp, color = AccentOrange, modifier = Modifier.padding(start = 4.dp))
                                     }
+                                    if (autoBackupVM.autoBackupVideoBytesTotal > 0L) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(
+                                                "${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupVideoBytesWritten)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupVideoBytesTotal)}",
+                                                fontSize = 10.sp,
+                                                color = TextTertiary
+                                            )
+                                            Text(
+                                                "${(autoBackupVM.autoBackupVideoFileProgress * 100).toInt()}%",
+                                                fontSize = 10.sp,
+                                                color = AccentOrange
+                                            )
+                                        }
+                                        Spacer(Modifier.height(2.dp))
+                                        LinearProgressIndicator(
+                                            progress = { autoBackupVM.autoBackupVideoFileProgress.coerceIn(0f, 1f) },
+                                            modifier = Modifier.fillMaxWidth().height(2.5.dp).clip(RoundedCornerShape(2.dp)),
+                                            color = AccentOrange,
+                                            trackColor = DarkSurface
+                                        )
+                                    }
                                     Spacer(Modifier.height(2.dp))
                                     LinearProgressIndicator(
                                         progress = {
@@ -517,7 +539,7 @@ fun DashboardSystemStatusCards(
                                              else autoBackupVM.autoBackupVideoProgress.coerceIn(0f, 1f)
                                         },
                                         modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-                                        color = AccentOrange,
+                                        color = AccentOrange.copy(alpha = 0.5f),
                                         trackColor = DarkSurface
                                     )
                                 }

@@ -708,6 +708,28 @@ fun MainMenuSystemStatusCards(
                                             Text("Video: ${autoBackupVM.autoBackupVideoCurrentFile}", style = MaterialTheme.typography.bodySmall, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                             Text("${autoBackupVM.autoBackupVideoProcessedCount}/${autoBackupVM.autoBackupVideoTotalCount}$vidSpeed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(start = 4.dp))
                                         }
+                                        if (autoBackupVM.autoBackupVideoBytesTotal > 0L) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text(
+                                                    "${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupVideoBytesWritten)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupVideoBytesTotal)}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = TextTertiary
+                                                )
+                                                Text(
+                                                    "${(autoBackupVM.autoBackupVideoFileProgress * 100).toInt()}%",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.tertiary
+                                                )
+                                            }
+                                            Spacer(Modifier.height(2.dp))
+                                            LinearProgressIndicator(
+                                                progress = { autoBackupVM.autoBackupVideoFileProgress.coerceIn(0f, 1f) },
+                                                modifier = Modifier.fillMaxWidth().height(2.5.dp).clip(RoundedCornerShape(2.dp)),
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                                trackColor = DarkCard
+                                            )
+                                        }
                                         Spacer(Modifier.height(2.dp))
                                         LinearProgressIndicator(
                                             progress = {
@@ -716,7 +738,7 @@ fun MainMenuSystemStatusCards(
                                                 else autoBackupVM.autoBackupVideoProgress.coerceIn(0f, 1f)
                                             },
                                             modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-                                            color = MaterialTheme.colorScheme.tertiary,
+                                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f),
                                             trackColor = DarkCard
                                         )
                                     }

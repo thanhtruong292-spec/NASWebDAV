@@ -244,6 +244,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             val videoSpeedBps = AtomicLong(0L)
             val videoCurrentFile = AtomicReference<String>("Sẵn sàng...")
             val videoProgress = AtomicReference<Float>(0f)
+            val videoFileBytesWritten = AtomicLong(0L)
+            val videoFileBytesTotal = AtomicLong(0L)
+            val videoFileProgress = AtomicReference<Float>(0f)
 
             val shaMutexMap = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
             val queuedDigests = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -257,9 +260,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     if (!force && now - lastProgressPushTime < 250) return
                     lastProgressPushTime = now
 
-                    val totalProc = imageProcessedCount.get() + videoProcessedCount.get()
                     val totalAll = imageTotalCount.get() + videoTotalCount.get()
-                    val overallPercent = if (totalAll > 0) totalProc.toFloat() / totalAll else 0f
+                    val imgProc = minOf(imageProcessedCount.get(), imageTotalCount.get())
+                    val vidProc = minOf(videoProcessedCount.get(), videoTotalCount.get())
+                    val totalProc = minOf(imgProc + vidProc, totalAll)
+                    val overallPercent = if (totalAll > 0) minOf(1f, totalProc.toFloat() / totalAll) else 0f
                     val combinedSpeed = imageSpeedBps.get() + videoSpeedBps.get()
 
                     val imgFile = imageCurrentFile.get().ifEmpty { "Đang đợi..." }
@@ -283,14 +288,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         // Thống kê riêng cho Ảnh (Photo Pipeline)
                         "imageFileName" to safeWorkerText(imgFile, 180),
                         "imageProgress" to imageProgress.get(),
-                        "imageProcessedCount" to imageProcessedCount.get(),
+                        "imageProcessedCount" to imgProc,
                         "imageTotalCount" to imageTotalCount.get(),
                         "imageSpeedBps" to imageSpeedBps.get(),
 
                         // Thống kê riêng cho Video (Video Pipeline)
                         "videoFileName" to safeWorkerText(vidFile, 180),
                         "videoProgress" to videoProgress.get(),
-                        "videoProcessedCount" to videoProcessedCount.get(),
+                        "videoFileProgress" to videoFileProgress.get(),
+                        "videoFileBytesWritten" to videoFileBytesWritten.get(),
+                        "videoFileBytesTotal" to videoFileBytesTotal.get(),
+                        "videoProcessedCount" to vidProc,
                         "videoTotalCount" to videoTotalCount.get(),
                         "videoSpeedBps" to videoSpeedBps.get()
                     ))
@@ -335,6 +343,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 val progressTarget = if (isImage) imageProgress else videoProgress
                 val fileTarget = if (isImage) imageCurrentFile else videoCurrentFile
 
+                if (!isImage) {
+                    videoFileBytesWritten.set(0L)
+                    videoFileBytesTotal.set(item.fileSize)
+                    videoFileProgress.set(0f)
+                }
+
                 fileTarget.set(item.fileName)
 
                 run {
@@ -356,11 +370,21 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             lastSpeedCalcTime = now
                                             lastSpeedCalcBytes = bytesWritten
                                         }
-                                        val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                        val percent = if (totalBytes > 0) (bytesWritten.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
                                         progressTarget.set(percent)
+                                        if (!isImage) {
+                                            videoFileBytesWritten.set(bytesWritten)
+                                            videoFileBytesTotal.set(totalBytes)
+                                            videoFileProgress.set(percent)
+                                        }
                                         runBlocking { pushProgress() }
                                     }
                                     webDavManager.uploadStreamWithProgress(tmpNasPath, input2, item.fileSize, mimeType, onUploadProgress, null)
+                                }
+                                if (!isImage) {
+                                    videoFileBytesWritten.set(item.fileSize)
+                                    videoFileBytesTotal.set(item.fileSize)
+                                    videoFileProgress.set(1f)
                                 }
                                 try {
                                     webDavManager.moveFileNoOverwrite(tmpNasPath, item.targetFileNasPath)
@@ -589,12 +613,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
 
                 if (!hasResumed && savedCheckpoint != null) {
                     val initialCount = minOf(savedCheckpoint.scannedCount, totalCounter.get())
-                    processedCounter.set(initialCount)
                     fileTarget.set("Tiếp tục: $initialCount/${totalCounter.get()}")
                     pushProgress(force = true)
                 }
 
                 applicationContext.contentResolver.query(mediaUri, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
+                    totalCounter.set(cursor.count)
                     val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
@@ -603,6 +627,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
 
                     while (cursor.moveToNext() && !isStopped) {
                         while (AutoBackupState.isPaused.value && !isStopped) { kotlinx.coroutines.delay(500) }
+
+                        val currentCount = minOf(cursor.position + 1, totalCounter.get())
+                        processedCounter.set(currentCount)
 
                         val rawFileName = cursor.getString(nameIndex) ?: continue
                         val fileName = com.nas.naswebdav.utils.FormatUtils.sanitizeFileName(rawFileName)
@@ -657,13 +684,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         android.util.Log.i("AutoBackup", "Đã xóa nguồn khớp cục bộ (fast-path): $fileName")
                                     }
                                 }
+                                pushProgress()
                                 continue
                             } else {
                                 hasResumed = true
                             }
                         }
 
-                        val currentCount = processedCounter.incrementAndGet()
                         if (currentCount % 500 == 0) {
                             if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
                                 SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
@@ -834,6 +861,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 }
 
                 if (!isStopped) {
+                    processedCounter.set(totalCounter.get())
+                    if (!isImage) {
+                        videoFileBytesWritten.set(0L)
+                        videoFileBytesTotal.set(0L)
+                        videoFileProgress.set(1f)
+                    }
+                    pushProgress(force = true)
                     runCatching {
                         dbMutex.withLock { db.checkpointDao().clearCheckpoint(checkpointName) }
                     }.onFailure { e -> SystemLogger.log("WARNING", "AutoBackup", "clearCheckpoint runCatching: ${e.message}") }

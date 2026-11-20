@@ -211,7 +211,9 @@ fun NasHtmlDashboardScreen(
         autoBackupVM.autoBackupImageProcessedCount,
         autoBackupVM.autoBackupImageSpeedBps,
         autoBackupVM.autoBackupVideoProcessedCount,
-        autoBackupVM.autoBackupVideoSpeedBps
+        autoBackupVM.autoBackupVideoSpeedBps,
+        autoBackupVM.autoBackupVideoFileProgress,
+        autoBackupVM.autoBackupVideoBytesWritten
     ) {
         if (!pageLoaded) return@LaunchedEffect
         val payload = buildHtml5StateJson(
@@ -1298,6 +1300,9 @@ private fun buildHtml5StateJson(
             put("videos", JSONObject().apply {
                 put("currentFile", autoBackupVM.autoBackupVideoCurrentFile)
                 put("progress", autoBackupVM.autoBackupVideoProgress.toDouble())
+                put("fileProgress", autoBackupVM.autoBackupVideoFileProgress.toDouble())
+                put("bytesWritten", autoBackupVM.autoBackupVideoBytesWritten)
+                put("bytesTotal", autoBackupVM.autoBackupVideoBytesTotal)
                 put("processed", autoBackupVM.autoBackupVideoProcessedCount)
                 put("total", autoBackupVM.autoBackupVideoTotalCount)
                 put("speedBps", autoBackupVM.autoBackupVideoSpeedBps)
