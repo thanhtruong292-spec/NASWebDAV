@@ -468,10 +468,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 failedCount++
                                 continue
                             }
-                            fileHash = try { ImageFingerprint.computeFromUri(applicationContext,fileUri) }
-                                catch (error: CancellationException) { throw error } catch (e: Exception) { SystemLogger.log("WARNING", "AutoBackup", "openInputStream verified content hash fallback: ${e.message}"); null }
+                            // SEPARATION-OF-CONCERNS: Không decode Bitmap tính aHash trên CPU điện thoại khi backup.
+                            // NAS Rust NEON (/api/fingerprint/compute) tự tính & lưu aHash; dedup backup đã dùng contentHash (SHA-256).
+                            fileHash = ""
                             db.fingerprintDao().insertFingerprint(FileFingerprint(
-                                filePath=verifyTarget, hash=fileHash ?: "", fileName=fileName,
+                                filePath=verifyTarget, hash=fileHash, fileName=fileName,
                                 fileSize=fileSize, accountKey=backupAccountKey, sourceKey=sourceKey,
                                 contentHash=sourceProof.sha256
                             ))

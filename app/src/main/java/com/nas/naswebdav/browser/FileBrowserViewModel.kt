@@ -1105,6 +1105,82 @@ class FileBrowserViewModel(
         }
     }
 
+    var selectedMediaExif by androidx.compose.runtime.mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
+    /** Nén thư mục thành file ZIP bằng Rust trên NAS (POST /api/zip). */
+    fun zipFolder(context: Context, folderPath: String) {
+        try {
+            val rawPath = try { java.net.URI(folderPath).path } catch (_: Exception) {
+                try { java.net.URL(folderPath).path } catch (_: Exception) { folderPath }
+            }
+            val relativePath = (rawPath ?: folderPath).substringAfter("/webdav")
+            val folderName = folderPath.trimEnd('/').substringAfterLast("/")
+            val jsonBody = org.json.JSONObject().apply {
+                put("path", "/webdav/" + relativePath.removePrefix("/"))
+            }.toString()
+
+            android.widget.Toast.makeText(context, "Tac vu nen ZIP ($folderName) dang chay ngam tren NAS!", android.widget.Toast.LENGTH_LONG).show()
+
+            val inputData = androidx.work.Data.Builder()
+                .putString("taskType", "ZIP")
+                .putString("apiUrl", "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/zip")
+                .putString("jsonBody", jsonBody)
+                .putString("taskLabel", "Nen ZIP $folderName")
+                .build()
+
+            val workRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.LongRunningApiWorker>()
+                .setInputData(inputData)
+                .addTag("LONG_RUNNING_API")
+                .build()
+
+            androidx.work.WorkManager.getInstance(context)
+                .enqueueUniqueWork("Zip_$folderName", androidx.work.ExistingWorkPolicy.REPLACE, workRequest)
+        } catch (e: Exception) {
+            errorMessage = "Nén ZIP thất bại: ${e.message}"
+        }
+    }
+
+    /** Đọc siêu dữ liệu EXIF (ngày chụp, máy ảnh, GPS) siêu tốc từ NAS Rust (GET /api/media/exif). */
+    fun fetchMediaExif(filePath: String) {
+        val baseUrl = WebDavManager.currentBaseUrl
+        if (baseUrl.isBlank() || filePath.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = linkedMapOf<String, String>()
+            try {
+                val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) { filePath }
+                val rel = (rawPath ?: filePath).substringAfter("/webdav/").removePrefix("/")
+                val encoded = java.net.URLEncoder.encode("/webdav/$rel", "UTF-8")
+                val apiUrl = "${baseUrl.toApiBaseUrl()}/api/media/exif?path=$encoded"
+                val req = okhttp3.Request.Builder()
+                    .url(apiUrl)
+                    .header("Authorization", WebDavManager.currentAuthHeader())
+                    .get()
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val json = org.json.JSONObject(resp.body?.string().orEmpty())
+                        val exif = json.optJSONObject("exif") ?: json
+                        val dateTaken = exif.optString("date_taken", "")
+                        val make = exif.optString("camera_make", "")
+                        val model = exif.optString("camera_model", "")
+                        if (dateTaken.isNotEmpty() && dateTaken != "null") result["Ngày chụp"] = dateTaken
+                        val cam = listOf(make, model).filter { it.isNotEmpty() && it != "null" }.joinToString(" ")
+                        if (cam.isNotEmpty()) result["Máy ảnh"] = cam
+                        if (!exif.isNull("latitude") && !exif.isNull("longitude")) {
+                            result["GPS"] = String.format("%.5f, %.5f", exif.optDouble("latitude"), exif.optDouble("longitude"))
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                withContext(Dispatchers.Main) {
+                    selectedMediaExif = result
+                }
+            }
+        }
+    }
+
     fun fetchTextPreview(path: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {

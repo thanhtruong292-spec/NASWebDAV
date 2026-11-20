@@ -5,6 +5,21 @@
 
 ---
 
+## [2026-11-20] ANTIGRAVITY-022 — Tách Biệt Triệt Để Front-end Android Khỏi Các Tác Vụ Nặng Của Back-end (Đấu Nối Trực Tiếp NAS Rust API)
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:** `:app:compileDebugKotlin` **BUILD SUCCESSFUL** (0 lỗi, 0 warning mới trên 4 file Kotlin) + `test_extract_api_endpoints.py` PASS.
+
+### 1. Cắt Bỏ Tính Toán Nặng Trên Điện Thoại, Đẩy Về NAS Rust Backend:
+- **`FingerprintWorker.kt`:** Chuyển từ tải 512KB/ảnh qua WebDAV + decode Bitmap trên CPU điện thoại sang gọi trực tiếp `POST /api/fingerprint/compute` (NAS Rust NEON SIMD đa luồng, 0KB tải về điện thoại), chỉ fallback khi NAS đời cũ trả 404; đồng thời sửa lỗi port API bằng `savedUrl.toApiBaseUrl()`.
+- **`AutoBackupWorker.kt`:** Loại bỏ bước decode Bitmap `ImageFingerprint.computeFromUri()` trên điện thoại ngay sau khi upload ảnh (dedup backup dùng `contentHash` SHA-256, còn aHash để NAS Rust tự tính).
+- **`SmartToolsViewModel.kt`:** Ưu tiên nạp danh sách file trùng lặp đã xác minh trực tiếp từ `GET /api/hash/duplicates` của NAS Rust (không cần tải full bytes về điện thoại băm SHA-256; chỉ fallback Room DB khi offline).
+
+### 2. Đấu Nối Các API Rust Mới Cho Tầng Front-end:
+- **`SmartToolsViewModel.kt`:** Bổ sung `findSimilarImages()` (`GET /api/fingerprint/similar` — ARM64 NEON popcount) và `zipFolder()` (`POST /api/zip` qua `LongRunningApiWorker`).
+- **`FileBrowserViewModel.kt`:** Bổ sung `zipFolder()` (`POST /api/zip`) và `fetchMediaExif()` (`GET /api/media/exif` — Rust `kamadak-exif`).
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-021 — Hoàn Tất Đợt Cuối P4 (Rust `dir_usage` Nhanh 13.95x & Parallel `scan_broken_mp4` Quét 4.157 Video Zero-GIL)
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:** 295 passed, 6 skipped (100% test pass) + 12/12 Rust unit tests (`nas_hasher`). Production verified trên NAS thật qua mạng LAN (`192.168.100.254`).

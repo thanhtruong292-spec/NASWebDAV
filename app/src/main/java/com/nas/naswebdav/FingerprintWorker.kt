@@ -59,9 +59,22 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
             val savedPass = SecurePrefsHelper.getPass(applicationContext)
             if (savedUrl.isEmpty() || savedUser.isEmpty() || savedPass.isEmpty()) return@withContext Result.failure()
 
-            // Moc 1: lay danh sach anh chua co aHash tu NAS API (file_index + image_fingerprints).
-            // Cac client khac (Web, PC worker, Android khac) tai ket qua da tinh thay tinh toan lai.
-            val pending = fetchPendingFingerprints(savedUrl, savedUser, savedPass)
+            // SEPARATION-OF-CONCERNS: Ưu tiên đẩy 100% việc tính aHash 64-bit về NAS Rust NEON SIMD
+            // (/api/fingerprint/compute) — điện thoại KHÔNG tải 512KB ảnh hay decode Bitmap nữa.
+            val apiBaseUrl = savedUrl.toApiBaseUrl()
+            val serverResult = computeFingerprintsOnNas(apiBaseUrl, savedUser, savedPass)
+            if (serverResult != null) {
+                val (computed, remaining) = serverResult
+                SystemLogger.log(
+                    "SUCCESS",
+                    "FingerprintWorker",
+                    "NAS Rust da tinh aHash: computed=$computed, remaining_pending=$remaining (0KB tai ve phone)"
+                )
+                return@withContext if (isStopped) Result.retry() else Result.success()
+            }
+
+            // Fallback cho NAS đời cũ chưa có endpoint /api/fingerprint/compute
+            val pending = fetchPendingFingerprints(apiBaseUrl, savedUser, savedPass)
             if (pending.isEmpty()) {
                 SystemLogger.log("INFO", "FingerprintWorker", "Khong phat hien tap tin yeu cau tao chu ky so (fingerprint).")
                 return@withContext Result.success()
@@ -184,7 +197,7 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
 
             // Dong bo batch aHash len NAS (neu co). Client khac tai su dung thay tinh toan lai.
             if (batch.isNotEmpty()) {
-                postFingerprintsToNas(savedUrl, savedUser, savedPass, batch)
+                postFingerprintsToNas(apiBaseUrl, savedUser, savedPass, batch)
             }
 
             // Quy tuc theo guideline repo: isStopped → retry (khong success de khoi nuot cancellation)
@@ -223,8 +236,55 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
     }
 
     // ========================================================================
-    // NAS API integration (Moc 1): tra cuu va dong bo aHash qua /api/fingerprint/*
+    // NAS API integration: Ưu tiên NAS Rust /api/fingerprint/compute (NEON SIMD)
     // ========================================================================
+
+    /**
+     * Yêu cầu NAS tự tính aHash 64-bit bằng Rust NEON SIMD đa luồng và lưu trực tiếp vào SQLite.
+     * Trả về Pair(totalComputed, remainingPending) nếu NAS hỗ trợ, hoặc null nếu cần fallback.
+     */
+    private suspend fun computeFingerprintsOnNas(apiBaseUrl: String, user: String, pass: String): Pair<Int, Int>? {
+        val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
+        val url = apiBaseUrl.trimEnd('/') + "/api/fingerprint/compute"
+        var totalComputed = 0
+        var lastRemaining = 0
+        val maxBatches = 5
+        for (batchIdx in 0 until maxBatches) {
+            if (isStopped) break
+            try {
+                val payload = JSONObject().apply {
+                    put("limit", 100)
+                    put("workers", 4)
+                }.toString()
+                val req = okhttp3.Request.Builder()
+                    .url(url)
+                    .header("Authorization", authHeader)
+                    .header("Content-Type", "application/json")
+                    .post(payload.toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+                val batchRes = NasApplication.instance.sharedHttpClient.newCall(req).execute().use { resp ->
+                    if (resp.code == 404) return null // NAS cũ chưa có endpoint Rust compute -> fallback
+                    if (!resp.isSuccessful) {
+                        SystemLogger.log("WARNING", "FingerprintWorker", "NAS /api/fingerprint/compute HTTP ${resp.code}")
+                        return if (batchIdx > 0) Pair(totalComputed, lastRemaining) else null
+                    }
+                    val body = resp.body?.string() ?: return Pair(totalComputed, lastRemaining)
+                    val json = JSONObject(body)
+                    Pair(json.optInt("computed", 0), json.optInt("remaining_pending", 0))
+                }
+                totalComputed += batchRes.first
+                lastRemaining = batchRes.second
+                if (lastRemaining <= 0 || batchRes.first <= 0) break
+                delay(200)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                SystemLogger.log("WARNING", "FingerprintWorker", "NAS /api/fingerprint/compute loi: ${e.message}")
+                return if (batchIdx > 0) Pair(totalComputed, lastRemaining) else null
+            }
+        }
+        return Pair(totalComputed, lastRemaining)
+    }
 
     private suspend fun fetchPendingFingerprints(baseUrl: String, user: String, pass: String): List<Map<String, Any>> {
         return try {
