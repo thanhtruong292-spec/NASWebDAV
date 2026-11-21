@@ -692,10 +692,20 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         }
 
                         if (currentCount % 500 == 0) {
-                            if (SecurePrefsHelper.getUser(applicationContext) != backupAuth.user ||
-                                SecurePrefsHelper.getPass(applicationContext) != backupAuth.pass ||
-                                (SecurePrefsHelper.getUrlList(applicationContext) + SecurePrefsHelper.getTailscaleBaseUrl(applicationContext))
-                                    .none { it.trimEnd('/') == backupAuth.baseUrl.trimEnd('/') }) {
+                            val currentUser = SecurePrefsHelper.getUser(applicationContext)
+                            val currentPass = SecurePrefsHelper.getPass(applicationContext)
+                            val currentCandidateUrls = (SecurePrefsHelper.getUrlList(applicationContext) +
+                                listOfNotNull(
+                                    SecurePrefsHelper.getTailscaleBaseUrl(applicationContext).takeIf { it.isNotBlank() },
+                                    SecurePrefsHelper.getUrl(applicationContext).takeIf { it.isNotBlank() }
+                                ))
+                                .map { it.trimEnd('/').removeSuffix("/webdav").trimEnd('/') }
+                                .filter { it.isNotBlank() }
+
+                            val activeBase = backupAuth.baseUrl.trimEnd('/').removeSuffix("/webdav").trimEnd('/')
+                            if (currentUser != backupAuth.user || currentPass != backupAuth.pass ||
+                                (currentCandidateUrls.isNotEmpty() && currentCandidateUrls.none { it.equals(activeBase, ignoreCase = true) })) {
+                                SystemLogger.log("WARNING", "AutoBackup", "Tài khoản sao lưu thay đổi (user/pass/host) — dừng worker")
                                 throw CancellationException("Backup account changed")
                             }
                         }
@@ -875,12 +885,22 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             }
 
             // Chạy 2 pipeline song song: Ảnh (Image Pipeline) và Video (Video Pipeline)
-            coroutineScope {
+            supervisorScope {
                 val imageJob = async(Dispatchers.IO) {
-                    processPipeline(isImage = true, mediaUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    try {
+                        processPipeline(isImage = true, mediaUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        SystemLogger.log("ERROR", "AutoBackup", "Lỗi pipeline ảnh: ${e.message}")
+                    }
                 }
                 val videoJob = async(Dispatchers.IO) {
-                    processPipeline(isImage = false, mediaUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                    try {
+                        processPipeline(isImage = false, mediaUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        SystemLogger.log("ERROR", "AutoBackup", "Lỗi pipeline video: ${e.message}")
+                    }
                 }
                 imageJob.await()
                 videoJob.await()

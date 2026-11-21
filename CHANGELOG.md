@@ -5,6 +5,35 @@
 
 ---
 
+## [2026-11-21] ANTIGRAVITY-033 — Khắc Phục Triệt Để Lỗi Tiến Trình AutoBackup Đột Ngột Dừng & Chống Crash Mạng RPC
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Android Unit Tests: `AutoBackupServerHashAndDeleteTest` PASS, `AutoBackupDedupRegressionTest` PASS, `AutoBackupLockTest` PASS, `TarStreamRequestBodyTest` PASS (100% unit tests PASS in 5m 10s).
+- Build APK: `:app:assembleDebug` đang đóng gói (`app-debug.apk` tại `app/build/outputs/apk/debug/app-debug.apk`).
+
+### 1. Khắc Phục Nguyên Nhân Gốc Gây Dừng Đột Ngột Worker (Check Tài Khoản Cứ 500 Tệp):
+- **Phát hiện qua Logcat & Code Review:**
+  - Tại `AutoBackupWorker.kt`: Cứ mỗi 500 tệp duyệt qua (`currentCount % 500 == 0`), có đoạn mã kiểm tra xem tài khoản có bị đổi không.
+  - Đoạn mã so sánh danh sách URL từ SharedPreferences (`http://192.168.100.254:8822`) với `backupAuth.baseUrl` (`http://192.168.100.254:8822/webdav/`).
+  - Do `backupAuth.baseUrl` có chứa hậu tố `/webdav/`, phép so sánh `none { it.trimEnd('/') == backupAuth.baseUrl.trimEnd('/') }` luôn trả về `true`!
+  - Hậu quả: Cứ hễ quét đến tệp thứ 500 (hoặc khi khôi phục checkpoint ở mốc chia hết cho 500 như 5000), worker lập tức ném ngoại lệ giả `CancellationException("Backup account changed")` và tự hủy tiến trình ngay lập tức!
+- **Khắc phục:**
+  - Chuẩn hóa URL loại bỏ triệt để `/webdav` và dấu gạch chéo cuối (`removeSuffix("/webdav").trimEnd('/')`) trước khi đối chiếu.
+  - Chỉ hủy tiến trình khi tên đăng nhập hoặc mật khẩu thực sự bị thay đổi, hoặc toàn bộ URL ứng viên không còn trùng khớp với host của NAS hiện tại.
+
+### 2. Chống Sập ART Runtime Do Mạng Chập Chờn Khi Gọi RPC Đối Chiếu Hash (`VerifiedDuplicateHash.kt`):
+- **Phát hiện qua Tombstone/Crash Buffer:**
+  - Khi điện thoại mất sóng hoặc mạng Tailscale không thể kết nối tới port 5050 (`Failed to connect to /100.90.135.102:5050`), hàm `duplicateRpc` và `serverSideSha256` không bắt ngoại lệ `ConnectException` / `SocketTimeoutException`, khiến ART Runtime bị crash `SIGABRT` ("No pending exception expected").
+- **Khắc phục:**
+  - Bọc khối `try-catch` an toàn xung quanh `duplicateRpcClient.newCall().execute()` và `duplicateComputeHashClient.newCall().execute()`.
+  - Nếu gặp lỗi mạng RPC, an toàn trả về `null` để worker tự động fallback sang phương thức tải luồng trực tiếp WebDAV truyền thống mà không bao giờ crash hoặc gián đoạn.
+
+### 3. Cô Lập Hai Pipeline Bằng `supervisorScope` & Đẩy Toàn Bộ Sự Kiện Ra Logcat:
+- **SupervisorScope (`AutoBackupWorker.kt`):** Thay thế `coroutineScope` bằng `supervisorScope` kèm khối `try-catch` cục bộ cho từng pipeline. Nếu luồng Video hoặc Ảnh gặp tệp cá biệt bị lỗi, luồng còn lại vẫn tiếp tục chạy độc lập 100% dung lượng băng thông.
+- **Logcat Realtime Output (`SystemLogger.kt`):** Nối trực tiếp `SystemLogger.log` ra `android.util.Log.println` với tag tương ứng theo module (`AutoBackup`), giúp người dùng và nhà phát triển có thể theo dõi trực tiếp toàn bộ diễn biến đồng bộ qua lệnh `adb logcat -s AutoBackup`.
+
+---
+
 ## [2026-11-20] ANTIGRAVITY-032 — Khắc Phục Mâu Thuẫn Số Lượng Tiến Trình, Bổ Sung Dung Lượng & Thanh Tiến Trình Riêng Cho Tệp Video Đang Tải
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:**

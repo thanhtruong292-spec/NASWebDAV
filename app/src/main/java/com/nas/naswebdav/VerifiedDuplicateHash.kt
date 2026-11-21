@@ -61,9 +61,15 @@ internal suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject,
         .tag(WebDavManager.AuthState::class.java, auth)
         .header("Authorization", auth.authHeader)
         .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-    duplicateRpcClient.newCall(request).execute().use { response ->
-        if (response.code != 200) return null
-        return JSONObject(response.body?.string() ?: return null)
+    return try {
+        duplicateRpcClient.newCall(request).execute().use { response ->
+            if (response.code != 200) return null
+            JSONObject(response.body?.string() ?: return null)
+        }
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        android.util.Log.w("DuplicateRpc", "RPC $route failed: ${e.message}")
+        null
     }
 }
 
@@ -77,11 +83,17 @@ private suspend fun WebDavManager.serverSideSha256(path: String, size: Long, ver
         .header("Authorization", auth.authHeader)
         .post(JSONObject().put("path", path).put("version", version).toString().toRequestBody("application/json".toMediaType()))
         .build()
-    duplicateComputeHashClient.newCall(request).execute().use { response ->
-        if (response.code != 200) return null
-        val json = runCatching { JSONObject(response.body?.string() ?: return null) }.getOrNull() ?: return null
-        if (json.optString("version") != version || json.optString("file_id") != fileId || json.optLong("size", -1) != size) return null
-        return json.optString("sha256").takeIf(fullDigestPattern::matches)
+    return try {
+        duplicateComputeHashClient.newCall(request).execute().use { response ->
+            if (response.code != 200) return null
+            val json = runCatching { JSONObject(response.body?.string() ?: return null) }.getOrNull() ?: return null
+            if (json.optString("version") != version || json.optString("file_id") != fileId || json.optLong("size", -1) != size) return null
+            json.optString("sha256").takeIf(fullDigestPattern::matches)
+        }
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        android.util.Log.w("DuplicateRpc", "serverSideSha256 failed: ${e.message}")
+        null
     }
 }
 

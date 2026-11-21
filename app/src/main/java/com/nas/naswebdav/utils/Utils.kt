@@ -210,13 +210,20 @@ object MediaUtils {
 // ─────────────────────────────────────────────────────────────────────────────
 object SystemLogger {
     fun log(type: String, module: String, message: String) {
+        val priority = when (type.uppercase()) {
+            "ERROR" -> android.util.Log.ERROR
+            "WARNING", "WARN" -> android.util.Log.WARN
+            "DEBUG" -> android.util.Log.DEBUG
+            else -> android.util.Log.INFO
+        }
+        android.util.Log.println(priority, module, message)
         NasApplication.applicationScope.launch(Dispatchers.IO) {
             try {
                 NasApplication.instance.database.logDao().insertLog(
                     SystemLog(type = type, module = module, message = message)
                 )
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                android.util.Log.e("SystemLogger", "Lỗi ghi log: ${e.message}")
+                android.util.Log.e("SystemLogger", "Lỗi ghi log DB: ${e.message}")
             }
         }
     }
