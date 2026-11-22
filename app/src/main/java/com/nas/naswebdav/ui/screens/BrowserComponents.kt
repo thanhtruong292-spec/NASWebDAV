@@ -228,7 +228,7 @@ fun FileItemGridCell(
                     if (!selectionMode && !file.isDirectory && isNewFile) {
                         isNewFile = false
                         itemScope.launch(Dispatchers.IO) {
-                            markBrowserFilesViewed(prefsRepo, listOf(file.path))
+                            prefsRepo.markViewed(listOf(file.path))
                         }
                     }
                     onClick()

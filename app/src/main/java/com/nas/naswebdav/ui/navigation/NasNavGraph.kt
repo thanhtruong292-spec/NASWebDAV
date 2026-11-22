@@ -104,11 +104,7 @@ fun NasNavHost(
                 NasNavigationBar(
                     currentRoute = currentRoute,
                     onTabSelected = { tab ->
-                        // CC-005 P1: reset ExclusivePanelState khi chuyển màn +
-                        // dismiss dialog host (tránh dialog/sheet màn cũ đè màn mới).
-                        runCatching {
-                            com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = null
-                        }
+                        // Dismiss dialog host khi chuyển tab (tránh dialog/sheet màn cũ đè màn mới).
                         runCatching {
                             domainProvider.globalUi.dismiss()
                             domainProvider.deviceManagement.dismissIpApproval()

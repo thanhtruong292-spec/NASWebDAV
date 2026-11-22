@@ -2,7 +2,9 @@ package com.nas.naswebdav.utils
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.provider.Settings
 import androidx.core.content.edit
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -235,6 +237,39 @@ class PreferencesRepository(context: Context) {
         prefs(PREFS_NAS).edit().putBoolean(KEY_DELETE_AFTER_BACKUP, enabled).apply()
     }
 
+    /** Chế độ sao lưu: "both" (cả hai), "image" (chỉ ảnh), "video" (chỉ video). */
+    fun getBackupMode(): String {
+        val raw = prefs(PREFS_NAS).getString(KEY_BACKUP_MODE, DEFAULT_BACKUP_MODE) ?: DEFAULT_BACKUP_MODE
+        return if (raw == "image" || raw == "video" || raw == "both") raw else DEFAULT_BACKUP_MODE
+    }
+
+    fun setBackupMode(mode: String) {
+        val clean = if (mode == "image" || mode == "video" || mode == "both") mode else DEFAULT_BACKUP_MODE
+        prefs(PREFS_NAS).edit().putString(KEY_BACKUP_MODE, clean).apply()
+    }
+
+    /** Mã thiết bị duy nhất per cài đặt để phân biệt nhiều điện thoại backup đồng thời. */
+    fun getDeviceId(context: Context): String {
+        val stored = prefs(PREFS_NAS).getString(KEY_DEVICE_ID, null)
+        if (!stored.isNullOrBlank()) return stored
+        val androidId = runCatching {
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        }.getOrNull()
+        val id = if (!androidId.isNullOrBlank()) androidId else UUID.randomUUID().toString()
+        prefs(PREFS_NAS).edit().putString(KEY_DEVICE_ID, id).apply()
+        return id
+    }
+
+    /** Tổng dung lượng (bytes) đã giải phóng trên điện thoại qua Auto Backup. */
+    fun getTotalBackupFreedBytes(): Long =
+        prefs(PREFS_NAS).getLong(KEY_TOTAL_FREED_BYTES, 0L).coerceAtLeast(0L)
+
+    fun addBackupFreedBytes(deltaBytes: Long) {
+        if (deltaBytes <= 0L) return
+        val cur = getTotalBackupFreedBytes()
+        prefs(PREFS_NAS).edit().putLong(KEY_TOTAL_FREED_BYTES, cur + deltaBytes).apply()
+    }
+
     fun getUploadSpeedLimit(): Long =
         prefs(PREFS_NAS).getLong(KEY_UPLOAD_SPEED_LIMIT, 0L)
 
@@ -299,6 +334,10 @@ class PreferencesRepository(context: Context) {
         const val KEY_BIOMETRIC_DELAY = "biometric_lock_delay_sec"
         const val KEY_AUTO_BACKUP = "auto_backup"
         const val KEY_DELETE_AFTER_BACKUP = "delete_after_backup"
+        const val KEY_BACKUP_MODE = "backup_mode"
+        const val DEFAULT_BACKUP_MODE = "both"
+        const val KEY_DEVICE_ID = "device_id"
+        const val KEY_TOTAL_FREED_BYTES = "backup_total_freed_bytes"
         const val KEY_UPLOAD_SPEED_LIMIT = "upload_speed_limit_bps"
         const val KEY_SCREEN_RECORD_QUICK = "screen_record_quick_added"
         const val KEY_ALERT_ENABLED = "alert_enabled"

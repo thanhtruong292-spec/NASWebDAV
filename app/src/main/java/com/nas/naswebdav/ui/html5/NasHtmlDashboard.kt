@@ -158,6 +158,9 @@ fun NasHtmlDashboardScreen(
             if (tick % 10 == 0) {
                 deviceVM.loadSystemLogs()
             }
+            if (tick % 2 == 0) {
+                autoBackupVM.fetchNasBackupSessions()
+            }
             if (tick % 15 == 0) {
                 smartToolsVM.fetchThumbnailAudit()
                 sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
@@ -213,7 +216,20 @@ fun NasHtmlDashboardScreen(
         autoBackupVM.autoBackupVideoProcessedCount,
         autoBackupVM.autoBackupVideoSpeedBps,
         autoBackupVM.autoBackupVideoFileProgress,
-        autoBackupVM.autoBackupVideoBytesWritten
+        autoBackupVM.autoBackupVideoBytesWritten,
+        autoBackupVM.autoBackupMode,
+        autoBackupVM.phoneStorageFreeBytes,
+        autoBackupVM.storageFreedSessionBytes,
+        autoBackupVM.storageFreedTotalBytes,
+        autoBackupVM.nasQueuePosition,
+        autoBackupVM.nasBackupSessions,
+        smartToolsVM.duplicateFilesList.size,
+        smartToolsVM.isScanningDuplicates,
+        smartToolsVM.organizerScanning,
+        smartToolsVM.organizerExecuting,
+        smartToolsVM.organizerScanResult,
+        smartToolsVM.organizerResult,
+        smartToolsVM.organizerError
     ) {
         if (!pageLoaded) return@LaunchedEffect
         val payload = buildHtml5StateJson(
@@ -539,9 +555,14 @@ fun NasHtmlDashboardScreen(
                     }
 
                     @JavascriptInterface
-                    fun saveAutoBackup(enabled: Boolean, deleteAfter: Boolean) {
+                    fun saveAutoBackup(enabled: Boolean, deleteAfter: Boolean, backupMode: String = "both") {
                         post {
                             val prefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+                            prefs.setBackupMode(backupMode)
+                            prefs.setDeleteAfterBackup(deleteAfter)
+                            com.nas.naswebdav.AutoBackupState.deleteAfter.value = deleteAfter
+                            autoBackupVM.setBackupModeImmediate(backupMode)
+                            autoBackupVM.refreshPhoneStorage()
                             if (enabled) {
                                 if (!com.nas.naswebdav.utils.MediaPermissionHelper.canRunPeriodicBackup(context)) {
                                     Toast.makeText(context, "Chưa cấp quyền toàn bộ Ảnh/Video trong Cài đặt Android!", Toast.LENGTH_LONG).show()
@@ -556,13 +577,18 @@ fun NasHtmlDashboardScreen(
                                     return@post
                                 }
                                 prefs.setAutoBackupFlag(true)
-                                prefs.setDeleteAfterBackup(deleteAfter)
                                 val constraints = androidx.work.Constraints.Builder()
                                     .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
                                     .setRequiresCharging(true)
                                     .build()
                                 val req = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(12, java.util.concurrent.TimeUnit.HOURS)
                                     .setConstraints(constraints)
+                                    .setInputData(
+                                        androidx.work.workDataOf(
+                                            "delete_after_backup" to deleteAfter,
+                                            "backup_mode" to prefs.getBackupMode()
+                                        )
+                                    )
                                     .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30L, java.util.concurrent.TimeUnit.SECONDS)
                                     .addTag("com.nas.naswebdav.AutoBackupWorker")
                                     .build()
@@ -571,13 +597,64 @@ fun NasHtmlDashboardScreen(
                                     androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
                                     req
                                 )
-                                Toast.makeText(context, "Đã lưu lịch Auto-Backup!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Đã lưu cấu hình Auto-Backup!", Toast.LENGTH_SHORT).show()
                             } else {
                                 prefs.setAutoBackupFlag(false)
-                                prefs.setDeleteAfterBackup(deleteAfter)
                                 androidx.work.WorkManager.getInstance(context).cancelUniqueWork("AutoBackupWork")
-                                Toast.makeText(context, "Đã tắt Auto-Backup", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Đã tắt lịch Auto-Backup", Toast.LENGTH_SHORT).show()
                             }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun setBackupMode(mode: String) {
+                        post {
+                            val prefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+                            prefs.setBackupMode(mode)
+                            autoBackupVM.setBackupModeImmediate(prefs.getBackupMode())
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun setDeleteAfterBackup(deleteAfter: Boolean) {
+                        post {
+                            com.nas.naswebdav.utils.PreferencesRepository.get(context).setDeleteAfterBackup(deleteAfter)
+                            com.nas.naswebdav.AutoBackupState.deleteAfter.value = deleteAfter
+                            if (deleteAfter && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()) {
+                                Toast.makeText(context, "Hãy bật 'Truy cập tất cả tệp' để ứng dụng xóa được ảnh/video sau khi sao lưu!", Toast.LENGTH_LONG).show()
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                            android.net.Uri.parse("package:${context.packageName}")
+                                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun requestAllFilesAccess() {
+                        post {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                            android.net.Uri.parse("package:${context.packageName}")
+                                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun refreshBackupInfo() {
+                        post {
+                            autoBackupVM.refreshPhoneStorage()
+                            autoBackupVM.fetchNasBackupSessions()
                         }
                     }
 
@@ -828,7 +905,48 @@ fun NasHtmlDashboardScreen(
                     fun startDuplicateScan(forceRestart: Boolean, lightningMode: Boolean) {
                         post {
                             smartToolsVM.startBackgroundDuplicateScan(context, forceRestart = forceRestart, lightningMode = lightningMode)
-                            smartToolsVM.isScanningDuplicates = true
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun deleteDuplicateFiles(pathsJson: String) {
+                        post {
+                            runCatching {
+                                val arr = JSONArray(pathsJson)
+                                val targets = mutableSetOf<String>()
+                                for (i in 0 until arr.length()) {
+                                    val p = arr.optString(i)
+                                    if (p.isNotBlank()) targets.add(p)
+                                }
+                                val toDelete = smartToolsVM.duplicateFilesList.filter { it.path in targets }
+                                if (toDelete.isNotEmpty()) {
+                                    smartToolsVM.deleteSelectedDuplicates(toDelete)
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun smartOrganizeScan(filter: String, path: String) {
+                        post {
+                            val f = when (filter.lowercase()) {
+                                "image" -> OrganizerFilter.IMAGE
+                                "video" -> OrganizerFilter.VIDEO
+                                else -> OrganizerFilter.ALL
+                            }
+                            smartToolsVM.smartOrganizeScan(f, path.trim())
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun smartOrganizeExecute(filter: String, path: String) {
+                        post {
+                            val f = when (filter.lowercase()) {
+                                "image" -> OrganizerFilter.IMAGE
+                                "video" -> OrganizerFilter.VIDEO
+                                else -> OrganizerFilter.ALL
+                            }
+                            smartToolsVM.smartOrganizeExecute(f, path.trim())
                         }
                     }
 
@@ -1072,10 +1190,20 @@ private fun buildHtml5StateJson(
     root.put("processes", pArr)
 
     val prefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+    val hasAllFilesAccess = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R ||
+        runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
     root.put("toolbox", JSONObject().apply {
         put("biometric", prefs.isBiometricEnabled())
         put("autoBackup", prefs.isAutoBackupFlag())
         put("deleteAfter", prefs.isDeleteAfterBackup())
+        put("hasAllFilesAccess", hasAllFilesAccess)
+        put("backupMode", prefs.getBackupMode())
+        put("deviceId", autoBackupVM.phoneDeviceId.ifEmpty { prefs.getDeviceId(context) })
+        put("deviceName", autoBackupVM.phoneDeviceName)
+        put("phoneFreeBytes", autoBackupVM.phoneStorageFreeBytes)
+        put("phoneTotalBytes", autoBackupVM.phoneStorageTotalBytes)
+        put("freedSessionBytes", autoBackupVM.storageFreedSessionBytes)
+        put("freedTotalBytes", autoBackupVM.storageFreedTotalBytes)
         put("autoBackupRunning", autoBackupVM.isAutoBackupRunning)
         put("autoBackupFile", autoBackupVM.autoBackupCurrentFile)
         put("smbEnabled", deviceVM.isSmbEnabled)
@@ -1250,9 +1378,61 @@ private fun buildHtml5StateJson(
     val dupRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
     val dupActive = dupRunning || dupPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
     val thumbActive = (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && smartToolsVM.thumbGenerated < smartToolsVM.thumbTotal && smartToolsVM.thumbTotal > 0
+    val dupGroupsArr = JSONArray()
+    smartToolsVM.duplicateFilesList
+        .groupBy { f -> f.partialHash?.takeIf { it.isNotBlank() } ?: "${f.contentLength}_${f.name}" }
+        .values
+        .filter { it.size > 1 }
+        .take(50)
+        .forEach { grp ->
+            val filesArr = JSONArray()
+            grp.forEach { f ->
+                val rel = f.path.substringAfter("/webdav/", "").let { raw ->
+                    runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+                }
+                filesArr.put(JSONObject().apply {
+                    put("name", f.name)
+                    put("path", f.path)
+                    put("relPath", rel)
+                    put("size", f.contentLength)
+                    put("folder", rel.substringBeforeLast('/', "/"))
+                })
+            }
+            dupGroupsArr.put(JSONObject().apply {
+                put("size", grp.first().contentLength)
+                put("count", grp.size)
+                put("files", filesArr)
+            })
+        }
     root.put("duplicate", JSONObject().apply {
         put("scanning", smartToolsVM.isScanningDuplicates || smartToolsVM.isWorkerRunning || dupRunning)
+        put("paused", dupPaused)
+        put("stage", dupStage)
+        put("stageDesc", DuplicateProgressState.stageDescription.value)
+        put("percent", (dupPercent * 100f).toDouble())
+        put("scanned", DuplicateProgressState.scannedCount.value)
+        put("found", DuplicateProgressState.foundCount.value)
+        put("currentFolder", smartToolsVM.scanDuplicatesCurrentFolderUrl)
+        put("currentFile", smartToolsVM.scanDuplicatesCurrentItemName)
         put("count", smartToolsVM.duplicateFilesList.size)
+        put("groups", dupGroupsArr)
+    })
+    val orgGroupsArr = JSONArray()
+    (smartToolsVM.organizerScanResult ?: emptyList()).forEach { g ->
+        orgGroupsArr.put(JSONObject().apply {
+            put("label", g.label)
+            put("count", g.count)
+            put("size", g.size)
+            put("samples", JSONArray(g.sampleFiles.take(5)))
+        })
+    }
+    root.put("organizer", JSONObject().apply {
+        put("scanning", smartToolsVM.organizerScanning)
+        put("executing", smartToolsVM.organizerExecuting)
+        put("totalFiles", smartToolsVM.organizerTotalFiles)
+        put("result", smartToolsVM.organizerResult ?: "")
+        put("error", smartToolsVM.organizerError ?: "")
+        put("groups", orgGroupsArr)
     })
     root.put("bgTasks", JSONObject().apply {
         put("thumb", JSONObject().apply {
@@ -1289,13 +1469,47 @@ private fun buildHtml5StateJson(
             put("speedBps", autoBackupVM.autoBackupUploadSpeedBps)
             put("bytesWritten", autoBackupVM.autoBackupFileBytesWritten)
             put("bytesTotal", autoBackupVM.autoBackupFileBytesTotal)
+            put("bytesRemaining", autoBackupVM.autoBackupFileBytesRemaining)
+            put("etaSeconds", autoBackupVM.autoBackupEtaSeconds)
             put("isPaused", autoBackupVM.autoBackupIsPaused)
+            put("backupMode", autoBackupVM.autoBackupMode)
+            put("deviceId", autoBackupVM.phoneDeviceId)
+            put("deviceName", autoBackupVM.phoneDeviceName)
+            put("phoneFreeBytes", autoBackupVM.phoneStorageFreeBytes)
+            put("phoneTotalBytes", autoBackupVM.phoneStorageTotalBytes)
+            put("freedSessionBytes", autoBackupVM.storageFreedSessionBytes)
+            put("freedTotalBytes", autoBackupVM.storageFreedTotalBytes)
+            put("queuePosition", autoBackupVM.nasQueuePosition)
+            put("maxConcurrent", autoBackupVM.nasMaxConcurrentDevices)
+            put("sessions", JSONArray().apply {
+                autoBackupVM.nasBackupSessions.forEach { s ->
+                    put(JSONObject().apply {
+                        put("deviceId", s.deviceId)
+                        put("deviceName", s.deviceName)
+                        put("backupMode", s.backupMode)
+                        put("status", s.status)
+                        put("processed", s.processed)
+                        put("total", s.total)
+                        put("speedBps", s.speedBps)
+                        put("currentFile", s.currentFile)
+                        put("freedBytes", s.freedBytes)
+                        put("phoneFreeBytes", s.phoneFreeBytes)
+                        put("phoneTotalBytes", s.phoneTotalBytes)
+                        put("slotGranted", s.slotGranted)
+                        put("queuePosition", s.queuePosition)
+                    })
+                }
+            })
             put("images", JSONObject().apply {
                 put("currentFile", autoBackupVM.autoBackupImageCurrentFile)
                 put("progress", autoBackupVM.autoBackupImageProgress.toDouble())
                 put("processed", autoBackupVM.autoBackupImageProcessedCount)
                 put("total", autoBackupVM.autoBackupImageTotalCount)
                 put("speedBps", autoBackupVM.autoBackupImageSpeedBps)
+                put("bytesUploaded", autoBackupVM.autoBackupImageBytesUploaded)
+                put("bytesTotal", autoBackupVM.autoBackupImageBytesTotal)
+                put("bytesRemaining", autoBackupVM.autoBackupImageBytesRemaining)
+                put("etaSeconds", autoBackupVM.autoBackupImageEtaSeconds)
             })
             put("videos", JSONObject().apply {
                 put("currentFile", autoBackupVM.autoBackupVideoCurrentFile)
@@ -1306,6 +1520,10 @@ private fun buildHtml5StateJson(
                 put("processed", autoBackupVM.autoBackupVideoProcessedCount)
                 put("total", autoBackupVM.autoBackupVideoTotalCount)
                 put("speedBps", autoBackupVM.autoBackupVideoSpeedBps)
+                put("bytesUploaded", autoBackupVM.autoBackupVideoBytesUploaded)
+                put("bytesTotalPending", autoBackupVM.autoBackupVideoBytesTotalPending)
+                put("bytesRemaining", autoBackupVM.autoBackupVideoBytesRemaining)
+                put("etaSeconds", autoBackupVM.autoBackupVideoEtaSeconds)
             })
         })
     })

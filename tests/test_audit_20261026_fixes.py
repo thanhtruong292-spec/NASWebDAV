@@ -154,7 +154,6 @@ class TestAudit20261026Fixes(unittest.TestCase):
             SERVER_PATH,
             REPO_ROOT / "backend" / "rust_bridge.py",
             REPO_ROOT / "backend" / "nas_work_coordinator.py",
-            REPO_ROOT / "check_log.py"
         ] + sorted((REPO_ROOT / "scripts").glob("*.py"))
         forbidden_ast = ("JoinedStr", "FormattedValue", "AnnAssign", "NamedExpr", "AsyncGeneratorExp", "Match")
         forbidden_modules = {"secrets", "dataclasses", "contextvars", "zoneinfo", "graphlib", "tomllib"}

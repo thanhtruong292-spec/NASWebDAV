@@ -530,57 +530,121 @@
         <div><div class="list-title">Xóa tệp trên máy sau khi sao lưu</div><div class="list-sub">Giải phóng bộ nhớ điện thoại</div></div>
         <input type="checkbox" id="abDeleteChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" />
       </div>
-      <div id="abStatusLine" style="font-size:12px;color:var(--ux-text-2);padding:10px 0 6px;">Trạng thái: Sẵn sàng</div>
-      <div id="abProgressBox" class="hidden" style="background:rgba(15,23,42,0.55);border:1px solid rgba(56,189,248,0.22);border-radius:10px;padding:10px;margin-bottom:10px;">
+
+      <!-- Chế độ sao lưu chuẩn HTML5 Segmented Tabs -->
+      <div style="margin-top:10px;margin-bottom:4px;">
+        <div class="card-header" style="margin-bottom:6px;">
+          <span class="card-title">NỘI DUNG SAO LƯU</span>
+          <span class="badge" id="abStatusLine"><span class="dot" id="abStatusDot"></span><span id="abStatusText">Sẵn sàng</span></span>
+        </div>
+        <div class="seg-tabs" id="abModeGroup" style="margin-bottom:10px;">
+          <button type="button" class="seg-btn ab-mode-btn active" data-mode="both" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+            <svg class="svg-ico" style="width:13px;height:13px;" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>Ảnh &amp; Video</span>
+          </button>
+          <button type="button" class="seg-btn ab-mode-btn" data-mode="image" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+            <svg class="svg-ico" style="width:13px;height:13px;" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span>Chỉ ảnh</span>
+          </button>
+          <button type="button" class="seg-btn ab-mode-btn" data-mode="video" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+            <svg class="svg-ico" style="width:13px;height:13px;" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg>
+            <span>Chỉ video</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Thông tin thiết bị & bộ nhớ điện thoại (2x1 Gauge Grid chuẩn HTML5) -->
+      <div class="gauge-grid" id="abStorageBox" style="margin-bottom:10px;">
+        <div class="gauge" style="cursor:default;">
+          <div class="gauge-top">
+            <svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-cyan);" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+            <span>BỘ NHỚ MÁY</span>
+          </div>
+          <div class="gauge-val" id="abStorageText">--</div>
+          <div class="gauge-sub" id="abDeviceLine">--</div>
+          <div class="bar-track"><div class="bar-fill" id="abStorageBar" style="width:0%;background:var(--ux-cyan);"></div></div>
+        </div>
+        <div class="gauge" style="cursor:default;">
+          <div class="gauge-top">
+            <svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-green);" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>ĐÃ GIẢI PHÓNG</span>
+          </div>
+          <div class="gauge-val" id="abFreedTotalLine" style="color:var(--ux-green);">0 B</div>
+          <div class="gauge-sub" id="abFreedSessionLine">Phiên này: 0 B</div>
+          <div class="bar-track"><div class="bar-fill" id="abFreedBar" style="width:0%;background:var(--ux-green);"></div></div>
+        </div>
+      </div>
+
+      <div id="abProgressBox" class="hidden" style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:10px 11px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <div id="abFileLine" style="font-size:12px;font-weight:700;color:var(--ux-text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">Đang chuẩn bị...</div>
+          <div id="abFileLine" style="font-size:12px;font-weight:700;color:var(--ux-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">Đang chuẩn bị...</div>
           <span class="badge" id="abSpeedBadge" style="color:var(--ux-green);">--</span>
         </div>
         <div id="abPathLine" style="font-size:11px;color:var(--ux-text-3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
         
         <!-- Pipeline Ảnh (Photo Stream) -->
-        <div id="abImageRow" style="margin-top:8px;padding-top:6px;border-top:1px dashed rgba(148,163,184,0.18);">
-          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-cyan);">
-            <span id="abImageFile" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;">📷 Ảnh: Đang đợi...</span>
-            <span id="abImageSpeed">--</span>
+        <div id="abImageRow" style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(148,163,184,0.1);">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--ux-cyan);">
+            <span style="display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%;">
+              <svg class="svg-ico" style="width:13px;height:13px;color:var(--ux-cyan);" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              <span id="abImageFile" style="overflow:hidden;text-overflow:ellipsis;">Ảnh: Đang đợi...</span>
+            </span>
+            <span id="abImageSpeed" style="font-variant-numeric:tabular-nums;font-weight:700;">--</span>
           </div>
-          <div class="bar-track" style="margin:4px 0;"><div class="bar-fill" id="abImageProgFill" style="width:0%;background:var(--ux-cyan);"></div></div>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);">
+          <div class="bar-track" style="margin:5px 0;"><div class="bar-fill" id="abImageProgFill" style="width:0%;background:var(--ux-cyan);"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
             <span id="abImageCount">0 / 0 ảnh</span>
             <b id="abImagePct" style="color:var(--ux-cyan);">0.0%</b>
           </div>
+          <div id="abImageBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
         </div>
 
         <!-- Pipeline Video (Video Direct) -->
-        <div id="abVideoRow" style="margin-top:6px;padding-top:6px;border-top:1px dashed rgba(148,163,184,0.18);">
-          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-yellow);">
-            <span id="abVideoFile" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;">🎬 Video: Đang đợi...</span>
-            <span id="abVideoSpeed">--</span>
+        <div id="abVideoRow" style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(148,163,184,0.1);">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--ux-yellow);">
+            <span style="display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%;">
+              <svg class="svg-ico" style="width:13px;height:13px;color:var(--ux-yellow);" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg>
+              <span id="abVideoFile" style="overflow:hidden;text-overflow:ellipsis;">Video: Đang đợi...</span>
+            </span>
+            <span id="abVideoSpeed" style="font-variant-numeric:tabular-nums;font-weight:700;">--</span>
           </div>
 
           <!-- Tiến trình file video đang tải lên -->
-          <div id="abVideoFileBox" style="margin-top:4px;">
-            <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);">
-              <span id="abVideoFileSize">-- / --</span>
-              <span id="abVideoFilePct" style="color:var(--ux-yellow);font-weight:600;">--</span>
+          <div id="abVideoFileBox" style="margin-top:6px;">
+            <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
+              <span>Tệp hiện tại: <span id="abVideoFileSize" style="color:var(--ux-text-1);">-- / --</span></span>
+              <span id="abVideoFilePct" style="color:var(--ux-yellow);font-weight:700;">--</span>
             </div>
-            <div class="bar-track" style="margin:2px 0 4px;height:4px;"><div class="bar-fill" id="abVideoFileProgFill" style="width:0%;background:var(--ux-yellow);"></div></div>
+            <div class="bar-track" style="margin:3px 0 6px;height:4px;"><div class="bar-fill" id="abVideoFileProgFill" style="width:0%;background:var(--ux-yellow);"></div></div>
           </div>
 
-          <!-- Tiến trình tổng số lượng video -->
-          <div class="bar-track" style="margin:4px 0;"><div class="bar-fill" id="abVideoProgFill" style="width:0%;background:rgba(234,179,8,0.5);"></div></div>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);">
-            <span id="abVideoCount">0 / 0 video</span>
+          <!-- Tiến trình tổng dung lượng video -->
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
+            <span id="abVideoCount">Tổng tiến trình: 0 / 0 video</span>
             <b id="abVideoPct" style="color:var(--ux-yellow);">0.0%</b>
           </div>
+          <div class="bar-track" style="margin:3px 0 4px;"><div class="bar-fill" id="abVideoProgFill" style="width:0%;background:rgba(255,196,0,0.55);"></div></div>
+          <div id="abVideoBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
         </div>
 
         <!-- Tổng hợp -->
-        <div class="bar-track" style="margin:10px 0 6px;"><div class="bar-fill" id="abProgFill" style="width:0%;background:var(--ux-green);"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-text-2);">
-          <span id="abCountLine">Tổng: 0 / 0 tệp</span>
-          <b id="abPctLine" style="color:var(--ux-green);">0.0%</b>
+        <div id="abTotalSummaryBox">
+          <div class="bar-track" style="margin:10px 0 6px;"><div class="bar-fill" id="abProgFill" style="width:0%;background:var(--ux-green);"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
+            <span id="abCountLine">Tổng: 0 / 0 tệp</span>
+            <b id="abPctLine" style="color:var(--ux-green);">0.0%</b>
+          </div>
+          <div id="abTotalBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
         </div>
+      </div>
+
+      <!-- Danh sách điện thoại đang đồng bộ đồng thời lên NAS -->
+      <div id="abDevicesBox" class="hidden" style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:10px 11px;margin-bottom:10px;">
+        <div class="card-header" style="margin-bottom:8px;">
+          <span class="card-title">ĐA THIẾT BỊ TRÊN NAS</span>
+          <span class="badge" id="abDevicesCountBadge" style="color:var(--ux-cyan);">0 máy</span>
+        </div>
+        <div id="abDevicesList" style="display:flex;flex-direction:column;gap:6px;"></div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="btn-pill hidden" id="abPauseBtn">Tạm dừng</button>

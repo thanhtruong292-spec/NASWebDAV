@@ -5,6 +5,61 @@
 
 ---
 
+## [2026-11-21] ANTIGRAVITY-036 — Bổ Sung Resumable Chunked Upload Cho Video Lớn (> 512MB / > 1GB) & Tự Động Tạm Dừng Chờ Wi-Fi Ổn Định
+**Phiên bản:** `1.1.201` → `1.2.201` (MINOR — thêm tính năng tải nối lại từng khối 16MB cho video lớn và cơ chế tự tạm dừng chờ Wi-Fi ổn định, tương thích ngược hoàn toàn).
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Backend Python (`python -m pytest tests/test_audit_20261026_fixes.py tests/test_backup_batch_stream.py -v`): **12/12 PASSED** (gồm test mới `test_backup_resumable_chunked_upload_resume_and_sha256`).
+- Đã deploy `/opt/nas_api_server.py` lên NAS (`nas_api.service: active`).
+
+### Added
+- **Resumable Chunked Upload cho video lớn (> 512 MB / > 1 GB):**
+  - Backend [backend/nas_api_server.py](backend/nas_api_server.py): thêm 3 API `/api/backup/resumable/status`, `/api/backup/resumable/chunk`, `/api/backup/resumable/finish` (Python 3.5.3 / Flask 1.1.4 safe), bật cờ `resumable_upload: True` trong `/api/duplicates/capabilities`. Lưu file `.part` trong `.backup_tmp/resumable/` trên HDD (tự dọn file quá 7 ngày), kiểm tra strict offset (trả `409 + expected_offset` khi lệch), và xác minh SHA-256 phần cứng bằng Rust ARM NEON SHA2 khi hoàn tất.
+  - Android [WebDavManager.kt](app/src/main/java/com/nas/naswebdav/WebDavManager.kt) + [BackupContentIntegrity.kt](app/src/main/java/com/nas/naswebdav/BackupContentIntegrity.kt) + [AutoBackupWorker.kt](app/src/main/java/com/nas/naswebdav/AutoBackupWorker.kt): tự động chia video > 512 MB thành các khối 16 MB dùng `FileChannel.position(offset)`; nếu rớt mạng hoặc đổi app giữa chừng, lần nối lại tiếp tục đúng từ % đã tải trên NAS.
+- **Tự động tạm dừng chờ Wi-Fi ổn định (`waitForStableWifiAndNas`):**
+  - [AutoBackupWorker.kt](app/src/main/java/com/nas/naswebdav/AutoBackupWorker.kt): kiểm tra `TRANSPORT_WIFI` + `checkPingServer()` trước mỗi tệp và ngay khi gặp lỗi mạng (`SocketTimeoutException`, `ConnectException`, `SocketException`, `EOFException`) trong cả Resumable Chunk và Direct WebDAV Upload. Khi mạng rớt/chập chờn, worker tạm dừng (hiển thị `"Tạm dừng: chờ Wi-Fi ổn định..."`), ping lại mỗi 5 giây và tự động nối lại đúng vị trí đang dở khi Wi-Fi tới NAS ổn định trở lại.
+
+---
+
+## [2026-11-21] ANTIGRAVITY-035 — Khắc Phục Triệt Để 3 Lỗi Đồng Bộ Video (Đường Dẫn `dest` & GNU LongName Cho Rust Batch Stream, Nginx/PHP-FPM HDD Temp Buffer & Dọn Sạch File Cụt Trên NAS)
+**Phiên bản:** `1.1.199` → `1.1.201` (PATCH — sửa lỗi đường dẫn TAR batch stream, GNU LongName cho tên file > 100 bytes, và cấu hình Nginx/PHP-FPM buffer trên HDD NAS).
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+
+### Fixed
+1. **Sửa lỗi đường dẫn `dest` trong `/api/backup/batch_stream` tạo thư mục rác `http:/100.90.135.102:8822/...` trên NAS:**
+   - [WebDavManager.kt](app/src/main/java/com/nas/naswebdav/WebDavManager.kt): Trích xuất đường dẫn tương đối (`relativeDuplicatePath`) thay vì truyền nguyên URL đầy đủ `http://host:port/webdav/AutoBackup/...` vào tham số query `?dest=`.
+   - [AutoBackupWorker.kt](app/src/main/java/com/nas/naswebdav/AutoBackupWorker.kt): Giải mã URL (`URLDecoder.decode`) cho tên tệp `relPathInTar` trước khi đóng gói vào luồng TAR và khi đối chiếu `serverMap[rel]`, ngăn việc lưu tên tệp chứa `%20` trên ổ đĩa NAS.
+   - [backend/nas_api_server.py](backend/nas_api_server.py): Chuẩn hóa tham số `dest` ở `api_backup_batch_stream()` bằng `urlparse` + `unquote` + cắt tiền tố `/webdav/`, tương thích ngược với cả client cũ lẫn client mới.
+2. **Hỗ trợ tên tệp dài > 100 bytes trong luồng TAR (`TarStreamRequestBody.kt`):**
+   - Bổ sung `buildEntryHeaderBlocks()` tự động phát sinh khối GNU LongLink (`typeFlag = 'L'`, `././@LongLink`) khi tên tệp hoặc đường dẫn vượt quá giới hạn 100/155 bytes của chuẩn POSIX ustar (ví dụ video Facebook/Instagram có tên > 110 ký tự + `__id...`), khắc phục triệt để lỗi tên tệp bị cắt cụt ở byte thứ 100 làm trượt đối chiếu SHA-256.
+   - Bổ sung unit test `testBuildEntryHeaderBlocks_gnuLongNameWhenFilenameExceeds100Bytes` trong [TarStreamRequestBodyTest.kt](app/src/test/java/com/nas/naswebdav/TarStreamRequestBodyTest.kt).
+3. **Khắc phục triệt để lỗi `NAS từ chối tệp: 500` (`No space left on device`) và lỗi cắt cụt video lớn (> 450MB – 1.6GB) trên NAS:**
+   - Cấu hình `client_body_temp_path`, `fastcgi_temp_path`, `proxy_temp_path` của Nginx (`/etc/nginx/conf.d/nas_hdd_temp.conf`) và `upload_tmp_dir`/`sys_temp_dir` của PHP-FPM trỏ trực tiếp sang ổ cứng HDD (`/srv/dev-disk-by-label-data/New folder/.nas_meta/nginx_temp` & `php_temp`, trống 870 GB) thay vì phân vùng gốc `/var/lib/nginx/body`, đồng thời bật `fastcgi_request_buffering off` và `proxy_request_buffering off`.
+   - Di chuyển 584 tệp hợp lệ từ thư mục lỗi `http:/100.90.135.102:8822/webdav/AutoBackup/...` về đúng `/srv/dev-disk-by-label-data/New folder/AutoBackup/...`, xóa 99 tệp bị cụt tên, xóa 17 bản video quay màn hình bị cắt cụt (`470,310,912 bytes` / `__v1795*`), làm sạch `verified_file_hashes` & `file_index` trong `/var/lib/nas_api/nas_index.db`, và deploy `/opt/nas_api_server.py` mới nhất lên NAS.
+
+---
+
+## [2026-11-21] ANTIGRAVITY-034 — Triển Khai Hoàn Chỉnh 3 Chức Năng AutoBackup (Chế Độ Ảnh/Video, Bộ Nhớ Điện Thoại & Đa Thiết Bị Chống Tắc Nghẽn)
+**Phiên bản:** `1.0` → `1.1` (MINOR — thêm 3 tính năng mới tương thích ngược).
+**Tác nhân thực hiện:** Antigravity (Ponytail full mode).
+**Kết quả kiểm thử:**
+- Backend Python (`python -m pytest tests/`): **300 passed, 6 skipped, 0 failed** (gồm test mới `test_backup_multi_device_sessions_and_queueing`).
+- Android Unit Tests (`:app:testDebugUnitTest`): **100% PASS (0 failed)** (gồm `AutoBackupModeAndStorageTest`, `AutoBackupDedupRegressionTest`, `AutoBackupServerHashAndDeleteTest`).
+- JS Syntax (`node --check app/src/main/assets/html5/app.js`): **OK**.
+
+### Added
+- **Chế độ chọn nội dung sao lưu (`both` / `image` / `video`):**
+  - Thêm bộ nút chọn nổi bật ngay trong modal Auto Backup trên HTML5 Dashboard ([index.html](app/src/main/assets/html5/index.html), [app.js](app/src/main/assets/html5/app.js)) và JS bridge `setBackupMode` / `saveAutoBackup` tại [NasHtmlDashboard.kt](app/src/main/java/com/nas/naswebdav/ui/html5/NasHtmlDashboard.kt).
+  - [AutoBackupWorker.kt](app/src/main/java/com/nas/naswebdav/AutoBackupWorker.kt) chỉ quét MediaStore và chỉ chạy pipeline đúng loại người dùng chọn.
+- **Thông tin bộ nhớ điện thoại & dung lượng đã giải phóng:**
+  - Tạo [StorageUtils.kt](app/src/main/java/com/nas/naswebdav/utils/StorageUtils.kt) đọc dung lượng trống/tổng ngay khi khởi tạo [AutoBackupViewModel.kt](app/src/main/java/com/nas/naswebdav/backup/AutoBackupViewModel.kt) (không bị `0 B` lúc chưa chạy).
+  - Cộng dồn dung lượng đã giải phóng theo phiên và tổng tích lũy (`PreferencesRepository.addBackupFreedBytes`) tại cả 4 điểm xóa nguồn sau xác minh SHA-256, hiển thị trực tiếp trên HTML5 Dashboard & modal.
+- **Hỗ trợ nhiều điện thoại sao lưu đồng thời & chống tắc nghẽn NAS RK3328:**
+  - Backend [backend/nas_api_server.py](backend/nas_api_server.py): thêm 3 API `/api/backup/session/heartbeat`, `/api/backup/sessions`, `/api/backup/session/finish` (Python 3.5.3 / Flask 1.1.4 safe) với giới hạn tối đa 2 máy upload song song (`_MAX_CONCURRENT_BACKUP_DEVICES = 2`), máy thứ 3+ tự xếp hàng FIFO, giãn nhịp 250ms khi ≥ 2 máy chạy cùng lúc, và `BoundedSemaphore(2)` bảo vệ `/api/backup/batch_stream` khỏi OOM (trả 503 + `Retry-After: 3` khi quá tải).
+  - Android & HTML5 Dashboard: Worker gửi heartbeat định kỳ 3s (fail-open), tự nhường/xếp hàng khi NAS báo đầy slot và trả slot khi xong; HTML5 Dashboard & modal hiển thị rõ tiến trình từng máy đang backup trên NAS.
+
+---
+
 ## [2026-11-21] ANTIGRAVITY-033 — Khắc Phục Triệt Để Lỗi Tiến Trình AutoBackup Đột Ngột Dừng & Chống Crash Mạng RPC
 **Tác nhân thực hiện:** Antigravity (Ponytail full mode).
 **Kết quả kiểm thử:**

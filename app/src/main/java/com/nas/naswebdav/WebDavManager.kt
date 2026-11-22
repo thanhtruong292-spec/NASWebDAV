@@ -534,7 +534,9 @@ object WebDavManager {
         val auth = currentAuthState()
         if (auth.baseUrl.isEmpty()) return@withContext null
         val apiBase = auth.baseUrl.toApiBaseUrl()
-        val encodedDest = java.net.URLEncoder.encode(targetFolder, "UTF-8").replace("+", "%20")
+        val relFolder = relativeDuplicatePath(auth.baseUrl, targetFolder)
+            ?: targetFolder.removePrefix(auth.baseUrl).trim('/')
+        val encodedDest = java.net.URLEncoder.encode("/$relFolder", "UTF-8").replace("+", "%20")
         val url = "$apiBase/api/backup/batch_stream?dest=$encodedDest"
 
         val request = Request.Builder()
@@ -590,6 +592,169 @@ object WebDavManager {
             if (e is kotlinx.coroutines.CancellationException) throw e
             android.util.Log.w("WebDavManager", "uploadBatchTarStream exception: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Tải lên tệp lớn (> 512MB / > 1GB) theo từng khối 16MB có khả năng nối lại chính xác (resumable)
+     * qua `/api/backup/resumable/{status,chunk,finish}`. Nếu rớt mạng ở 80%, lần sau tiếp tục từ 80%.
+     * Trả về URL đích đã xác minh SHA-256 trên NAS, hoặc null nếu server không hỗ trợ / cần fallback.
+     */
+    suspend fun uploadLargeFileResumable(
+        context: android.content.Context,
+        uri: android.net.Uri,
+        targetFolder: String,
+        decodedFileName: String,
+        totalSize: Long,
+        expectedSha256: String,
+        onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
+        isCancelled: () -> Boolean,
+        waitForStableNetwork: (suspend (String) -> Unit)? = null
+    ): String? = withContext(Dispatchers.IO) {
+        val auth = currentAuthState()
+        if (auth.baseUrl.isEmpty() || expectedSha256.length != 64 || totalSize <= 0L) return@withContext null
+        val apiBase = auth.baseUrl.toApiBaseUrl()
+        val relFolder = relativeDuplicatePath(auth.baseUrl, targetFolder)
+            ?: targetFolder.removePrefix(auth.baseUrl).trim('/')
+        val destRel = "/$relFolder"
+        val uploadId = expectedSha256.lowercase()
+        val chunkSize = 16L * 1024 * 1024 // 16MB mỗi chunk
+
+        // 1. Truy vấn offset hiện có trên NAS
+        suspend fun queryOffset(): Long? {
+            val req = Request.Builder()
+                .url("$apiBase/api/backup/resumable/status?upload_id=$uploadId")
+                .get()
+                .withAuth(auth)
+                .header("Authorization", auth.authHeader)
+                .build()
+            return optimizedClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val json = org.json.JSONObject(resp.body?.string() ?: "{}")
+                if (!json.optBoolean("ok", false)) null else json.optLong("offset", 0L)
+            }
+        }
+
+        var offset = queryOffset() ?: return@withContext null
+        if (offset > totalSize) offset = 0L
+        if (offset > 0L) {
+            android.util.Log.i("AutoBackup", "Resumable upload tiếp tục $decodedFileName từ $offset / $totalSize bytes (${(offset * 100 / totalSize)}%)")
+            onProgress(offset, totalSize)
+        }
+
+        // 2. Gửi từng chunk 16MB bằng FileChannel/InputStream seek chính xác, tự retry mỗi chunk tối đa 3 lần
+        val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return@withContext null
+        pfd.use { fd ->
+            java.io.FileInputStream(fd.fileDescriptor).use { fis ->
+                val channel = fis.channel
+                while (offset < totalSize) {
+                    if (isCancelled()) throw kotlinx.coroutines.CancellationException("Resumable upload cancelled")
+                    val toSend = minOf(chunkSize, totalSize - offset)
+                    var chunkOk = false
+                    var lastErr: Exception? = null
+
+                    for (attempt in 1..3) {
+                        if (isCancelled()) throw kotlinx.coroutines.CancellationException("Resumable upload cancelled")
+                        val chunkStartOffset = offset
+                        try {
+                            channel.position(chunkStartOffset)
+                            val chunkBody = object : RequestBody() {
+                                override fun contentType() = "application/octet-stream".toMediaTypeOrNull()
+                                override fun contentLength() = toSend
+                                override fun writeTo(sink: BufferedSink) {
+                                    val buf = ByteArray(262144)
+                                    var sentInChunk = 0L
+                                    var remaining = toSend
+                                    while (remaining > 0L) {
+                                        if (isCancelled()) throw kotlinx.coroutines.CancellationException("Resumable upload cancelled")
+                                        val readLen = minOf(buf.size.toLong(), remaining).toInt()
+                                        val n = fis.read(buf, 0, readLen)
+                                        if (n <= 0) throw java.io.EOFException("Unexpected EOF at ${chunkStartOffset + sentInChunk}")
+                                        sink.write(buf, 0, n)
+                                        sink.emit()
+                                        sentInChunk += n
+                                        remaining -= n
+                                        onProgress(chunkStartOffset + sentInChunk, totalSize)
+                                    }
+                                }
+                            }
+                            val chunkReq = Request.Builder()
+                                .url("$apiBase/api/backup/resumable/chunk?upload_id=$uploadId&offset=$chunkStartOffset")
+                                .post(chunkBody)
+                                .withAuth(auth)
+                                .header("Authorization", auth.authHeader)
+                                .withCallGroup(CALL_GROUP_TRANSFER)
+                                .build()
+                            optimizedClient.newCall(chunkReq).execute().use { resp ->
+                                val bodyStr = resp.body?.string().orEmpty()
+                                val json = runCatching { org.json.JSONObject(bodyStr) }.getOrNull()
+                                if (resp.isSuccessful && json?.optBoolean("ok", false) == true) {
+                                    offset = json.optLong("offset", chunkStartOffset + toSend)
+                                    chunkOk = true
+                                } else if (resp.code == 409 && json != null && json.has("expected_offset")) {
+                                    // Đồng bộ lại offset thực tế trên NAS rồi tiếp tục
+                                    offset = json.optLong("expected_offset", 0L)
+                                    chunkOk = true
+                                } else {
+                                    throw java.io.IOException("Chunk upload HTTP ${resp.code}: $bodyStr")
+                                }
+                            }
+                            if (chunkOk) break
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            lastErr = e
+                            val isNetErr = e is java.net.SocketTimeoutException ||
+                                e is java.net.ConnectException ||
+                                e is java.net.UnknownHostException ||
+                                e is java.net.SocketException ||
+                                e is java.io.EOFException
+                            android.util.Log.w("AutoBackup", "Resumable chunk attempt $attempt failed at offset $chunkStartOffset: ${e.message}")
+                            if (isNetErr && waitForStableNetwork != null) {
+                                waitForStableNetwork(e.message ?: e.javaClass.simpleName)
+                            } else {
+                                kotlinx.coroutines.delay(attempt * 2000L)
+                            }
+                            runCatching { queryOffset() }.getOrNull()?.let { srvOff ->
+                                if (srvOff in 0L..totalSize) offset = srvOff
+                            }
+                        }
+                    }
+                    if (!chunkOk) throw (lastErr ?: java.io.IOException("Resumable chunk failed at offset $offset"))
+                }
+            }
+        }
+
+        // 3. Gọi /finish để NAS tính SHA-256 phần cứng (Rust ARM NEON) và move sang đích
+        val finishPayload = org.json.JSONObject().apply {
+            put("upload_id", uploadId)
+            put("dest", destRel)
+            put("filename", decodedFileName)
+            put("size", totalSize)
+            put("sha256", expectedSha256)
+        }
+        val finishReq = Request.Builder()
+            .url("$apiBase/api/backup/resumable/finish")
+            .post(finishPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+            .withAuth(auth)
+            .header("Authorization", auth.authHeader)
+            .build()
+        val finishClient = optimizedClient.newBuilder()
+            .readTimeout(10, TimeUnit.MINUTES)
+            .build()
+        finishClient.newCall(finishReq).execute().use { resp ->
+            val bodyStr = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw java.io.IOException("Resumable finish HTTP ${resp.code}: $bodyStr")
+            }
+            val json = org.json.JSONObject(bodyStr)
+            if (!json.optBoolean("ok", false)) {
+                throw java.io.IOException("Resumable finish failed: ${json.optString("error")}")
+            }
+            val finalRelPath = json.optString("path", "").trimStart('/')
+            if (finalRelPath.isBlank()) return@withContext null
+            val encodedFinal = finalRelPath.split('/').joinToString("/") { encodeWebDavSegment(it) }
+            auth.baseUrl.trimEnd('/') + "/" + encodedFinal
         }
     }
 

@@ -60,4 +60,23 @@ class TarStreamRequestBodyTest {
         assertEquals("ImageFile.jpg", name)
         assertEquals(longPath, "$prefix/$name")
     }
+
+    @Test
+    fun testBuildEntryHeaderBlocks_gnuLongNameWhenFilenameExceeds100Bytes() {
+        val longFileName = "AQM2fyAKy6pwC8bMJ5Cerah-VHRo0jro86eStuQGMU0uhtKJaBQ7ApVi_T0FIv3E_uahfqt3uPXK7eR2tssnIFC-s4zTL8ON__id1000508116.mp4"
+        assertTrue(longFileName.toByteArray(Charsets.UTF_8).size > 100)
+
+        val blocks = TarStreamRequestBody.buildEntryHeaderBlocks(
+            path = longFileName,
+            size = 4096L,
+            mtimeSec = 1732100000L
+        )
+
+        // 512 (GNU 'L' header) + 512 (long name payload) + 512 (regular '0' header) = 1536 bytes
+        assertEquals(1536, blocks.size)
+        assertEquals('L'.code.toByte(), blocks[156])
+        val extractedLongName = String(blocks, 512, longFileName.length, Charsets.UTF_8)
+        assertEquals(longFileName, extractedLongName)
+        assertEquals('0'.code.toByte(), blocks[1024 + 156])
+    }
 }

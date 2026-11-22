@@ -203,31 +203,8 @@ fun rememberNasToolboxHost(
     }
 
     val showBackupResult by AutoBackupState.showResultDialog.collectAsState()
-    val backupResultTotal by AutoBackupState.resultTotal.collectAsState()
-    val backupResultSuccess by AutoBackupState.resultSuccess.collectAsState()
-    val backupResultSkipped by AutoBackupState.resultSkipped.collectAsState()
-    val backupResultFailed by AutoBackupState.resultFailed.collectAsState()
-    if (showBackupResult) {
-        AlertDialog(
-            onDismissRequest = { AutoBackupState.showResultDialog.value = false },
-            title = { Text("Kết quả đồng bộ", fontWeight = FontWeight.Bold) },
-            text = {
-                androidx.compose.foundation.layout.Column {
-                    Text("Tổng tệp đã quét: $backupResultTotal", fontSize = 14.sp)
-                    Text("Thành công: $backupResultSuccess", color = AccentGreen, fontWeight = FontWeight.Bold)
-                    Text("Bỏ qua: $backupResultSkipped", color = TextSecondary)
-                    Text("Thất bại: $backupResultFailed", color = if (backupResultFailed > 0) AccentRed else TextSecondary)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { AutoBackupState.showResultDialog.value = false }) {
-                    Text("Đóng", color = AccentCyan)
-                }
-            },
-            containerColor = DarkCard,
-            titleContentColor = TextPrimary,
-            textContentColor = TextPrimary
-        )
+    LaunchedEffect(showBackupResult) {
+        if (showBackupResult) AutoBackupState.showResultDialog.value = false
     }
 
     if (showLivestreamDialog) LivestreamRecordDialog(onDismiss = { showLivestreamDialog = false })
@@ -297,6 +274,5 @@ fun rememberNasToolboxHost(
         )
     }
 
-    MainMenuBottomSheetDuplicateScanGlobalUI(context)
     return dispatcher
 }

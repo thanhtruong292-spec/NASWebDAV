@@ -163,13 +163,9 @@ internal suspend fun WebDavManager.inspectBackupDestination(url: String, size: L
         if (vh != null && vh.sha256 == digest && vh.contentLength == size) {
             return BackupContentState.MATCH
         }
-        val proof = getCachedVerifiedSha256(url, size) ?: getFullSha256WithEtag(url, size)
+        val proof = getCachedVerifiedSha256(url, size)
         if (proof != null) {
             return if (proof.first == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
-        }
-        val streamHash = if (size <= 50 * 1024 * 1024L) getFullSha256PhoneStream(url, size) else null
-        if (streamHash != null) {
-            return if (streamHash == digest) BackupContentState.MATCH else BackupContentState.DIFFERENT
         }
         return BackupContentState.UNVERIFIABLE
     } catch (error: CancellationException) { throw error }
@@ -208,6 +204,15 @@ internal suspend fun WebDavManager.supportsBatchStream(): Boolean {
     return try {
         val capabilities = duplicateRpc("capabilities", org.json.JSONObject(), currentAuthState())
         capabilities?.optBoolean("batch_stream", false) ?: false
+    } catch (_: Exception) {
+        false
+    }
+}
+
+internal suspend fun WebDavManager.supportsResumableUpload(): Boolean {
+    return try {
+        val capabilities = duplicateRpc("capabilities", org.json.JSONObject(), currentAuthState())
+        capabilities?.optBoolean("resumable_upload", false) ?: false
     } catch (_: Exception) {
         false
     }

@@ -36,7 +36,7 @@ class TarStreamRequestBody(
     private val calculatedContentLength: Long by lazy {
         var len = 0L
         for (item in items) {
-            len += 512L // Header
+            len += buildEntryHeaderBlocks(item.relativePath, item.size, item.mtimeSec).size.toLong()
             len += item.size // Payload
             val pad = (512L - (item.size % 512L)) % 512L
             len += pad // 512-byte block padding
@@ -57,7 +57,7 @@ class TarStreamRequestBody(
         val buffer = ByteArray(65536)
 
         for (item in items) {
-            val header = buildUstarHeader(item.relativePath, item.size, item.mtimeSec)
+            val header = buildEntryHeaderBlocks(item.relativePath, item.size, item.mtimeSec)
             sink.write(header)
             bytesWritten += header.size
 
@@ -109,9 +109,38 @@ class TarStreamRequestBody(
 
     companion object {
         /**
+         * Sinh các khối Header 512 bytes chuẩn POSIX ustar (kèm GNU LongName block type 'L'
+         * khi tên file hoặc đường dẫn vượt quá giới hạn 100/155 bytes của ustar).
+         */
+        fun buildEntryHeaderBlocks(path: String, size: Long, mtimeSec: Long): ByteArray {
+            val normalizedPath = path.replace('\\', '/').trimStart('/')
+            val pathBytes = normalizedPath.toByteArray(Charsets.UTF_8)
+            var canFitUstar = pathBytes.size <= 100
+            if (!canFitUstar) {
+                val lastSlash = normalizedPath.lastIndexOf('/')
+                if (lastSlash > 0) {
+                    val prefixBytes = normalizedPath.substring(0, lastSlash).toByteArray(Charsets.UTF_8)
+                    val nameBytes = normalizedPath.substring(lastSlash + 1).toByteArray(Charsets.UTF_8)
+                    canFitUstar = prefixBytes.size <= 155 && nameBytes.size <= 100
+                }
+            }
+            if (canFitUstar) {
+                return buildUstarHeader(normalizedPath, size, mtimeSec)
+            }
+            // GNU LongLink ('L') header block + padded full path payload + standard ustar header
+            val longNamePayloadSize = pathBytes.size + 1 // null-terminated
+            val longHeader = buildUstarHeader("././@LongLink", longNamePayloadSize.toLong(), mtimeSec, typeFlag = 'L')
+            val paddedPayloadLen = ((longNamePayloadSize + 511) / 512) * 512
+            val payloadBlocks = ByteArray(paddedPayloadLen)
+            System.arraycopy(pathBytes, 0, payloadBlocks, 0, pathBytes.size)
+            val fileHeader = buildUstarHeader(normalizedPath, size, mtimeSec)
+            return longHeader + payloadBlocks + fileHeader
+        }
+
+        /**
          * Sinh Header 512 bytes chuẩn POSIX ustar (IEEE 1003.1-1988).
          */
-        fun buildUstarHeader(path: String, size: Long, mtimeSec: Long): ByteArray {
+        fun buildUstarHeader(path: String, size: Long, mtimeSec: Long, typeFlag: Char = '0'): ByteArray {
             val header = ByteArray(512)
             val normalizedPath = path.replace('\\', '/').trimStart('/')
 
@@ -137,8 +166,8 @@ class TarStreamRequestBody(
             writeOctal(header, 124, 12, size)
             // 136..147: mtime
             writeOctal(header, 136, 12, mtimeSec)
-            // 156: typeflag '0' (Regular file)
-            header[156] = '0'.code.toByte()
+            // 156: typeflag ('0' Regular file, 'L' GNU LongName)
+            header[156] = typeFlag.code.toByte()
             // 257..262: magic "ustar\0"
             System.arraycopy("ustar\u0000".toByteArray(Charsets.US_ASCII), 0, header, 257, 6)
             // 263..264: version "00"

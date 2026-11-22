@@ -516,7 +516,7 @@ class LivestreamViewModel(
                     }
                 }
                 withContext(Dispatchers.Main) {
-                    com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "tasks"
+                    // Da chuyen sang HTML5 Dashboard (khong con ExclusivePanelState Compose)
                     livestreamMessage = "✅ Đã gửi lệnh ghi"
                 }
                 fetchLivestreamStatusOnly(NasApplication.instance.applicationContext)

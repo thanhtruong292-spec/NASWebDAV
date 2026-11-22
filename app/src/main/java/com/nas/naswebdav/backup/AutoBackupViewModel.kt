@@ -11,11 +11,29 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.UsbImportConflict
 import com.nas.naswebdav.UsbImportSettings
 import com.nas.naswebdav.toApiBaseUrl
+import com.nas.naswebdav.utils.PreferencesRepository
+import com.nas.naswebdav.utils.StorageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+
+data class NasBackupSession(
+    val deviceId: String,
+    val deviceName: String,
+    val backupMode: String,
+    val status: String,
+    val processed: Int,
+    val total: Int,
+    val speedBps: Long,
+    val currentFile: String,
+    val freedBytes: Long,
+    val phoneFreeBytes: Long,
+    val phoneTotalBytes: Long,
+    val slotGranted: Boolean,
+    val queuePosition: Int
+)
 
 /**
  * AutoBackupViewModel — Phase 3 của VM Split.
@@ -54,6 +72,10 @@ class AutoBackupViewModel(
         private set
     var autoBackupFileBytesWritten by androidx.compose.runtime.mutableLongStateOf(0L)
         private set
+    var autoBackupFileBytesRemaining by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupEtaSeconds by androidx.compose.runtime.mutableLongStateOf(-1L)
+        private set
     var autoBackupUploadSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
         private set
 
@@ -68,6 +90,14 @@ class AutoBackupViewModel(
     var autoBackupImageTotalCount by androidx.compose.runtime.mutableIntStateOf(0)
         private set
     var autoBackupImageSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupImageBytesUploaded by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupImageBytesTotal by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupImageBytesRemaining by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupImageEtaSeconds by androidx.compose.runtime.mutableLongStateOf(-1L)
         private set
 
     var autoBackupVideoProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
@@ -85,6 +115,37 @@ class AutoBackupViewModel(
     var autoBackupVideoBytesTotal by androidx.compose.runtime.mutableLongStateOf(0L)
         private set
     var autoBackupVideoFileProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
+        private set
+    var autoBackupVideoBytesUploaded by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupVideoBytesTotalPending by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupVideoBytesRemaining by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var autoBackupVideoEtaSeconds by androidx.compose.runtime.mutableLongStateOf(-1L)
+        private set
+
+    // ═══ CHẾ ĐỘ, BỘ NHỚ ĐIỆN THOẠI & ĐA THIẾT BỊ ═══
+
+    var autoBackupMode by androidx.compose.runtime.mutableStateOf("both")
+        private set
+    var phoneDeviceId by androidx.compose.runtime.mutableStateOf("")
+        private set
+    var phoneDeviceName by androidx.compose.runtime.mutableStateOf(android.os.Build.MODEL ?: "Android")
+        private set
+    var phoneStorageFreeBytes by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var phoneStorageTotalBytes by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var storageFreedSessionBytes by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var storageFreedTotalBytes by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var nasQueuePosition by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var nasMaxConcurrentDevices by androidx.compose.runtime.mutableIntStateOf(2)
+        private set
+    var nasBackupSessions by androidx.compose.runtime.mutableStateOf<List<NasBackupSession>>(emptyList())
         private set
 
     // ═══ BACKUP SCHEDULE ═══
@@ -113,6 +174,7 @@ class AutoBackupViewModel(
         internal set
 
     init {
+        refreshPhoneStorage()
         // Cập nhật trạng thái Auto Backup từ WorkManager
         viewModelScope.launch {
             try {
@@ -135,6 +197,8 @@ class AutoBackupViewModel(
                             autoBackupElapsedTime = workInfo.progress.getLong("elapsedTime", 0L)
                             autoBackupFileBytesWritten = workInfo.progress.getLong("bytesWritten", 0L)
                             autoBackupFileBytesTotal = workInfo.progress.getLong("bytesTotal", 0L)
+                            autoBackupFileBytesRemaining = workInfo.progress.getLong("bytesRemaining", 0L)
+                            autoBackupEtaSeconds = workInfo.progress.getLong("etaSeconds", -1L)
                             autoBackupUploadSpeedBps = workInfo.progress.getLong("uploadSpeedBps", 0L)
 
                             // Cập nhật trạng thái chi tiết 2 pipeline song song
@@ -143,6 +207,10 @@ class AutoBackupViewModel(
                             autoBackupImageProcessedCount = workInfo.progress.getInt("imageProcessedCount", 0)
                             autoBackupImageTotalCount = workInfo.progress.getInt("imageTotalCount", 0)
                             autoBackupImageSpeedBps = workInfo.progress.getLong("imageSpeedBps", 0L)
+                            autoBackupImageBytesUploaded = workInfo.progress.getLong("imageBytesUploaded", 0L)
+                            autoBackupImageBytesTotal = workInfo.progress.getLong("imageBytesTotal", 0L)
+                            autoBackupImageBytesRemaining = workInfo.progress.getLong("imageBytesRemaining", 0L)
+                            autoBackupImageEtaSeconds = workInfo.progress.getLong("imageEtaSeconds", -1L)
 
                             autoBackupVideoProgress = workInfo.progress.getFloat("videoProgress", 0f)
                             autoBackupVideoCurrentFile = workInfo.progress.getString("videoFileName") ?: ""
@@ -152,14 +220,112 @@ class AutoBackupViewModel(
                             autoBackupVideoBytesWritten = workInfo.progress.getLong("videoFileBytesWritten", 0L)
                             autoBackupVideoBytesTotal = workInfo.progress.getLong("videoFileBytesTotal", 0L)
                             autoBackupVideoFileProgress = workInfo.progress.getFloat("videoFileProgress", 0f)
+                            autoBackupVideoBytesUploaded = workInfo.progress.getLong("videoBytesUploaded", 0L)
+                            autoBackupVideoBytesTotalPending = workInfo.progress.getLong("videoBytesTotalPending", 0L)
+                            autoBackupVideoBytesRemaining = workInfo.progress.getLong("videoBytesRemaining", 0L)
+                            autoBackupVideoEtaSeconds = workInfo.progress.getLong("videoEtaSeconds", -1L)
+
+                            val workerMode = workInfo.progress.getString("backupMode")
+                            val liveMode = com.nas.naswebdav.AutoBackupState.activeMode.value
+                            autoBackupMode = if (liveMode == "image" || liveMode == "video" || liveMode == "both") liveMode else (workerMode ?: autoBackupMode)
+                            val freedNow = workInfo.progress.getLong("storageFreedBytes", 0L)
+                            if (freedNow != storageFreedSessionBytes) {
+                                storageFreedSessionBytes = freedNow
+                                refreshPhoneStorage()
+                            }
+                            nasQueuePosition = workInfo.progress.getInt("nasQueuePosition", 0)
 
                             autoBackupIsPaused = com.nas.naswebdav.AutoBackupState.isPaused.value
                         } else {
                             isAutoBackupRunning = false
+                            nasQueuePosition = 0
+                            refreshPhoneStorage()
                         }
                     }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "WorkManager observe error: ${e.message}")
+            }
+        }
+    }
+
+    fun setBackupModeImmediate(mode: String) {
+        val clean = if (mode == "image" || mode == "video" || mode == "both") mode else "both"
+        autoBackupMode = clean
+        com.nas.naswebdav.AutoBackupState.activeMode.value = clean
+        if (clean == "image") {
+            autoBackupVideoSpeedBps = 0L
+            autoBackupVideoBytesWritten = 0L
+            autoBackupVideoBytesTotal = 0L
+            autoBackupVideoFileProgress = 0f
+        } else if (clean == "video") {
+            autoBackupImageSpeedBps = 0L
+        }
+    }
+
+    fun refreshPhoneStorage() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val ctx = NasApplication.instance.applicationContext
+                val prefs = PreferencesRepository.get(ctx)
+                val (freeBytes, totalBytes) = StorageUtils.getPhoneStorageBytes()
+                val devId = prefs.getDeviceId(ctx)
+                val mode = prefs.getBackupMode()
+                val totalFreed = prefs.getTotalBackupFreedBytes()
+                withContext(Dispatchers.Main) {
+                    phoneStorageFreeBytes = freeBytes
+                    phoneStorageTotalBytes = totalBytes
+                    phoneDeviceId = devId
+                    autoBackupMode = mode
+                    storageFreedTotalBytes = totalFreed
+                }
+            }
+        }
+    }
+
+    fun fetchNasBackupSessions() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val base = WebDavManager.currentBaseUrl
+                if (base.isBlank()) return@runCatching
+                val apiBase = base.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/backup/sessions")
+                    .get()
+                    .let(WebDavManager::tagCurrentAuth)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val json = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    val maxConc = json.optInt("max_concurrent", 2)
+                    val arr = json.optJSONArray("sessions")
+                    val list = mutableListOf<NasBackupSession>()
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            val o = arr.optJSONObject(i) ?: continue
+                            list.add(
+                                NasBackupSession(
+                                    deviceId = o.optString("device_id", ""),
+                                    deviceName = o.optString("device_name", "Android"),
+                                    backupMode = o.optString("backup_mode", "both"),
+                                    status = o.optString("status", "running"),
+                                    processed = o.optInt("processed", 0),
+                                    total = o.optInt("total", 0),
+                                    speedBps = o.optLong("speed_bps", 0L),
+                                    currentFile = o.optString("current_file", ""),
+                                    freedBytes = o.optLong("freed_bytes", 0L),
+                                    phoneFreeBytes = o.optLong("phone_free_bytes", 0L),
+                                    phoneTotalBytes = o.optLong("phone_total_bytes", 0L),
+                                    slotGranted = o.optBoolean("slot_granted", true),
+                                    queuePosition = o.optInt("queue_position", 0)
+                                )
+                            )
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        nasMaxConcurrentDevices = maxConc
+                        nasBackupSessions = list
+                    }
+                }
             }
         }
     }
@@ -212,13 +378,20 @@ class AutoBackupViewModel(
             }
             try {
                 val workManager = androidx.work.WorkManager.getInstance(context)
-                val delAfter = com.nas.naswebdav.utils.PreferencesRepository(context).isDeleteAfterBackup()
+                val prefs = PreferencesRepository.get(context)
+                val delAfter = prefs.isDeleteAfterBackup()
+                val mode = prefs.getBackupMode()
+                val devId = prefs.getDeviceId(context)
+                val devName = android.os.Build.MODEL ?: "Android"
                 val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
                     .addTag("com.nas.naswebdav.AutoBackupWorker")
                     .addTag("MANUAL_AUTO_BACKUP")
                     .setInputData(
                         androidx.work.workDataOf(
-                            "delete_after_backup" to delAfter
+                            "delete_after_backup" to delAfter,
+                            "backup_mode" to mode,
+                            "device_id" to devId,
+                            "device_name" to devName
                         )
                     )
                     .build()

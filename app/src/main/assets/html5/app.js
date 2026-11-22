@@ -614,9 +614,38 @@
     if (bio) bio.checked = !!tb.biometric;
   }
 
+  function backupModeLabel(mode) {
+    if (mode === "image") return "Chỉ ảnh";
+    if (mode === "video") return "Chỉ video";
+    return "Ảnh & Video";
+  }
+
+  function fmtEtaSec(sec) {
+    if (sec === undefined || sec === null || sec < 0) return "Đang tính...";
+    if (sec === 0) return "Hoàn tất";
+    return "~" + fmtDurSec(sec);
+  }
+
+  function getSelectedBackupMode() {
+    var m = document.getElementById("autoBackupModal");
+    var v = m && m.getAttribute("data-mode");
+    if (v === "image" || v === "video" || v === "both") return v;
+    var tb = (state && state.toolbox) || {};
+    return tb.backupMode || "both";
+  }
+
+  function applyBackupModeButtons(mode) {
+    var m = document.getElementById("autoBackupModal");
+    if (m) m.setAttribute("data-mode", mode);
+    document.querySelectorAll("#abModeGroup .ab-mode-btn").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-mode") === mode);
+    });
+  }
+
   function openAutoBackupModal() {
     var m = document.getElementById("autoBackupModal");
     if (m) m.removeAttribute("data-dirty");
+    callBridge("refreshBackupInfo");
     renderAutoBackupModal();
     m.classList.remove("hidden");
   }
@@ -625,17 +654,56 @@
     var bak = (state && state.bgTasks && state.bgTasks.backup) || {};
     var running = !!(tb.autoBackupRunning || bak.active);
     var m = document.getElementById("autoBackupModal");
+    var mode = (m && m.getAttribute("data-dirty")) ? getSelectedBackupMode() : (tb.backupMode || bak.backupMode || "both");
+    applyBackupModeButtons(mode);
     if (m && !m.getAttribute("data-dirty")) {
       document.getElementById("abEnabledChk").checked = !!tb.autoBackup;
       document.getElementById("abDeleteChk").checked = !!tb.deleteAfter;
     }
-    var stEl = document.getElementById("abStatusLine");
-    if (stEl) {
-      stEl.textContent = running
-        ? (bak.isPaused ? "⏸ Tiến trình đồng bộ đang tạm dừng" : "🟢 Đang đồng bộ dữ liệu lên NAS...")
-        : (tb.autoBackup ? "Lịch tự động: Đang bật (12h)" : "Trạng thái: Sẵn sàng");
-      stEl.style.color = running ? (bak.isPaused ? COLOR_YELLOW : COLOR_GREEN) : "var(--ux-text-2)";
+
+    // Thông tin thiết bị & bộ nhớ điện thoại (2x1 Gauge Grid chuẩn HTML5)
+    var devName = tb.deviceName || bak.deviceName || "Android";
+    var devId = tb.deviceId || bak.deviceId || "";
+    var shortId = devId ? (" • #" + String(devId).slice(0, 6)) : "";
+    var pFree = tb.phoneFreeBytes || bak.phoneFreeBytes || 0;
+    var pTotal = tb.phoneTotalBytes || bak.phoneTotalBytes || 0;
+    var freedSess = bak.freedSessionBytes || tb.freedSessionBytes || 0;
+    var freedTot = Math.max(bak.freedTotalBytes || 0, tb.freedTotalBytes || 0);
+    var devEl = document.getElementById("abDeviceLine");
+    var stgTxt = document.getElementById("abStorageText");
+    var stgBar = document.getElementById("abStorageBar");
+    var frSessEl = document.getElementById("abFreedSessionLine");
+    var frTotEl = document.getElementById("abFreedTotalLine");
+    var frBar = document.getElementById("abFreedBar");
+    if (stgTxt) stgTxt.textContent = pTotal > 0 ? (fmtBytes(pFree) + " trống") : "--";
+    if (devEl) devEl.textContent = (pTotal > 0 ? ("Tổng " + fmtBytes(pTotal) + " • ") : "") + devName + shortId;
+    if (stgBar) {
+      var usedPct = pTotal > 0 ? Math.min(100, Math.max(0, ((pTotal - pFree) * 100) / pTotal)) : 0;
+      stgBar.style.width = usedPct.toFixed(1) + "%";
+      stgBar.style.background = usedPct >= 90 ? "var(--ux-red)" : (usedPct >= 75 ? "var(--ux-yellow)" : "var(--ux-cyan)");
     }
+    if (frTotEl) frTotEl.textContent = fmtBytes(freedTot);
+    if (frSessEl) frSessEl.textContent = "Phiên này: " + fmtBytes(freedSess);
+    if (frBar) {
+      var frPct = freedTot > 0 ? Math.min(100, Math.max(8, (freedSess > 0 ? ((freedSess * 100) / freedTot) : 100))) : 0;
+      frBar.style.width = frPct.toFixed(1) + "%";
+    }
+
+    var stDot = document.getElementById("abStatusDot");
+    var stTxt = document.getElementById("abStatusText");
+    var qPos = bak.queuePosition || 0;
+    if (stDot) {
+      stDot.classList.toggle("warn", !!(running && (bak.isPaused || qPos > 0)));
+    }
+    if (stTxt) {
+      stTxt.textContent = running
+        ? (bak.isPaused ? "Tạm dừng" : (qPos > 0 ? ("Xếp hàng #" + qPos) : ("Đang chạy • " + backupModeLabel(mode))))
+        : (tb.autoBackup ? ("Định kỳ 12h • " + backupModeLabel(mode)) : ("Sẵn sàng • " + backupModeLabel(mode)));
+    }
+
+    var activeMode = mode || bak.backupMode || "both";
+    var img = bak.images || {};
+    var vid = bak.videos || {};
     var pBox = document.getElementById("abProgressBox");
     if (pBox) {
       pBox.classList.toggle("hidden", !running);
@@ -646,41 +714,69 @@
         var fillEl = document.getElementById("abProgFill");
         var cntEl = document.getElementById("abCountLine");
         var pctEl = document.getElementById("abPctLine");
-        var totalProc = Math.min(bak.processed || 0, bak.total || 0);
-        var pct = bak.total > 0 ? Math.min(100, (totalProc * 100) / bak.total) : Math.min(100, Math.max(0, (bak.progress || 0) * 100));
-        if (fEl) fEl.textContent = "Tệp: " + (bak.currentFile || tb.autoBackupFile || "Đang quét tệp...");
-        if (sEl) sEl.textContent = bak.speedBps > 0 ? (fmtBytes(bak.speedBps) + "/s") : "Đang đối chiếu...";
+        var totBox = document.getElementById("abTotalSummaryBox");
+
+        var modeFile = activeMode === "image"
+          ? (img.currentFile || "Đang đồng bộ ảnh...")
+          : (activeMode === "video"
+            ? (vid.currentFile || "Đang đồng bộ video...")
+            : (bak.currentFile || tb.autoBackupFile || "Đang quét tệp..."));
+        var modeSpd = activeMode === "image"
+          ? (img.speedBps || 0)
+          : (activeMode === "video" ? (vid.speedBps || 0) : (bak.speedBps || 0));
+
+        if (fEl) fEl.textContent = "Tệp: " + modeFile;
+        if (sEl) sEl.textContent = modeSpd > 0 ? (fmtBytes(modeSpd) + "/s") : "Đang đối chiếu...";
         if (pathEl) {
           var src = (bak.sourcePath || "").split("0/").pop();
           var dst = (bak.destPath || "").split("/webdav/").pop();
           pathEl.textContent = (src ? ("Từ: /" + src.replace(/^\/+|\/+$/g, "")) : "") + (dst ? (" → /" + dst.replace(/^\/+|\/+$/g, "")) : "");
         }
+
+        // Chỉ hiện thanh Tổng hợp khi chạy song song Cả hai (both)
+        if (totBox) totBox.classList.toggle("hidden", activeMode !== "both");
+        var totalProc = Math.min(bak.processed || 0, bak.total || 0);
+        var pct = bak.total > 0 ? Math.min(100, (totalProc * 100) / bak.total) : Math.min(100, Math.max(0, (bak.progress || 0) * 100));
         if (fillEl) fillEl.style.width = pct.toFixed(1) + "%";
-        if (cntEl) cntEl.textContent = "Tổng: " + totalProc + " / " + (bak.total || 0) + " tệp";
+        if (cntEl) cntEl.textContent = "Tổng: " + totalProc + " / " + (bak.total || 0) + " tệp • Còn " + fmtEtaSec(bak.etaSeconds);
         if (pctEl) pctEl.textContent = pct.toFixed(1) + "%";
+        var totBytesEl = document.getElementById("abTotalBytesLine");
+        if (totBytesEl) {
+          var tUp = bak.bytesWritten || 0;
+          var tTot = bak.bytesTotal || 0;
+          var tRem = bak.bytesRemaining != null ? bak.bytesRemaining : Math.max(0, tTot - tUp);
+          totBytesEl.textContent = "Đã tải: " + fmtBytes(tUp) + " • Còn lại: " + fmtBytes(tRem) + " / Tổng: " + fmtBytes(tTot);
+        }
 
         // Cập nhật Pipeline Ảnh (Photo Stream)
-        var img = bak.images || {};
         var imgEl = document.getElementById("abImageRow");
         if (imgEl) {
+          imgEl.classList.toggle("hidden", activeMode === "video");
           var imgFileEl = document.getElementById("abImageFile");
           var imgSpdEl = document.getElementById("abImageSpeed");
           var imgFillEl = document.getElementById("abImageProgFill");
           var imgCntEl = document.getElementById("abImageCount");
           var imgPctEl = document.getElementById("abImagePct");
+          var imgBytesEl = document.getElementById("abImageBytesLine");
           var imgProc = Math.min(img.processed || 0, img.total || 0);
           var imgPct = img.total > 0 ? Math.min(100, (imgProc * 100) / img.total) : Math.min(100, Math.max(0, (img.progress || 0) * 100));
-          if (imgFileEl) imgFileEl.textContent = "📷 Ảnh: " + (img.currentFile || "Đang đợi...");
+          if (imgFileEl) imgFileEl.textContent = "Ảnh: " + (img.currentFile || "Đang đợi...");
           if (imgSpdEl) imgSpdEl.textContent = img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--";
           if (imgFillEl) imgFillEl.style.width = imgPct.toFixed(1) + "%";
-          if (imgCntEl) imgCntEl.textContent = imgProc + " / " + (img.total || 0) + " ảnh";
+          if (imgCntEl) imgCntEl.textContent = imgProc + " / " + (img.total || 0) + " ảnh • Còn " + fmtEtaSec(img.etaSeconds);
           if (imgPctEl) imgPctEl.textContent = imgPct.toFixed(1) + "%";
+          if (imgBytesEl) {
+            var iUp = img.bytesUploaded || 0;
+            var iTot = img.bytesTotal || 0;
+            var iRem = img.bytesRemaining != null ? img.bytesRemaining : Math.max(0, iTot - iUp);
+            imgBytesEl.textContent = "Đã tải: " + fmtBytes(iUp) + " • Còn lại: " + fmtBytes(iRem) + " / Tổng: " + fmtBytes(iTot);
+          }
         }
 
         // Cập nhật Pipeline Video (Video Direct)
-        var vid = bak.videos || {};
         var vidEl = document.getElementById("abVideoRow");
         if (vidEl) {
+          vidEl.classList.toggle("hidden", activeMode === "image");
           var vidFileEl = document.getElementById("abVideoFile");
           var vidSpdEl = document.getElementById("abVideoSpeed");
           var vidSizeEl = document.getElementById("abVideoFileSize");
@@ -689,10 +785,15 @@
           var vidFillEl = document.getElementById("abVideoProgFill");
           var vidCntEl = document.getElementById("abVideoCount");
           var vidPctEl = document.getElementById("abVideoPct");
+          var vidBytesEl = document.getElementById("abVideoBytesLine");
 
           var vidProc = Math.min(vid.processed || 0, vid.total || 0);
-          var vidPct = vid.total > 0 ? Math.min(100, (vidProc * 100) / vid.total) : Math.min(100, Math.max(0, (vid.progress || 0) * 100));
-          if (vidFileEl) vidFileEl.textContent = "🎬 Video: " + (vid.currentFile || "Đang đợi...");
+          var vUp = vid.bytesUploaded || 0;
+          var vTot = vid.bytesTotalPending || 0;
+          var vidPct = vTot > 0
+            ? Math.min(100, Math.max(0, (vUp * 100) / vTot))
+            : (vid.total > 0 ? Math.min(100, (vidProc * 100) / vid.total) : Math.min(100, Math.max(0, (vid.progress || 0) * 100)));
+          if (vidFileEl) vidFileEl.textContent = "Video: " + (vid.currentFile || "Đang đợi...");
           if (vidSpdEl) vidSpdEl.textContent = vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--";
 
           // Tiến trình file video đang tải
@@ -710,11 +811,46 @@
           }
 
           if (vidFillEl) vidFillEl.style.width = vidPct.toFixed(1) + "%";
-          if (vidCntEl) vidCntEl.textContent = vidProc + " / " + (vid.total || 0) + " video";
+          if (vidCntEl) vidCntEl.textContent = "Tổng tiến trình: " + vidProc + " / " + (vid.total || 0) + " video • Còn " + fmtEtaSec(vid.etaSeconds);
           if (vidPctEl) vidPctEl.textContent = vidPct.toFixed(1) + "%";
+          if (vidBytesEl) {
+            var vRem = vid.bytesRemaining != null ? vid.bytesRemaining : Math.max(0, vTot - vUp);
+            vidBytesEl.textContent = "Đã tải: " + fmtBytes(vUp) + " • Còn lại: " + fmtBytes(vRem) + " / Tổng: " + fmtBytes(vTot);
+          }
         }
       }
     }
+    // Danh sách các điện thoại đang sao lưu đồng thời trên NAS
+    var sessions = bak.sessions || [];
+    var devBox = document.getElementById("abDevicesBox");
+    var devList = document.getElementById("abDevicesList");
+    var devBadge = document.getElementById("abDevicesCountBadge");
+    if (devBox && devList) {
+      devBox.classList.toggle("hidden", sessions.length === 0);
+      if (devBadge) devBadge.textContent = sessions.length + " máy (tối đa " + (bak.maxConcurrent || 2) + " luồng)";
+      if (sessions.length > 0) {
+        var dHtml = "";
+        sessions.forEach(function (sItem) {
+          var isMe = devId && sItem.deviceId === devId;
+          var sPct = sItem.total > 0 ? Math.min(100, (sItem.processed * 100) / sItem.total) : 0;
+          var stTxt = sItem.slotGranted ? (sItem.speedBps > 0 ? (fmtBytes(sItem.speedBps) + "/s") : "Đang đối chiếu") : ("Xếp hàng #" + (sItem.queuePosition || 1));
+          var stCol = sItem.slotGranted ? "var(--ux-green)" : "var(--ux-yellow)";
+          dHtml += '<div style="padding:6px 8px;border-radius:8px;background:rgba(30,41,59,0.55);border:1px solid ' + (isMe ? 'rgba(56,189,248,0.45)' : 'rgba(148,163,184,0.14)') + ';">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">' +
+              '<b style="color:var(--ux-text-1);">' + String(sItem.deviceName || "Android").replace(/</g, "&lt;") + (isMe ? ' <span style="color:var(--ux-cyan);">(Máy này)</span>' : '') + '</b>' +
+              '<span style="color:' + stCol + ';font-weight:600;">' + stTxt + '</span>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);margin-top:2px;">' +
+              '<span>' + backupModeLabel(sItem.backupMode) + ' • ' + (sItem.processed || 0) + '/' + (sItem.total || 0) + ' tệp</span>' +
+              '<span>' + (sItem.freedBytes > 0 ? ('Giải phóng: ' + fmtBytes(sItem.freedBytes)) : (sPct.toFixed(0) + '%')) + '</span>' +
+            '</div>' +
+            '<div class="bar-track" style="margin-top:4px;height:4px;"><div class="bar-fill" style="width:' + sPct.toFixed(1) + '%;background:' + stCol + ';"></div></div>' +
+          '</div>';
+        });
+        devList.innerHTML = dHtml;
+      }
+    }
+
     var pBtn = document.getElementById("abPauseBtn");
     if (pBtn) {
       pBtn.classList.toggle("hidden", !running);
@@ -934,7 +1070,9 @@
     var usb = s.usb || {};
     var liveArr = (s.livestream && s.livestream.jobs) || [];
 
-    var count = (dup.active ? 1 : 0) + (bak.active ? 1 : 0) + (usb.running ? 1 : 0) + (liveArr.length ? 1 : 0);
+    var bakSessions = bak.sessions || [];
+    var hasBackupActivity = !!(bak.active || bakSessions.length > 0);
+    var count = (dup.active ? 1 : 0) + (hasBackupActivity ? 1 : 0) + (usb.running ? 1 : 0) + (liveArr.length ? 1 : 0);
     if (count === 0) {
       card.classList.add("hidden");
       return;
@@ -959,27 +1097,49 @@
         '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>Tệp: ' + (dup.scanned || 0) + ' • Trùng: ' + (dup.found || 0) + '</span><b>' + dp.toFixed(1) + '%</b></div>' +
       '</div>';
     }
-    if (bak.active) {
-      var bp = Math.min(100, Math.max(0, (bak.progress || 0) * 100));
-      var bSpd = bak.speedBps > 0 ? (fmtBytes(bak.speedBps) + "/s") : "Đang đối chiếu...";
-      html += '<div id="bgBakOpen" style="padding:8px 0;border-bottom:1px solid rgba(148,163,184,0.12);cursor:pointer;">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;"><div class="list-title">Đồng bộ NAS Song Song</div><span class="badge" style="color:var(--ux-green);">' + bSpd + '</span></div>' +
-        '<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + String(bak.currentFile || "...").replace(/</g, "&lt;") + '</div>';
-
+    if (bak.active || bakSessions.length > 0) {
+      var curBakMode = ((s.toolbox && s.toolbox.backupMode) || bak.backupMode || "both");
       var img = bak.images || {};
       var vid = bak.videos || {};
-      if (img.total > 0 || vid.total > 0) {
-        var ip = img.total > 0 ? Math.min(100, (img.processed * 100) / img.total) : 0;
-        var vp = vid.total > 0 ? Math.min(100, (vid.processed * 100) / vid.total) : 0;
-        html += '<div style="display:flex;gap:8px;margin-top:5px;">' +
-          '<div style="flex:1;"><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-cyan);"><span>📷 Ảnh: ' + (img.processed || 0) + '/' + (img.total || 0) + '</span><span>' + (img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--") + '</span></div><div class="bar-track" style="margin:2px 0;"><div class="bar-fill" style="width:' + ip.toFixed(1) + '%;background:var(--ux-cyan);"></div></div></div>' +
-          '<div style="flex:1;"><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-yellow);"><span>🎬 Video: ' + (vid.processed || 0) + '/' + (vid.total || 0) + '</span><span>' + (vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--") + '</span></div><div class="bar-track" style="margin:2px 0;"><div class="bar-fill" style="width:' + vp.toFixed(1) + '%;background:var(--ux-yellow);"></div></div></div>' +
-        '</div>';
+      var showImg = curBakMode !== "video" && (img.total > 0 || curBakMode === "image");
+      var showVid = curBakMode !== "image" && (vid.total > 0 || curBakMode === "video");
+      var bp = Math.min(100, Math.max(0, (bak.progress || 0) * 100));
+      var curSpdVal = curBakMode === "image" ? (img.speedBps || 0) : (curBakMode === "video" ? (vid.speedBps || 0) : (bak.speedBps || 0));
+      var bSpd = bak.active ? (curSpdVal > 0 ? (fmtBytes(curSpdVal) + "/s") : "Đang đối chiếu...") : (bakSessions.length + " máy trên NAS");
+      var bModeLbl = backupModeLabel(curBakMode);
+      html += '<div id="bgBakOpen" style="padding:8px 0;border-bottom:1px solid rgba(148,163,184,0.12);cursor:pointer;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;"><div class="list-title">Đồng bộ NAS • ' + bModeLbl + '</div><span class="badge" style="color:var(--ux-green);">' + bSpd + '</span></div>';
+
+      if (bak.active) {
+        var curF = curBakMode === "image" ? (img.currentFile || "...") : (curBakMode === "video" ? (vid.currentFile || "...") : (bak.currentFile || "..."));
+        html += '<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + String(curF).replace(/</g, "&lt;") + '</div>';
+        if (showImg || showVid) {
+          var ip = img.total > 0 ? Math.min(100, (img.processed * 100) / img.total) : 0;
+          var vp = vid.total > 0 ? Math.min(100, (vid.processed * 100) / vid.total) : 0;
+          html += '<div style="display:flex;gap:8px;margin-top:5px;">' +
+            (showImg ? '<div style="flex:1;"><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-cyan);"><span>Ảnh: ' + (img.processed || 0) + '/' + (img.total || 0) + ' • ' + fmtEtaSec(img.etaSeconds) + '</span><span>' + (img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--") + '</span></div><div class="bar-track" style="margin:2px 0;"><div class="bar-fill" style="width:' + ip.toFixed(1) + '%;background:var(--ux-cyan);"></div></div><div style="font-size:10px;color:var(--ux-text-3);">' + fmtBytes(img.bytesUploaded || 0) + ' / ' + fmtBytes(img.bytesTotal || 0) + ' (còn ' + fmtBytes(img.bytesRemaining || 0) + ')</div></div>' : '') +
+            (showVid ? '<div style="flex:1;"><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-yellow);"><span>Video: ' + (vid.processed || 0) + '/' + (vid.total || 0) + ' • ' + fmtEtaSec(vid.etaSeconds) + '</span><span>' + (vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--") + '</span></div><div class="bar-track" style="margin:2px 0;"><div class="bar-fill" style="width:' + vp.toFixed(1) + '%;background:var(--ux-yellow);"></div></div><div style="font-size:10px;color:var(--ux-text-3);">' + fmtBytes(vid.bytesUploaded || 0) + ' / ' + fmtBytes(vid.bytesTotalPending || 0) + ' (còn ' + fmtBytes(vid.bytesRemaining || 0) + ')</div></div>' : '') +
+          '</div>';
+        }
+        if (curBakMode === "both") {
+          var tUpB = bak.bytesWritten || 0;
+          var tTotB = bak.bytesTotal || 0;
+          var tRemB = bak.bytesRemaining != null ? bak.bytesRemaining : Math.max(0, tTotB - tUpB);
+          html += '<div class="bar-track" style="margin:6px 0;"><div class="bar-fill" style="width:' + bp.toFixed(1) + '%;background:var(--ux-green);"></div></div>' +
+            '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>Tổng: ' + (bak.processed || 0) + ' / ' + (bak.total || 0) + ' tệp • Còn ' + fmtEtaSec(bak.etaSeconds) + '</span><b>' + bp.toFixed(1) + '%</b></div>' +
+            '<div style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;">Đã tải: ' + fmtBytes(tUpB) + ' • Còn lại: ' + fmtBytes(tRemB) + ' / Tổng: ' + fmtBytes(tTotB) + (bak.freedSessionBytes > 0 ? (' • Giải phóng ' + fmtBytes(bak.freedSessionBytes)) : '') + '</div>';
+        }
       }
 
-      html += '<div class="bar-track" style="margin:6px 0;"><div class="bar-fill" style="width:' + bp.toFixed(1) + '%;background:var(--ux-green);"></div></div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);"><span>Tổng: ' + (bak.processed || 0) + ' / ' + (bak.total || 0) + ' tệp</span><b>' + bp.toFixed(1) + '%</b></div>' +
-      '</div>';
+      if (bakSessions.length > 1 || (!bak.active && bakSessions.length > 0)) {
+        html += '<div style="margin-top:6px;padding-top:5px;border-top:1px dashed rgba(148,163,184,0.18);font-size:11px;color:var(--ux-text-2);">';
+        bakSessions.forEach(function (ms) {
+          var mSt = ms.slotGranted ? (ms.speedBps > 0 ? (fmtBytes(ms.speedBps) + "/s") : "Đang chạy") : ("Xếp hàng #" + (ms.queuePosition || 1));
+          html += '<div style="display:flex;justify-content:space-between;margin-top:2px;"><span>📱 ' + String(ms.deviceName || "Android").replace(/</g, "&lt;") + ' (' + backupModeLabel(ms.backupMode) + ' • ' + (ms.processed || 0) + '/' + (ms.total || 0) + ')</span><b style="color:' + (ms.slotGranted ? 'var(--ux-cyan)' : 'var(--ux-yellow)') + ';">' + mSt + '</b></div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
     }
     if (usb.running) {
       var up = usb.bytesTotal > 0 ? Math.min(100, (usb.bytesProcessed * 100) / usb.bytesTotal) : (usb.filesTotal > 0 ? Math.min(100, (usb.filesDone * 100) / usb.filesTotal) : 0);
@@ -1305,25 +1465,134 @@
     } else if (activeSubUi === "duplicate") {
       titleEl.textContent = "QUÉT & DỌN TRÙNG LẶP";
       var dup = s.duplicate || {};
-      html += '<div class="list-item"><div class="list-title">Trạng thái</div><span class="badge" style="color:' + (dup.scanning ? COLOR_YELLOW : COLOR_GREEN) + ';">' + (dup.scanning ? "Đang quét..." : ("Tìm thấy " + (dup.count || 0) + " tệp")) + '</span></div>' +
-        '<div class="list-item"><div class="list-title">Quét siêu tốc (Lightning)</div><input type="checkbox" id="dupLightChk" checked style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
-        '<div class="list-item"><div class="list-title">Quét lại từ đầu</div><input type="checkbox" id="dupForceChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
-        '<div style="display:flex;gap:8px;margin-top:10px;">' +
-          '<button class="btn-pill primary" id="dupStartBtn" style="flex:1;">Bắt đầu quét</button>' +
-          '<button class="btn-pill" id="dupOpenNativeBtn" style="flex:1;">Xem chi tiết</button>' +
+      var groups = dup.groups || [];
+      var apiBase = s.apiBase || "";
+      html += '<div class="list-item"><div class="list-title">Trạng thái</div><span class="badge" style="color:' + (dup.scanning ? COLOR_YELLOW : COLOR_GREEN) + ';"><span class="dot' + (dup.scanning ? ' warn' : '') + '"></span>' + (dup.scanning ? (dup.paused ? "Đã tạm dừng" : "Đang quét...") : ("Tìm thấy " + groups.length + " nhóm (" + (dup.count || 0) + " tệp)")) + '</span></div>';
+
+      if (dup.scanning) {
+        var dp = Math.min(100, Math.max(0, Number(dup.percent || 0)));
+        html += '<div style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:10px 11px;margin:8px 0;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:var(--ux-cyan);"><span>' + String(dup.stage || "Đang phân tích...").replace(/</g, "&lt;") + '</span><span>' + dp.toFixed(1) + '%</span></div>' +
+          (dup.currentFolder ? '<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Thư mục: ' + String(dup.currentFolder).replace(/</g, "&lt;") + '</div>' : '') +
+          (dup.currentFile ? '<div class="list-sub" style="margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Tệp: ' + String(dup.currentFile).replace(/</g, "&lt;") + '</div>' : '') +
+          '<div class="bar-track" style="margin:6px 0;"><div class="bar-fill" style="width:' + dp.toFixed(1) + '%;background:var(--ux-purple);"></div></div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--ux-text-2);"><span>Đã quét: ' + (dup.scanned || 0) + ' • Trùng: ' + (dup.found || 0) + '</span>' +
+          '<div style="display:flex;gap:6px;"><button class="btn-pill" id="dupModalPauseBtn" style="padding:4px 10px;font-size:11px;">' + (dup.paused ? "Tiếp tục" : "Tạm dừng") + '</button><button class="btn-pill danger" id="dupModalCancelBtn" style="padding:4px 10px;font-size:11px;">Hủy</button></div></div>' +
         '</div>';
+      } else {
+        html += '<div class="list-item"><div class="list-title">Quét siêu tốc (Lightning)</div><input type="checkbox" id="dupLightChk" checked style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
+          '<div class="list-item"><div class="list-title">Quét lại từ đầu</div><input type="checkbox" id="dupForceChk" style="width:18px;height:18px;accent-color:var(--ux-cyan);" /></div>' +
+          '<button class="btn-pill primary" id="dupStartBtn" style="width:100%;margin-top:8px;">Bắt đầu quét trùng lặp</button>';
+      }
+
+      if (groups.length > 0) {
+        html += '<div style="display:flex;gap:6px;margin:10px 0 8px;">' +
+          '<button class="btn-pill" id="dupSmartSelBtn" style="flex:1;">Chọn thông minh (giữ bản gốc)</button>' +
+          '<button class="btn-pill danger" id="dupDelSelBtn" style="flex:1;">Xóa mục đã chọn</button>' +
+        '</div>' +
+        '<div id="dupGroupsList" style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;">';
+        groups.forEach(function (g, gIdx) {
+          html += '<div style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:8px 10px;">' +
+            '<div style="font-size:11.5px;font-weight:700;color:var(--ux-cyan);margin-bottom:6px;">Nhóm #' + (gIdx + 1) + ' • ' + g.count + ' tệp (' + fmtBytes(g.size || 0) + ' / tệp)</div>';
+          (g.files || []).forEach(function (f, fIdx) {
+            var thumbUrl = (apiBase && f.relPath && (isImgFile(f.name) || isVidFile(f.name))) ? (apiBase + "/api/thumb?path=" + encodeURIComponent(f.relPath)) : "";
+            html += '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid rgba(148,163,184,0.08);cursor:pointer;">' +
+              '<input type="checkbox" class="dup-file-chk" data-gidx="' + gIdx + '" data-fidx="' + fIdx + '" value="' + String(f.path || "").replace(/"/g, "&quot;") + '" ' + (fIdx > 0 ? "checked" : "") + ' style="width:16px;height:16px;accent-color:var(--ux-red);" />' +
+              (thumbUrl ? '<img src="' + thumbUrl + '" style="width:34px;height:34px;border-radius:6px;object-fit:cover;background:var(--ux-surface-elevated);flex-shrink:0;" onerror="this.style.display=\'none\'" />' : '') +
+              '<div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:700;color:var(--ux-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + String(f.name || "").replace(/</g, "&lt;") + (fIdx === 0 ? ' <span style="color:var(--ux-green);font-size:10.5px;">(Giữ gốc)</span>' : '') + '</div>' +
+              '<div style="font-size:10.5px;color:var(--ux-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">/' + String(f.folder || "").replace(/</g, "&lt;") + '</div></div>' +
+            '</label>';
+          });
+          html += '</div>';
+        });
+        html += '</div>';
+      }
       bodyEl.innerHTML = html;
       ["dupLightChk", "dupForceChk"].forEach(function (id) {
-        document.getElementById(id).addEventListener("change", function () { if (modal) modal.setAttribute("data-dirty", "1"); });
+        var el = document.getElementById(id);
+        if (el) el.addEventListener("change", function () { if (modal) modal.setAttribute("data-dirty", "1"); });
       });
-      document.getElementById("dupStartBtn").addEventListener("click", function () {
+      var dStart = document.getElementById("dupStartBtn");
+      if (dStart) dStart.addEventListener("click", function () {
         if (modal) modal.removeAttribute("data-dirty");
         callBridge("startDuplicateScan", !!document.getElementById("dupForceChk").checked, !!document.getElementById("dupLightChk").checked);
         showToast("Đã bắt đầu quét trùng lặp ngầm...");
       });
-      document.getElementById("dupOpenNativeBtn").addEventListener("click", function () {
-        document.getElementById("subUiModal").classList.add("hidden");
-        callBridge("action", "duplicate");
+      var dPause = document.getElementById("dupModalPauseBtn");
+      if (dPause) dPause.addEventListener("click", function () { callBridge("togglePauseDuplicateScan"); });
+      var dCancel = document.getElementById("dupModalCancelBtn");
+      if (dCancel) dCancel.addEventListener("click", function () { callBridge("cancelDuplicateScan"); });
+      var dSmart = document.getElementById("dupSmartSelBtn");
+      if (dSmart) dSmart.addEventListener("click", function () {
+        bodyEl.querySelectorAll(".dup-file-chk").forEach(function (chk) {
+          chk.checked = Number(chk.getAttribute("data-fidx")) > 0;
+        });
+        showToast("Đã chọn các bản sao, giữ lại 1 bản gốc mỗi nhóm");
+      });
+      var dDel = document.getElementById("dupDelSelBtn");
+      if (dDel) dDel.addEventListener("click", function () {
+        var paths = [];
+        bodyEl.querySelectorAll(".dup-file-chk:checked").forEach(function (chk) {
+          paths.push(chk.value);
+        });
+        if (!paths.length) { showToast("Chưa chọn tệp trùng nào để xóa"); return; }
+        if (modal) modal.removeAttribute("data-dirty");
+        callBridge("deleteDuplicateFiles", JSON.stringify(paths));
+        showToast("Đang xóa " + paths.length + " tệp trùng vào Thùng rác...");
+      });
+      bodyEl.querySelectorAll(".dup-file-chk").forEach(function (chk) {
+        chk.addEventListener("change", function () { if (modal) modal.setAttribute("data-dirty", "1"); });
+      });
+    } else if (activeSubUi === "organizer") {
+      titleEl.textContent = "PHÂN LOẠI TỆP AI";
+      var org = s.organizer || {};
+      var curFilter = (modal && modal.getAttribute("data-org-filter")) || "all";
+      var curPath = (document.getElementById("orgPathInp") && document.getElementById("orgPathInp").value) || "";
+      html += '<div class="seg-tabs" id="orgFilterTabs" style="margin-bottom:8px;">' +
+        '<button type="button" class="seg-btn' + (curFilter === "all" ? " active" : "") + '" data-orgf="all">Tất cả</button>' +
+        '<button type="button" class="seg-btn' + (curFilter === "image" ? " active" : "") + '" data-orgf="image">Chỉ ảnh</button>' +
+        '<button type="button" class="seg-btn' + (curFilter === "video" ? " active" : "") + '" data-orgf="video">Chỉ video</button>' +
+      '</div>' +
+      '<input class="ux-input" style="margin:0 0 8px;" id="orgPathInp" placeholder="Thư mục nguồn (để trống = toàn bộ NAS)..." value="' + curPath.replace(/"/g, "&quot;") + '" />' +
+      '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+        '<button class="btn-pill primary" id="orgScanBtn" style="flex:1;">' + (org.scanning ? "Đang phân tích..." : "Phân tích & Xem trước") + '</button>' +
+        ((org.groups && org.groups.length > 0) ? ('<button class="btn-pill" id="orgExecBtn" style="flex:1;background:rgba(102,187,106,0.18);color:var(--ux-green);border-color:rgba(102,187,106,0.35);">' + (org.executing ? "Đang sắp xếp..." : "Thực thi sắp xếp") + '</button>') : '') +
+      '</div>';
+      if (org.error) html += '<div class="list-sub" style="color:var(--ux-red);margin-bottom:8px;">' + String(org.error).replace(/</g, "&lt;") + '</div>';
+      if (org.result) html += '<div class="list-sub" style="color:var(--ux-green);margin-bottom:8px;font-weight:700;">' + String(org.result).replace(/</g, "&lt;") + '</div>';
+      if (org.groups && org.groups.length > 0) {
+        html += '<div class="list-sub" style="margin-bottom:6px;">Tổng cộng: <b>' + (org.totalFiles || 0) + ' tệp</b> trong ' + org.groups.length + ' nhóm Năm/Tháng:</div>' +
+          '<div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">';
+        org.groups.forEach(function (g) {
+          html += '<div style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:8px 10px;">' +
+            '<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;"><span style="color:var(--ux-cyan);">' + String(g.label || "").replace(/</g, "&lt;") + '</span><span>' + (g.count || 0) + ' tệp • ' + fmtBytes(g.size || 0) + '</span></div>' +
+            ((g.samples && g.samples.length) ? ('<div class="list-sub" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Mẫu: ' + g.samples.map(function (n) { return String(n).replace(/</g, "&lt;"); }).join(", ") + '</div>') : '') +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      bodyEl.innerHTML = html;
+      bodyEl.querySelectorAll("[data-orgf]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (modal) modal.setAttribute("data-org-filter", btn.getAttribute("data-orgf") || "all");
+          renderSubUiModal(false);
+        });
+      });
+      var oScan = document.getElementById("orgScanBtn");
+      if (oScan) oScan.addEventListener("click", function () {
+        if (modal) modal.removeAttribute("data-dirty");
+        var f = (modal && modal.getAttribute("data-org-filter")) || "all";
+        var p = (document.getElementById("orgPathInp").value || "").trim();
+        callBridge("smartOrganizeScan", f, p);
+        showToast("Đang phân tích cấu trúc tệp trên NAS...");
+      });
+      var oExec = document.getElementById("orgExecBtn");
+      if (oExec) oExec.addEventListener("click", function () {
+        if (modal) modal.removeAttribute("data-dirty");
+        var f = (modal && modal.getAttribute("data-org-filter")) || "all";
+        var p = (document.getElementById("orgPathInp").value || "").trim();
+        callBridge("smartOrganizeExecute", f, p);
+        showToast("Đang sắp xếp tệp tự động trên NAS...");
       });
     } else if (activeSubUi === "about") {
       titleEl.textContent = "GIỚI THIỆU ỨNG DỤNG";
@@ -1696,7 +1965,7 @@
       else if (act === "docker") openDockerModal();
       else if (act === "logs") openLogsModal();
       else if (act === "livestream" || act === "stream") openLivestreamModal();
-      else if (act === "guest" || act === "social" || act === "performance" || act === "lanWhitelist" || act === "bandwidth" || act === "nasBackup" || act === "failedUploads" || act === "usbImport" || act === "sleepSchedule" || act === "download" || act === "duplicate" || act === "about") openSubUiModal(act);
+      else if (act === "guest" || act === "social" || act === "performance" || act === "lanWhitelist" || act === "bandwidth" || act === "nasBackup" || act === "failedUploads" || act === "usbImport" || act === "sleepSchedule" || act === "download" || act === "duplicate" || act === "organizer" || act === "about") openSubUiModal(act);
       else callBridge("action", act);
     }
 
@@ -1719,13 +1988,30 @@
     });
     document.getElementById("abCloseBtn").addEventListener("click", function () { document.getElementById("autoBackupModal").classList.add("hidden"); });
     document.getElementById("abEnabledChk").addEventListener("change", function () { document.getElementById("autoBackupModal").setAttribute("data-dirty", "1"); });
-    document.getElementById("abDeleteChk").addEventListener("change", function () { document.getElementById("autoBackupModal").setAttribute("data-dirty", "1"); });
+    document.getElementById("abDeleteChk").addEventListener("change", function () {
+      document.getElementById("autoBackupModal").setAttribute("data-dirty", "1");
+      callBridge("setDeleteAfterBackup", !!document.getElementById("abDeleteChk").checked);
+    });
+    document.querySelectorAll("#abModeGroup .ab-mode-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var mode = btn.getAttribute("data-mode") || "both";
+        document.getElementById("autoBackupModal").setAttribute("data-dirty", "1");
+        if (state && state.toolbox) state.toolbox.backupMode = mode;
+        if (state && state.bgTasks && state.bgTasks.backup) state.bgTasks.backup.backupMode = mode;
+        applyBackupModeButtons(mode);
+        callBridge("setBackupMode", mode);
+        renderAutoBackupModal();
+        renderBgTasks();
+      });
+    });
     document.getElementById("abSaveBtn").addEventListener("click", function () {
+      var mode = getSelectedBackupMode();
       document.getElementById("autoBackupModal").removeAttribute("data-dirty");
-      callBridge("saveAutoBackup", !!document.getElementById("abEnabledChk").checked, !!document.getElementById("abDeleteChk").checked);
+      callBridge("saveAutoBackup", !!document.getElementById("abEnabledChk").checked, !!document.getElementById("abDeleteChk").checked, mode);
       document.getElementById("autoBackupModal").classList.add("hidden");
     });
     document.getElementById("abSyncNowBtn").addEventListener("click", function () {
+      callBridge("setBackupMode", getSelectedBackupMode());
       callBridge("triggerAutoBackup");
       showToast("Đang bắt đầu đồng bộ lên NAS...");
     });

@@ -508,6 +508,8 @@ _NON_INTERACTIVE_HIT_PREFIXES = (
     "/api/duplicates/hash", "/api/v1/duplicates/hash",
     "/api/duplicates/compute_hash", "/api/v1/duplicates/compute_hash",
     "/api/backup/batch_stream", "/api/v1/backup/batch_stream",
+    "/api/backup/resumable/", "/api/v1/backup/resumable/",
+    "/api/backup/session", "/api/v1/backup/session",
     "/api/duplicates/content", "/api/v1/duplicates/content",
     "/api/thumb/exists", "/api/v1/thumb/exists",
     "/api/thumb/upload", "/api/v1/thumb/upload",
@@ -8399,7 +8401,7 @@ def _duplicate_find_matches(sha256, size, after=''):
 @app.route('/api/duplicates/capabilities', methods=['GET', 'POST'])
 @requires_admin
 def api_duplicate_capabilities():
-    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True, 'server_side_hash': True, 'batch_stream': True})
+    return jsonify({'backup_protocol': 1, 'native_versions': True, 'shared_hash_catalogue': True, 'server_side_hash': True, 'batch_stream': True, 'resumable_upload': True})
 
 
 @app.route('/api/duplicates/find', methods=['POST'])
@@ -8508,6 +8510,166 @@ def api_duplicate_compute_hash():
         return jsonify({'error': str(error)}), 409
 
 
+# ─── Quan ly phien Auto Backup da thiet bi & chong tac nghen (RK3328 1GB RAM) ───
+_BACKUP_SESSIONS_LOCK = threading.Lock()
+_BACKUP_SESSIONS = {}
+_BACKUP_SESSION_TTL = 45.0
+_MAX_CONCURRENT_BACKUP_DEVICES = 2
+_BATCH_STREAM_SEMAPHORE = threading.BoundedSemaphore(2)
+
+
+def _prune_stale_backup_sessions_locked(now):
+    stale = []
+    for dev_id, sess in _BACKUP_SESSIONS.items():
+        if now - sess.get("updated_at", 0.0) > _BACKUP_SESSION_TTL:
+            stale.append(dev_id)
+    for dev_id in stale:
+        _BACKUP_SESSIONS.pop(dev_id, None)
+
+
+def _recompute_backup_slots_locked():
+    # Sap xep cac phien dang hoat dong theo thoi diem bat dau (FIFO cong bang)
+    candidates = [
+        s for s in _BACKUP_SESSIONS.values()
+        if s.get("status") in ("running", "queued")
+    ]
+    candidates.sort(key=lambda s: (s.get("started_at", 0.0), s.get("device_id", "")))
+    active_count = 0
+    for idx, sess in enumerate(candidates):
+        if idx < _MAX_CONCURRENT_BACKUP_DEVICES:
+            sess["slot_granted"] = True
+            sess["queue_position"] = 0
+            active_count += 1
+        else:
+            sess["slot_granted"] = False
+            sess["queue_position"] = idx - _MAX_CONCURRENT_BACKUP_DEVICES + 1
+    for sess in _BACKUP_SESSIONS.values():
+        if sess.get("status") not in ("running", "queued"):
+            sess["slot_granted"] = False
+            sess["queue_position"] = 0
+    return active_count
+
+
+def _snapshot_backup_sessions_locked():
+    out = []
+    for sess in _BACKUP_SESSIONS.values():
+        out.append(dict(sess))
+    out.sort(key=lambda s: (0 if s.get("slot_granted") else 1, s.get("started_at", 0.0)))
+    return out
+
+
+@app.route('/api/backup/session/heartbeat', methods=['POST'])
+@requires_admin
+def api_backup_session_heartbeat():
+    """Cap nhat trang thai backup cua 1 dien thoai va dieu phoi slot tranh tac nghen NAS."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    device_id = str(body.get("device_id") or "").strip()[:80]
+    if not device_id:
+        return jsonify({"ok": False, "error": "device_id is required"}), 400
+
+    now = time.time()
+    status = str(body.get("status") or "running").strip().lower()
+    if status not in ("running", "queued", "paused", "done", "cancelled"):
+        status = "running"
+    backup_mode = str(body.get("backup_mode") or "both").strip().lower()
+    if backup_mode not in ("both", "image", "video"):
+        backup_mode = "both"
+
+    def _safe_int(val):
+        try:
+            v = int(val)
+            return v if v >= 0 else 0
+        except Exception:
+            return 0
+
+    with _BACKUP_SESSIONS_LOCK:
+        _prune_stale_backup_sessions_locked(now)
+        prev = _BACKUP_SESSIONS.get(device_id)
+        started_at = prev.get("started_at", now) if prev else now
+        entry = {
+            "device_id": device_id,
+            "device_name": str(body.get("device_name") or "Android")[:80],
+            "backup_mode": backup_mode,
+            "status": status,
+            "processed": _safe_int(body.get("processed", 0)),
+            "total": _safe_int(body.get("total", 0)),
+            "image_processed": _safe_int(body.get("image_processed", 0)),
+            "image_total": _safe_int(body.get("image_total", 0)),
+            "video_processed": _safe_int(body.get("video_processed", 0)),
+            "video_total": _safe_int(body.get("video_total", 0)),
+            "speed_bps": _safe_int(body.get("speed_bps", 0)),
+            "current_file": str(body.get("current_file") or "")[:160],
+            "freed_bytes": _safe_int(body.get("freed_bytes", 0)),
+            "phone_free_bytes": _safe_int(body.get("phone_free_bytes", 0)),
+            "phone_total_bytes": _safe_int(body.get("phone_total_bytes", 0)),
+            "started_at": started_at,
+            "updated_at": now,
+            "slot_granted": False,
+            "queue_position": 0,
+        }
+        _BACKUP_SESSIONS[device_id] = entry
+        active_count = _recompute_backup_slots_locked()
+        slot_granted = bool(entry["slot_granted"])
+        queue_pos = int(entry["queue_position"])
+        # Khi nhieu may chay dong thoi, giam nhip nhe de chia deu I/O & RAM tren RK3328
+        if not slot_granted and status in ("running", "queued"):
+            recommended_pace_ms = 2500
+        elif active_count >= 2:
+            recommended_pace_ms = 250
+        else:
+            recommended_pace_ms = 0
+        sessions = _snapshot_backup_sessions_locked()
+
+    return jsonify({
+        "ok": True,
+        "slot_granted": slot_granted,
+        "queue_position": queue_pos,
+        "active_count": active_count,
+        "max_concurrent": _MAX_CONCURRENT_BACKUP_DEVICES,
+        "recommended_pace_ms": recommended_pace_ms,
+        "sessions": sessions,
+    })
+
+
+@app.route('/api/backup/sessions', methods=['GET'])
+@requires_admin
+def api_backup_sessions_list():
+    """Tra ve danh sach cac dien thoai dang sao luu dong thoi len NAS."""
+    now = time.time()
+    with _BACKUP_SESSIONS_LOCK:
+        _prune_stale_backup_sessions_locked(now)
+        active_count = _recompute_backup_slots_locked()
+        sessions = _snapshot_backup_sessions_locked()
+    combined_speed = sum(int(s.get("speed_bps", 0)) for s in sessions if s.get("slot_granted"))
+    return jsonify({
+        "ok": True,
+        "active_count": active_count,
+        "max_concurrent": _MAX_CONCURRENT_BACKUP_DEVICES,
+        "combined_speed_bps": combined_speed,
+        "sessions": sessions,
+    })
+
+
+@app.route('/api/backup/session/finish', methods=['POST'])
+@requires_admin
+def api_backup_session_finish():
+    """Giai phong slot backup khi 1 dien thoai hoan tat hoac huy."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    device_id = str(body.get("device_id") or "").strip()[:80]
+    if not device_id:
+        return jsonify({"ok": False, "error": "device_id is required"}), 400
+    now = time.time()
+    with _BACKUP_SESSIONS_LOCK:
+        _BACKUP_SESSIONS.pop(device_id, None)
+        _prune_stale_backup_sessions_locked(now)
+        active_count = _recompute_backup_slots_locked()
+    return jsonify({"ok": True, "active_count": active_count})
+
+
 @app.route('/api/backup/batch_stream', methods=['POST'])
 @requires_admin
 def api_backup_batch_stream():
@@ -8517,26 +8679,53 @@ def api_backup_batch_stream():
     giai nen an toan (chong Tar-Slip) vua tinh song song SHA-256 phan cung (ARM NEON SHA2).
     Luu tu dong vao database verified_file_hashes va tra ve danh sach SHA-256 de client xoa tep an toan.
     """
-    webdav_root = _get_webdav_root()
-    dest = (request.args.get('dest') or '/AutoBackup').strip()
-    dest_clean = dest.lstrip('/')
-    dest_dir = os.path.realpath(os.path.join(webdav_root, dest_clean))
+    if not _BATCH_STREAM_SEMAPHORE.acquire(timeout=30):
+        resp = jsonify({"ok": False, "error": "NAS dang xu ly nhieu thiet bi backup, vui long thu lai"})
+        resp.status_code = 503
+        resp.headers["Retry-After"] = "3"
+        return resp
 
-    root_real = os.path.realpath(webdav_root)
-    if not (dest_dir == root_real or dest_dir.startswith(root_real + os.sep)):
-        return jsonify({"ok": False, "error": "Invalid destination path"}), 400
-
-    os.makedirs(dest_dir, exist_ok=True)
-
-    tmp_dir = os.path.join(webdav_root, ".backup_tmp")
+    tar_path = None
     try:
-        os.makedirs(tmp_dir, exist_ok=True)
-    except Exception:
-        tmp_dir = "/tmp"
+        webdav_root = _get_webdav_root()
+        raw_dest = (request.args.get('dest') or '/AutoBackup').strip()
+        try:
+            from urllib.parse import urlparse, unquote
+            if raw_dest.startswith('http://') or raw_dest.startswith('https://'):
+                raw_dest = urlparse(raw_dest).path or '/AutoBackup'
+            raw_dest = unquote(raw_dest)
+        except Exception:
+            pass
+        if raw_dest.startswith('/webdav/'):
+            raw_dest = raw_dest[len('/webdav/'):]
+        elif raw_dest == '/webdav':
+            raw_dest = '/AutoBackup'
+        dest_clean = raw_dest.lstrip('/') or 'AutoBackup'
+        dest_dir = os.path.realpath(os.path.join(webdav_root, dest_clean))
 
-    tar_path = os.path.join(tmp_dir, "batch_%d_%d.tar" % (os.getpid(), int(time.time() * 1000)))
-    total_received = 0
-    try:
+        root_real = os.path.realpath(webdav_root)
+        if not (dest_dir == root_real or dest_dir.startswith(root_real + os.sep)):
+            return jsonify({"ok": False, "error": "Invalid destination path"}), 400
+
+        os.makedirs(dest_dir, exist_ok=True)
+
+        tmp_dir = os.path.join(webdav_root, ".backup_tmp")
+        try:
+            content_len = int(request.content_length or 0)
+            if 0 < content_len <= 16 * 1024 * 1024 and os.path.isdir("/dev/shm"):
+                st_shm = os.statvfs("/dev/shm")
+                if st_shm.f_bavail * st_shm.f_frsize >= 64 * 1024 * 1024:
+                    tmp_dir = "/dev/shm"
+            if tmp_dir != "/dev/shm":
+                os.makedirs(tmp_dir, exist_ok=True)
+        except Exception:
+            try:
+                os.makedirs(tmp_dir, exist_ok=True)
+            except Exception:
+                tmp_dir = "/tmp"
+
+        tar_path = os.path.join(tmp_dir, "batch_%d_%d.tar" % (os.getpid(), int(time.time() * 1000)))
+        total_received = 0
         with open(tar_path, "wb") as f:
             while True:
                 chunk = request.stream.read(65536)
@@ -8554,49 +8743,9 @@ def api_backup_batch_stream():
             res = _bridge.extract_tar_batch_safe_rust(tar_path, dest_dir)
 
         if not res or not res.get("ok"):
-            err_msg = res.get("error") if res else "Rust bridge unavailable"
-            log.warning("[AutoBackup] Batch Rust extract failed (%s), fallback to python tarfile", err_msg)
-            import tarfile
-            import hashlib
-            items = []
-            files_extracted = 0
-            bytes_extracted = 0
-            with tarfile.open(tar_path, "r:*") as tf:
-                for member in tf.getmembers():
-                    if member.isdir():
-                        continue
-                    if not _archive_member_is_safe(member.name):
-                        continue
-                    target_path = _archive_member_target_path(dest_dir, member.name)
-                    if not _archive_member_within_dest(dest_dir, member.name):
-                        continue
-                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                    src = tf.extractfile(member)
-                    if src is None:
-                        continue
-                    h = hashlib.sha256()
-                    f_sz = 0
-                    with src, open(target_path, "wb") as dst:
-                        while True:
-                            b = src.read(65536)
-                            if not b:
-                                break
-                            dst.write(b)
-                            h.update(b)
-                            f_sz += len(b)
-                    files_extracted += 1
-                    bytes_extracted += f_sz
-                    items.append({
-                        "path": str(member.name).replace("\\", "/"),
-                        "size": f_sz,
-                        "sha256": h.hexdigest()
-                    })
-            res = {
-                "ok": True,
-                "files_extracted": files_extracted,
-                "bytes_extracted": bytes_extracted,
-                "items": items
-            }
+            err_msg = res.get("error") if res else "Rust engine nas_hasher_extract_tar_batch_json unavailable"
+            log.error("[AutoBackup] Rust batch extract failed: %s", err_msg)
+            return jsonify({"ok": False, "error": err_msg}), 500
 
         try:
             now = time.time()
@@ -8621,11 +8770,279 @@ def api_backup_batch_stream():
         log.error("[AutoBackup] Batch stream loi: %s", e)
         return jsonify({"ok": False, "error": str(e)}), 500
     finally:
-        if os.path.exists(tar_path):
+        _BATCH_STREAM_SEMAPHORE.release()
+        if tar_path and os.path.exists(tar_path):
             try:
                 os.remove(tar_path)
             except Exception:
                 pass
+
+
+# ─── Resumable Chunked Upload cho Video lớn (> 512MB / > 1GB) ───
+_RESUMABLE_UPLOAD_LOCKS = {}
+_RESUMABLE_LOCKS_GUARD = threading.Lock()
+_RESUMABLE_MAX_STALE_SEC = 7 * 86400
+
+
+def _get_resumable_lock(upload_id):
+    with _RESUMABLE_LOCKS_GUARD:
+        lock = _RESUMABLE_UPLOAD_LOCKS.get(upload_id)
+        if lock is None:
+            lock = threading.Lock()
+            _RESUMABLE_UPLOAD_LOCKS[upload_id] = lock
+        return lock
+
+
+def _sanitize_upload_id(raw_id):
+    val = str(raw_id or "").strip().lower()
+    if len(val) < 16 or len(val) > 128:
+        return None
+    for ch in val:
+        if ch not in "0123456789abcdef_-":
+            return None
+    return val
+
+
+def _resumable_tmp_dir():
+    webdav_root = _get_webdav_root()
+    d = os.path.join(webdav_root, ".backup_tmp", "resumable")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _prune_stale_resumable_parts(resumable_dir):
+    try:
+        now = time.time()
+        for name in os.listdir(resumable_dir):
+            if not name.endswith(".part"):
+                continue
+            p = os.path.join(resumable_dir, name)
+            try:
+                st = os.lstat(p)
+                if now - st.st_mtime > _RESUMABLE_MAX_STALE_SEC:
+                    os.remove(p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _normalize_backup_dest(raw_dest):
+    s = str(raw_dest or "/AutoBackup").strip()
+    try:
+        from urllib.parse import urlparse, unquote
+        if s.startswith("http://") or s.startswith("https://"):
+            s = urlparse(s).path or "/AutoBackup"
+        s = unquote(s)
+    except Exception:
+        pass
+    if s.startswith("/webdav/"):
+        s = s[len("/webdav/"):]
+    elif s == "/webdav":
+        s = "/AutoBackup"
+    return s.lstrip("/") or "AutoBackup"
+
+
+@app.route('/api/backup/resumable/status', methods=['GET'])
+@requires_admin
+def api_backup_resumable_status():
+    """Tra ve so byte da ghi cua 1 upload_id de client resume chinh xac."""
+    upload_id = _sanitize_upload_id(request.args.get('upload_id'))
+    if not upload_id:
+        return jsonify({"ok": False, "error": "Invalid upload_id"}), 400
+    try:
+        rdir = _resumable_tmp_dir()
+        _prune_stale_resumable_parts(rdir)
+        part_path = os.path.join(rdir, upload_id + ".part")
+        offset = os.path.getsize(part_path) if os.path.isfile(part_path) else 0
+        return jsonify({"ok": True, "upload_id": upload_id, "offset": offset})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/backup/resumable/chunk', methods=['POST'])
+@requires_admin
+def api_backup_resumable_chunk():
+    """Ghi noi tiep 1 chunk vao file .part tai dung offset (chong ghi lech/trung lap)."""
+    upload_id = _sanitize_upload_id(request.args.get('upload_id'))
+    if not upload_id:
+        return jsonify({"ok": False, "error": "Invalid upload_id"}), 400
+    try:
+        offset = int(request.args.get('offset', -1))
+    except Exception:
+        offset = -1
+    if offset < 0:
+        return jsonify({"ok": False, "error": "Invalid offset"}), 400
+
+    lock = _get_resumable_lock(upload_id)
+    with lock:
+        try:
+            rdir = _resumable_tmp_dir()
+            part_path = os.path.join(rdir, upload_id + ".part")
+            current_size = os.path.getsize(part_path) if os.path.isfile(part_path) else 0
+            if offset != current_size:
+                return jsonify({
+                    "ok": False,
+                    "error": "Offset mismatch",
+                    "expected_offset": current_size,
+                    "offset": current_size,
+                }), 409
+
+            written = 0
+            mode = "r+b" if os.path.isfile(part_path) else "wb"
+            with open(part_path, mode) as f:
+                f.seek(offset)
+                while True:
+                    buf = request.stream.read(65536)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    written += len(buf)
+                f.flush()
+            new_size = current_size + written
+            return jsonify({"ok": True, "upload_id": upload_id, "offset": new_size, "written": written})
+        except Exception as e:
+            log.error("[AutoBackup] Resumable chunk error (%s): %s", upload_id, e)
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/backup/resumable/finish', methods=['POST'])
+@requires_admin
+def api_backup_resumable_finish():
+    """Xac minh size + SHA-256 (Rust ARM NEON SHA2) cua file .part, move sang dich an toan va luu DB."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    upload_id = _sanitize_upload_id(body.get("upload_id"))
+    if not upload_id:
+        return jsonify({"ok": False, "error": "Invalid upload_id"}), 400
+    expected_sha = str(body.get("sha256") or "").strip().lower()
+    if len(expected_sha) != 64 or any(c not in "0123456789abcdef" for c in expected_sha):
+        return jsonify({"ok": False, "error": "Invalid sha256"}), 400
+    try:
+        expected_size = int(body.get("size", -1))
+    except Exception:
+        expected_size = -1
+    if expected_size <= 0:
+        return jsonify({"ok": False, "error": "Invalid size"}), 400
+
+    filename = str(body.get("filename") or "").strip()
+    if not filename or "/" in filename or "\\" in filename or filename in (".", "..") or filename.startswith("."):
+        return jsonify({"ok": False, "error": "Invalid filename"}), 400
+
+    dest_clean = _normalize_backup_dest(body.get("dest"))
+    webdav_root = _get_webdav_root()
+    root_real = os.path.realpath(webdav_root)
+    dest_dir = os.path.realpath(os.path.join(root_real, dest_clean))
+    if not (dest_dir == root_real or dest_dir.startswith(root_real + os.sep)):
+        return jsonify({"ok": False, "error": "Invalid destination path"}), 400
+
+    lock = _get_resumable_lock(upload_id)
+    with lock:
+        try:
+            rdir = _resumable_tmp_dir()
+            part_path = os.path.join(rdir, upload_id + ".part")
+            if not os.path.isfile(part_path):
+                return jsonify({"ok": False, "error": "Upload part not found", "offset": 0}), 404
+            actual_size = os.path.getsize(part_path)
+            if actual_size != expected_size:
+                return jsonify({
+                    "ok": False,
+                    "error": "Size mismatch",
+                    "offset": actual_size,
+                    "expected_size": expected_size,
+                }), 409
+
+            # Tinh SHA-256 phan cung bang Rust bridge (hoac Python fallback)
+            actual_sha = None
+            _bridge = globals().get("rust_bridge")
+            if _bridge and hasattr(_bridge, "compute_fast_sha256"):
+                try:
+                    actual_sha = _bridge.compute_fast_sha256(part_path)
+                except Exception:
+                    actual_sha = None
+            if not actual_sha or len(actual_sha) != 64:
+                h = hashlib.sha256()
+                with open(part_path, "rb") as rf:
+                    while True:
+                        b = rf.read(262144)
+                        if not b:
+                            break
+                        h.update(b)
+                actual_sha = h.hexdigest()
+
+            if actual_sha.lower() != expected_sha:
+                try:
+                    os.remove(part_path)
+                except Exception:
+                    pass
+                return jsonify({
+                    "ok": False,
+                    "error": "SHA-256 mismatch (part reset)",
+                    "actual_sha256": actual_sha,
+                }), 422
+
+            os.makedirs(dest_dir, exist_ok=True)
+            final_name = filename
+            final_path = os.path.join(dest_dir, final_name)
+            if os.path.exists(final_path):
+                # Neu file dich da ton tai voi cung size & sha256 thi giu nguyen dich, xoa .part
+                existing_rel = (dest_clean + "/" + final_name).strip("/")
+                same_existing = False
+                try:
+                    if os.path.getsize(final_path) == expected_size:
+                        ex_info = _duplicate_file_info(existing_rel)
+                        if _duplicate_lookup(ex_info) == expected_sha:
+                            same_existing = True
+                except Exception:
+                    pass
+                if same_existing:
+                    try:
+                        os.remove(part_path)
+                    except Exception:
+                        pass
+                else:
+                    dot_idx = final_name.rfind(".")
+                    ts_ms = int(time.time() * 1000)
+                    if dot_idx > 0:
+                        final_name = final_name[:dot_idx] + ("__v%d" % ts_ms) + final_name[dot_idx:]
+                    else:
+                        final_name = final_name + ("__v%d" % ts_ms)
+                    final_path = os.path.join(dest_dir, final_name)
+                    os.replace(part_path, final_path)
+            else:
+                os.replace(part_path, final_path)
+
+            try:
+                os.chmod(final_path, 0o664)
+            except Exception:
+                pass
+
+            rel_final = (dest_clean + "/" + final_name).strip("/")
+            try:
+                info = _duplicate_file_info(rel_final)
+                conn = _duplicate_db()
+                try:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO verified_file_hashes(file_id,version,size,sha256,verified_at,path) VALUES(?,?,?,?,?,?)",
+                        (info['file_id'], info['version'], expected_size, expected_sha, time.time(), rel_final),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception as e:
+                log.warning("[AutoBackup] Luu verified_file_hashes resumable that bai: %s", e)
+
+            return jsonify({
+                "ok": True,
+                "path": rel_final,
+                "filename": final_name,
+                "size": expected_size,
+                "sha256": expected_sha,
+            })
+        except Exception as e:
+            log.error("[AutoBackup] Resumable finish error (%s): %s", upload_id, e)
+            return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route('/api/duplicates/cleanup', methods=['POST'])

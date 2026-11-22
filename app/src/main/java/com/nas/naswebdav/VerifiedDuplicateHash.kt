@@ -41,10 +41,6 @@ private val duplicateRpcClient by lazy {
     NasApplication.instance.fastApiClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
 }
 
-private val duplicateContentClient by lazy {
-    NasApplication.instance.sharedHttpClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
-}
-
 private val duplicateComputeHashClient by lazy {
     NasApplication.instance.fastApiClient.newBuilder()
         .followRedirects(false)
@@ -117,19 +113,6 @@ internal suspend fun hashCompleteResponse(response: okhttp3.Response, size: Long
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-private suspend fun WebDavManager.coordinatedSha256(path: String, size: Long, version: String, fileId: String, auth: WebDavManager.AuthState): String? {
-    val request = okhttp3.Request.Builder()
-        .url(auth.baseUrl.toApiBaseUrl().trimEnd('/') + "/api/duplicates/content")
-        .tag(WebDavManager.AuthState::class.java, auth)
-        .header("Authorization", auth.authHeader)
-        .post(JSONObject().put("path",path).put("version",version).toString().toRequestBody("application/json".toMediaType()))
-        .build()
-    duplicateContentClient.newCall(request).execute().use { response ->
-        if (response.header("X-NAS-Version") != version || response.header("X-NAS-File-ID") != fileId) return null
-        return hashCompleteResponse(response,size)
-    }
-}
-
 internal suspend fun WebDavManager.getCachedVerifiedSha256(url: String, size: Long): Pair<String, String>? {
     val auth = currentAuthState()
     val account = currentAccountKey()
@@ -158,9 +141,7 @@ internal suspend fun WebDavManager.getCachedVerifiedSha256(url: String, size: Lo
             hash = serverHash
             savedOnServer = true
         } else {
-            hash = coordinatedSha256(path, size, version, fileId, auth) ?: return null
-            val after = duplicateRpc("file", JSONObject().put("path", path), auth) ?: return null
-            if (after.optString("version") != version || after.optString("file_id") != fileId || after.optLong("size",-1) != size) return null
+            return null
         }
     }
     if (!savedOnServer && before.optString("sha256") != hash) {
