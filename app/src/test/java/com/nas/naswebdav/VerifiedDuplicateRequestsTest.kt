@@ -31,32 +31,37 @@ class VerifiedDuplicateRequestsTest {
     private fun info(id: String="1:1", stamp: String=version, hash: String="") =
         MockResponse().setBody(JSONObject().put("file_id",id).put("version",stamp).put("size",3).put("sha256",hash).toString())
 
-    @Test fun completeHashPersistsAndRepeatDoesNotDownload() = runBlocking {
+    @Test fun serverComputedHashPersistsAndRepeatOnlyReadsMetadata() = runBlocking {
         withContext(Dispatchers.IO) {
             MockWebServer().use { server ->
                 server.start()
                 val base=server.url("/dav/").toString();val path=base+"a"
                 WebDavManager.connect(base,"u","p")
-                server.enqueue(info());server.enqueue(MockResponse().setBody("abc").addHeader("X-NAS-Version",version).addHeader("X-NAS-File-ID","1:1"))
-                server.enqueue(info());server.enqueue(MockResponse().setBody("""{"saved":true}"""))
+                server.enqueue(MockResponse().setBody(JSONObject().put("version", version).put("file_id", "1:1")
+                    .put("size", 3).put("server_side_hash", true).toString()))
+                server.enqueue(info(hash=sha))
                 server.enqueue(info(hash=sha))
                 assertEquals(sha to version,WebDavManager.getCachedVerifiedSha256(path,3))
                 assertEquals(sha to version,WebDavManager.getCachedVerifiedSha256(path,3))
-                assertEquals(listOf("POST","POST","POST","POST","POST"),(1..5).map {server.takeRequest().method})
+                assertEquals(listOf("/api/duplicates/file", "/api/duplicates/compute_hash", "/api/duplicates/file"),
+                    (1..3).map {server.takeRequest().path})
                 assertEquals(sha,NasApplication.instance.database.verifiedHashDao().get(currentAccountKey(),path)?.sha256)
             }
         }
     }
 
-    @Test fun changedVersionDuringDownloadIsNotCached() = runBlocking {
+    @Test fun changedVersionInServerHashResponseIsNotCached() = runBlocking {
         withContext(Dispatchers.IO) {
             MockWebServer().use { server ->
                 server.start();val base=server.url("/dav/").toString()
                 WebDavManager.connect(base,"u","p")
-                server.enqueue(info());server.enqueue(MockResponse().setBody("abc").addHeader("X-NAS-Version",version).addHeader("X-NAS-File-ID","1:1"));server.enqueue(info(stamp="b".repeat(64)))
+                server.enqueue(MockResponse().setBody(JSONObject().put("version", version).put("file_id", "1:1")
+                    .put("size", 3).put("server_side_hash", true).toString()))
+                server.enqueue(info(stamp="b".repeat(64), hash=sha))
                 assertNull(WebDavManager.getCachedVerifiedSha256(base+"a",3))
                 assertNull(NasApplication.instance.database.verifiedHashDao().get(currentAccountKey(),base+"a"))
-                assertEquals(3,server.requestCount)
+                assertEquals(listOf("/api/duplicates/file", "/api/duplicates/compute_hash"),
+                    (1..2).map {server.takeRequest().path})
             }
         }
     }

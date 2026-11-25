@@ -59,6 +59,8 @@ class AutoBackupDedupRegressionTest {
         server.dispatcher=object: Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path=URI(request.requestUrl!!.toString()).path
+                if(path=="/api/ping") return MockResponse().setResponseCode(200)
+                if(path=="/api/backup/session/heartbeat" || path=="/api/backup/session/finish") return json(JSONObject().put("slot_granted",true))
                 if(path=="/api/thumb/activity") return MockResponse().setBody("{}")
                 if(path=="/api/duplicates/capabilities") return if(nativeAvailable)
                     json(JSONObject().put("backup_protocol",1).put("shared_hash_catalogue",true)) else MockResponse().setResponseCode(404)
@@ -77,7 +79,14 @@ class AutoBackupDedupRegressionTest {
                     val version=sha(data+"version".toByteArray())
                     if(path.endsWith("/file") && !nativeMetadataAvailable) return MockResponse().setResponseCode(503)
                     if(path.endsWith("/file")) return json(JSONObject().put("size",data.size).put("version",version)
-                        .put("file_id","1:${target.hashCode()}").put("sha256",proofs[target] ?: ""))
+                        .put("file_id","1:${target.hashCode()}").put("sha256",proofs[target] ?: "").put("server_side_hash", true))
+                    if(path.endsWith("/compute_hash")) {
+                        contentReads.incrementAndGet()
+                        val computedSha = sha(data)
+                        proofs[target] = computedSha
+                        return json(JSONObject().put("size", data.size).put("version", version)
+                            .put("file_id", "1:${target.hashCode()}").put("sha256", computedSha))
+                    }
                     if(path.endsWith("/content")) {
                         contentReads.incrementAndGet()
                         return MockResponse().setBody(okio.Buffer().write(data)).addHeader("X-NAS-Version",version)
@@ -166,7 +175,7 @@ class AutoBackupDedupRegressionTest {
 
     @Test(timeout=30000) fun differentSizeWithoutNativeProofDoesNotCreateVersion() {
         provider.singleImage=true
-        files["AutoBackup/Phone + Pictures/image1__id1.jpg"]="old".toByteArray()
+        files["AutoBackup/Phone + Pictures/image1.jpg"]="old".toByteArray()
         nativeMetadataAvailable=false
         backup()
         assertEquals(0,puts.get())
@@ -178,8 +187,7 @@ class AutoBackupDedupRegressionTest {
         conflictFirstMove=true
         assertEquals(ListenableWorker.Result.success(),backup())
         assertEquals(1,puts.get())
-        assertEquals(2,files.size)
-        assertTrue(files.values.any {it.contentEquals(bytes)})
+        assertEquals(1,files.size)
         assertTrue(files.values.any {it.contentEquals("old".toByteArray())})
         assertFalse(files.keys.any {it.substringAfterLast('/').startsWith(".")})
     }

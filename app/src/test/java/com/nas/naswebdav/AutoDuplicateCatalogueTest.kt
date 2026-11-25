@@ -8,8 +8,6 @@ import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.*
 import org.junit.*
 import org.junit.Assert.*
@@ -27,13 +25,13 @@ import org.json.JSONObject
 class AutoDuplicateCatalogueTest {
     private val context get()=ApplicationProvider.getApplicationContext<TestNasApplication>()
     private lateinit var server: MockWebServer
-    private var catalogue=""
+    private var scanStartStatus=202
+    private var scanStatusBody="""{"status":"done","engine":"rust_rayon","result":{"groups":[],"total_groups":0,"total_files_scanned":10,"read_errors":0,"total_wasted_bytes":0,"inventory":{"protocol":1,"source":"file_index","complete":true,"total":10,"generation":3,"catalogue_revision":11}}}"""
     private val mutations=AtomicInteger()
-    private val catalogueReads=AtomicInteger()
+    private val rustScanCalls=AtomicInteger()
     private val checkpoints=CopyOnWriteArrayList<String>()
     private var claimStatus=200
     private var checkpointStatus=200
-    private val account get()="catalogue-user@127.0.0.1:${server.port}/webdav"
     private lateinit var originalTimeZone: TimeZone
     private lateinit var workerContext: Context
 
@@ -43,8 +41,8 @@ class AutoDuplicateCatalogueTest {
         val offset=(3-utcHour+36)%24-12
         TimeZone.setDefault(TimeZone.getTimeZone(java.time.ZoneOffset.ofHours(offset)))
         val strings=spyk(context.resources)
-        every {strings.getString(any())} returns "catalogue fixture"
-        every {strings.getString(any(), *anyVararg())} returns "catalogue fixture"
+        every {strings.getString(any())} returns "rust fixture"
+        every {strings.getString(any(), *anyVararg())} returns "rust fixture"
         workerContext=object: ContextWrapper(context) {
             override fun getResources(): Resources = strings
             override fun getApplicationContext(): Context = this
@@ -53,7 +51,17 @@ class AutoDuplicateCatalogueTest {
         server.dispatcher=object: Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when(request.requestUrl!!.encodedPath) {
                 "/api/system/idle" -> MockResponse().setBody("{\"idle\":true}")
-                "/api/disk/fast_index" -> {catalogueReads.incrementAndGet();MockResponse().setBody(catalogue)}
+                "/api/disk/scan_duplicates" -> {
+                    rustScanCalls.incrementAndGet()
+                    val lease = JSONObject(request.body.readUtf8()).getJSONObject("work_lease")
+                    check(lease.getString("name") == "duplicates")
+                    check(lease.getString("owner").startsWith("client:android-"))
+                    check(lease.getString("token") == "owned-fixture")
+                    MockResponse().setResponseCode(scanStartStatus).setBody(
+                        if (scanStartStatus in 200..299) scanStatusBody else """{"error":"Rust chưa sẵn sàng"}"""
+                    )
+                }
+                "/api/disk/scan_duplicates/status" -> MockResponse().setBody(scanStatusBody)
                 "/api/work/request" -> MockResponse().setBody("{}")
                 "/api/work/claim" -> {
                     val owner=JSONObject(request.body.readUtf8()).getString("owner")
@@ -87,44 +95,35 @@ class AutoDuplicateCatalogueTest {
     }
 
     private fun scan()=runBlocking {TestListenableWorkerBuilder<AutoDuplicateScanWorker>(workerContext).build().doWork()}
-    private fun document(total:Int)= """{"catalogue_protocol":1,"source":"file_index","index_ready":true,"index_generation":7,"catalogue_revision":11,"catalogue_updated_at":1234,"truncated":false,"total":$total,"files":[{"path":"/webdav/ordinary + %.txt","name":"ordinary + %.txt","size":123,"mtime":1}]}"""
 
-    @Test(timeout=30000) fun completeCatalogueMirrorsOrdinaryFilesWithoutFilesystemWalk() {
-        catalogue=document(1)
+    @Test(timeout=30000) fun rustScanSucceedsWithoutLegacyFastIndexFallback() {
         assertEquals(ListenableWorker.Result.success(),scan())
+        assertEquals(1,rustScanCalls.get())
         assertEquals(0,mutations.get())
         assertEquals("complete",checkpoints.last())
-        val db=context.database
-        runBlocking {withContext(Dispatchers.IO) {
-            val receipt=db.catalogueReceiptDao().get(account)
-            assertNotNull(receipt)
-            assertEquals(1,receipt!!.fileCount)
-        }}
     }
 
-    @Test(timeout=30000) fun partialCatalogueRetriesBeforeHashOrCleanup() {
-        catalogue=document(2)
+    @Test(timeout=30000) fun rustUnavailableRetriesWithoutFallback() {
+        scanStartStatus=503
         assertEquals(ListenableWorker.Result.retry(),scan())
+        assertEquals(1,rustScanCalls.get())
         assertEquals(0,mutations.get())
         assertEquals("retry",checkpoints.last())
-        runBlocking {withContext(Dispatchers.IO) {assertNull(context.database.catalogueReceiptDao().get(account))}}
     }
 
-    @Test(timeout=30000) fun busyNasRetriesBeforeReadingCatalogue() {
+    @Test(timeout=30000) fun changedCatalogueRevisionRetriesBeforeDeleting() {
+        scanStatusBody = scanStatusBody.replace("\"catalogue_revision\":11", "\"catalogue_revision\":12")
+        assertEquals(ListenableWorker.Result.retry(), scan())
+        assertEquals(1, rustScanCalls.get())
+        assertEquals(0, mutations.get())
+        assertEquals("retry", checkpoints.last())
+    }
+
+    @Test(timeout=30000) fun busyNasRetriesBeforeCallingRustScan() {
         claimStatus=423
-        catalogue=document(1)
         assertEquals(ListenableWorker.Result.retry(),scan())
-        assertEquals(0,catalogueReads.get())
+        assertEquals(0,rustScanCalls.get())
         assertEquals(0,mutations.get())
         assertTrue(checkpoints.isEmpty())
-    }
-
-    @Test(timeout=30000) fun lostLeaseRetriesWithoutCommittingReceiptOrCleanup() {
-        checkpointStatus=409
-        catalogue=document(1)
-        assertEquals(ListenableWorker.Result.retry(),scan())
-        assertEquals(0,mutations.get())
-        assertFalse(checkpoints.contains("complete"))
-        runBlocking {withContext(Dispatchers.IO) {assertNull(context.database.catalogueReceiptDao().get(account))}}
     }
 }

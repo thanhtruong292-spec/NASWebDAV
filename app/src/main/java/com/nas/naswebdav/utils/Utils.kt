@@ -217,6 +217,7 @@ object SystemLogger {
             else -> android.util.Log.INFO
         }
         android.util.Log.println(priority, module, message)
+        if (NasApplication.isTestEnvironment) return
         NasApplication.applicationScope.launch(Dispatchers.IO) {
             try {
                 NasApplication.instance.database.logDao().insertLog(

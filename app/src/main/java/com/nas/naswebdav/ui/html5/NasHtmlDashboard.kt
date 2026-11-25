@@ -8,12 +8,14 @@ import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Environment
 import android.provider.OpenableColumns
-import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +33,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * HTML5 WebView Dashboard Bridge (Dark Slate + Glassmorphism + Cyan/Green/Yellow/Red).
@@ -54,10 +58,14 @@ fun NasHtmlDashboardScreen(
     val authVM = LocalAuthSessionVM.current
     val connStatus by SharedStateHolder.connectionStatus.collectAsState()
     val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
-    val fileSort by fileBrowserVM.fileSort.collectAsState()
+    val session = WebDavManager.currentAuthState()
 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pageLoaded by remember { mutableStateOf(false) }
+    var htmlModalOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = htmlModalOpen && pageLoaded && webViewRef != null) {
+        webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.closeTopModal();", null)
+    }
     val uiScope = rememberCoroutineScope()
 
     val torrentPickerLauncher = rememberLauncherForActivityResult(
@@ -76,6 +84,7 @@ fun NasHtmlDashboardScreen(
         val targetFolder = fileBrowserVM.currentUrl.ifBlank { WebDavManager.currentBaseUrl }.trimEnd('/')
         uiScope.launch(Dispatchers.IO) {
             var okCount = 0
+            var skippedCount = 0
             WebDavManager.threadLocalAuth.set(
                 WebDavManager.AuthState(
                     WebDavManager.currentBaseUrl,
@@ -94,12 +103,19 @@ fun NasHtmlDashboardScreen(
                         val safeName = rawName.replace('/', '_').replace('\\', '_').replace("..", "_").take(180)
                         val encoded = java.net.URLEncoder.encode(safeName, "UTF-8").replace("+", "%20")
                         val destUrl = "$targetFolder/$encoded"
+                        // Yêu cầu: Cấm tuyệt đối đổi tên file khi upload lên NAS, tất cả phải giữ nguyên tên gốc, trùng tên không tải lên
+                        if (WebDavManager.fileExists(destUrl)) {
+                            android.util.Log.i("UploadPicker", "Tệp đã tồn tại cùng tên trên NAS ($safeName) — bỏ qua không tải lên (skip)")
+                            skippedCount++
+                            return@forEachIndexed
+                        }
                         context.contentResolver.openInputStream(uri)?.use { input ->
                             val temp = java.io.File(context.cacheDir, safeName)
                             tempFile = temp
                             temp.outputStream().use { input.copyTo(it) }
                             val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
                             WebDavManager.uploadFile(destUrl, temp, mime)
+                            com.nas.naswebdav.FileMutationSync.notifyOrEnqueue(context.applicationContext, WebDavManager.currentBaseUrl, WebDavManager.currentAuthHeader(), "upload", destUrl, destUrl)
                             okCount++
                         }
                     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -113,7 +129,12 @@ fun NasHtmlDashboardScreen(
                 WebDavManager.threadLocalAuth.remove()
             }
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Đã tải lên $okCount/${uris.size} tệp", Toast.LENGTH_SHORT).show()
+                val msg = if (skippedCount > 0) {
+                    "Đã tải lên $okCount tệp (bỏ qua $skippedCount tệp trùng tên)"
+                } else {
+                    "Đã tải lên $okCount/${uris.size} tệp"
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 fileBrowserVM.refresh()
             }
         }
@@ -122,6 +143,7 @@ fun NasHtmlDashboardScreen(
     // Initial data fetch on screen mount
     LaunchedEffect(viewName) {
         try { authVM.ensureSmartNetwork(context) } catch (_: Exception) {}
+        if (viewName == "files") return@LaunchedEffect
         withContext(Dispatchers.IO) { sysMonitorVM.fetchStatusNow() }
         sysMonitorVM.fetchStorageSummary()
         sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
@@ -137,6 +159,7 @@ fun NasHtmlDashboardScreen(
     LaunchedEffect(viewName, pageLoaded) {
         if (!pageLoaded) return@LaunchedEffect
         webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.setView('$viewName');", null)
+        if (viewName == "files") return@LaunchedEffect
         smartToolsVM.fetchThumbStatus()
         liveVM.refreshLivestreamState(context)
         deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
@@ -150,6 +173,9 @@ fun NasHtmlDashboardScreen(
             }
             if ((liveVM.activeLivestreams.isNotEmpty() && tick % 2 == 0) || tick % 5 == 0) {
                 liveVM.fetchLivestreamStatusOnly(context)
+            }
+            if (tick % 3 == 0 && (smartToolsVM.nasCleanupActive || smartToolsVM.isScanningDuplicates || smartToolsVM.isWorkerRunning)) {
+                smartToolsVM.fetchDuplicateSchedule()
             }
             val usbStatus = deviceVM.usbImportState.status
             if (usbStatus == "copying" || usbStatus == "cancelling" || tick % 5 == 0) {
@@ -171,10 +197,8 @@ fun NasHtmlDashboardScreen(
                 sysMonitorVM = sysMonitorVM,
                 deviceVM = deviceVM,
                 autoBackupVM = autoBackupVM,
-                fileBrowserVM = fileBrowserVM,
                 liveVM = liveVM,
                 smartToolsVM = smartToolsVM,
-                fileSort = fileSort,
                 thumbAudit = thumbAudit,
                 connStatus = connStatus.message
             )
@@ -194,11 +218,15 @@ fun NasHtmlDashboardScreen(
         sysMonitorVM.metricsHours,
         sysMonitorVM.isLoadingMetrics,
         deviceVM.systemLogs.size,
+        deviceVM.dockerContainers,
+        deviceVM.dockerLoadError,
+        deviceVM.isFetchingDocker,
+        deviceVM.usbImportState,
+        deviceVM.usbImportMessage,
+        deviceVM.isUsbImportLoading,
+        smartToolsVM.dupServerStatus,
         deviceVM.smartInfo,
-        fileBrowserVM.fileList,
-        fileBrowserVM.currentUrl,
-        fileBrowserVM.isLoading,
-        fileSort,
+        session,
         sysMonitorVM.systemProcesses,
         thumbAudit,
         connStatus,
@@ -225,6 +253,14 @@ fun NasHtmlDashboardScreen(
         autoBackupVM.nasBackupSessions,
         smartToolsVM.duplicateFilesList.size,
         smartToolsVM.isScanningDuplicates,
+        smartToolsVM.isDeletingDuplicates,
+        smartToolsVM.dupDeleteProcessed,
+        smartToolsVM.dupDeleteDone,
+        smartToolsVM.dupDeleteCurrentFile,
+        smartToolsVM.dupSchedEnabled,
+        smartToolsVM.dupSchedHour,
+        smartToolsVM.dupSchedIntervalDays,
+        smartToolsVM.dupSchedLastRunAt,
         smartToolsVM.organizerScanning,
         smartToolsVM.organizerExecuting,
         smartToolsVM.organizerScanResult,
@@ -238,29 +274,59 @@ fun NasHtmlDashboardScreen(
             sysMonitorVM = sysMonitorVM,
             deviceVM = deviceVM,
             autoBackupVM = autoBackupVM,
-            fileBrowserVM = fileBrowserVM,
             liveVM = liveVM,
             smartToolsVM = smartToolsVM,
-            fileSort = fileSort,
             thumbAudit = thumbAudit,
             connStatus = connStatus.message
         )
         webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.updateState($payload);", null)
     }
 
+    if (pageLoaded && viewName == "files") {
+        val files = fileBrowserVM.fileList
+        val folder = fileBrowserVM.currentUrl
+        val title = fileBrowserVM.specialTitle.takeIf { fileBrowserVM.isSpecialMode }.orEmpty()
+        val loading = fileBrowserVM.isLoading
+        val sort = fileBrowserVM.fileSort.collectAsState().value
+        LaunchedEffect(webViewRef, session, files, folder, title, loading, sort) {
+            val payload = withContext(Dispatchers.Default) {
+                buildHtml5FilesJson(files, sort, folder, title, loading, session)
+            }
+            if (session == WebDavManager.currentAuthState() && folder == fileBrowserVM.currentUrl &&
+                files === fileBrowserVM.fileList) {
+                webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.updateFiles($payload);", null)
+            }
+        }
+    }
+
     AndroidView(
         modifier = modifier.fillMaxSize(),
         factory = { ctx ->
+            if (com.nas.naswebdav.BuildConfig.DEBUG) {
+                WebView.setWebContentsDebuggingEnabled(true)
+            }
             WebView(ctx).apply {
                 setBackgroundColor(AndroidColor.parseColor("#0B1120"))
                 overScrollMode = WebView.OVER_SCROLL_NEVER
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
+                    setSupportZoom(true)
+                    builtInZoomControls = true
+                    displayZoomControls = false
                     allowFileAccess = true
+                    allowFileAccessFromFileURLs = true
+                    allowUniversalAccessFromFileURLs = true
+                    mediaPlaybackRequiresUserGesture = false
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     cacheMode = WebSettings.LOAD_NO_CACHE
                 }
                 addJavascriptInterface(object {
+                    @JavascriptInterface
+                    fun onModalVisibilityChanged(open: Boolean) {
+                        post { htmlModalOpen = open }
+                    }
+
                     @JavascriptInterface
                     fun action(name: String) {
                         post { onAction(name, null) }
@@ -349,10 +415,7 @@ fun NasHtmlDashboardScreen(
 
                     @JavascriptInterface
                     fun fileSort(mode: String) {
-                        post {
-                            fileBrowserVM.setFileSort(mode)
-                            fileBrowserVM.refresh()
-                        }
+                        post { fileBrowserVM.setFileSort(mode) }
                     }
 
                     @JavascriptInterface
@@ -460,15 +523,26 @@ fun NasHtmlDashboardScreen(
                                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                                 "NASWebDAV"
                             ).apply { mkdirs() }
+                            val canonicalDlDir = dlDir.canonicalFile
                             var okCount = 0
-                            paths.forEach { url ->
+                            val activeBase = WebDavManager.currentBaseUrl.trimEnd('/')
+                            paths.forEach { rawItem ->
                                 try {
-                                    val name = url.substringAfterLast('/').substringBefore('?').ifBlank { "nas_${System.currentTimeMillis()}" }
-                                    val req = okhttp3.Request.Builder().url(url).let(WebDavManager::tagCurrentAuth).build()
+                                    val targetUrl = if (rawItem.startsWith("http://", ignoreCase = true) || rawItem.startsWith("https://", ignoreCase = true)) {
+                                        rawItem
+                                    } else {
+                                        "$activeBase/${rawItem.trimStart('/')}"
+                                    }
+                                    val rawName = targetUrl.substringAfterLast('/').substringBefore('?').ifBlank { "nas_${System.currentTimeMillis()}" }
+                                    val decodedName = runCatching { java.net.URLDecoder.decode(rawName, "UTF-8") }.getOrDefault(rawName)
+                                    val safeName = java.io.File(decodedName).name.takeIf { it.isNotBlank() && it != "." && it != ".." } ?: "nas_${System.currentTimeMillis()}"
+                                    val targetFile = java.io.File(dlDir, safeName).canonicalFile
+                                    if (targetFile.parentFile?.canonicalFile?.equals(canonicalDlDir) != true) return@forEach
+                                    val req = okhttp3.Request.Builder().url(targetUrl).let(WebDavManager::tagCurrentAuth).build()
                                     NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                                         if (resp.isSuccessful) {
                                             resp.body?.byteStream()?.use { inp ->
-                                                java.io.File(dlDir, name).outputStream().use { out -> inp.copyTo(out) }
+                                                targetFile.outputStream().use { out -> inp.copyTo(out) }
                                                 okCount++
                                             }
                                         }
@@ -492,7 +566,7 @@ fun NasHtmlDashboardScreen(
                                 val body = JSONObject().put("path", relPath).put("hours", 24).toString()
                                 val req = okhttp3.Request.Builder()
                                     .url("$apiBase/api/share/create")
-                                    .post(okhttp3.RequestBody.create(null, body))
+                                    .post(body.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
                                     .let(WebDavManager::tagCurrentAuth)
                                     .build()
                                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
@@ -909,6 +983,21 @@ fun NasHtmlDashboardScreen(
                     }
 
                     @JavascriptInterface
+                    fun refreshDuplicateSchedule() {
+                        post { smartToolsVM.fetchDuplicateSchedule(forceReload = true) }
+                    }
+
+                    @JavascriptInterface
+                    fun saveDuplicateSchedule(enabled: Boolean, hour: Int, intervalDays: Int, autoClean: Boolean = false) {
+                        post { smartToolsVM.saveDuplicateSchedule(enabled, hour, intervalDays, autoClean, context) }
+                    }
+
+                    @JavascriptInterface
+                    fun autoCleanAllDuplicates(filter: String) {
+                        post { smartToolsVM.autoCleanAllDuplicates(filter) }
+                    }
+
+                    @JavascriptInterface
                     fun deleteDuplicateFiles(pathsJson: String) {
                         post {
                             runCatching {
@@ -921,6 +1010,42 @@ fun NasHtmlDashboardScreen(
                                 val toDelete = smartToolsVM.duplicateFilesList.filter { it.path in targets }
                                 if (toDelete.isNotEmpty()) {
                                     smartToolsVM.deleteSelectedDuplicates(toDelete)
+                                }
+                            }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun cancelDuplicateDeletion() {
+                        post { smartToolsVM.cancelDuplicateDeletion() }
+                    }
+
+                    @JavascriptInterface
+                    fun openDuplicateMedia(path: String) {
+                        post {
+                            runCatching {
+                                val auth = WebDavManager.currentAuthState()
+                                val lower = path.lowercase()
+                                val isVideo = lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".avi") ||
+                                        lower.endsWith(".mov") || lower.endsWith(".ts") || lower.endsWith(".webm") ||
+                                        lower.endsWith(".m4v") || lower.endsWith(".flv") || lower.endsWith(".3gp")
+                                val url = if (path.startsWith("http://") || path.startsWith("https://")) path else {
+                                    val cleanPath = path.trimStart('/')
+                                    val base = WebDavManager.currentBaseUrl.trimEnd('/')
+                                    "$base/$cleanPath"
+                                }
+                                if (isVideo) {
+                                    com.nas.naswebdav.ui.screens.openExternalVideoPlayer(
+                                        context = context,
+                                        url = url,
+                                        user = auth.user,
+                                        pass = auth.pass,
+                                        onError = {
+                                            onAction("openVideo", url)
+                                        }
+                                    )
+                                } else {
+                                    onAction("openImage", url)
                                 }
                             }
                         }
@@ -989,31 +1114,59 @@ fun NasHtmlDashboardScreen(
                     }
                 }, "NasBridge")
                 webViewClient = object : WebViewClient() {
-                    override fun onReceivedHttpAuthRequest(
+                    override fun shouldInterceptRequest(
                         view: WebView?,
-                        handler: HttpAuthHandler?,
-                        host: String?,
-                        realm: String?
-                    ) {
-                        val auth = WebDavManager.currentAuthState()
-                        handler?.proceed(auth.user, auth.pass)
+                        request: WebResourceRequest?
+                    ): WebResourceResponse? {
+                        return request?.let(DashboardMediaLoader::intercept)
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         pageLoaded = true
-                        view?.evaluateJavascript("window.NasUI && window.NasUI.setView('$viewName');", null)
                     }
                 }
                 loadUrl("file:///android_asset/html5/index.html")
                 webViewRef = this
             }
-        },
-        update = { wv ->
-            if (pageLoaded) {
-                wv.evaluateJavascript("window.NasUI && window.NasUI.setView('$viewName');", null)
-            }
         }
     )
+}
+
+private fun buildHtml5FilesJson(
+    files: List<NasFile>,
+    sort: String,
+    folder: String,
+    specialTitle: String,
+    loading: Boolean,
+    session: WebDavManager.AuthState
+): String {
+    val directoriesFirst = compareByDescending<NasFile> { it.isDirectory }
+    val order = when (sort) {
+        "date" -> directoriesFirst.thenByDescending { it.lastModified }
+        "size" -> directoriesFirst.thenByDescending { it.contentLength }
+        else -> directoriesFirst.thenBy { it.name.lowercase() }
+    }
+    val items = JSONArray()
+    for (file in files.sortedWith(order).take(com.nas.naswebdav.browser.DIRECTORY_PREVIEW_SIZE)) {
+        val relPath = runCatching {
+            val path = java.net.URI(file.path).path ?: file.path
+            val index = path.indexOf("/webdav/")
+            if (index >= 0) path.substring(index) else path
+        }.getOrDefault(file.path)
+        items.put(JSONObject().apply {
+            put("name", file.name)
+            put("path", file.path)
+            put("relPath", relPath)
+            put("isDir", file.isDirectory)
+            put("size", file.contentLength.coerceAtLeast(0L))
+            put("mtime", file.lastModified / 1000.0)
+        })
+    }
+    val title = specialTitle.ifBlank {
+        runCatching { java.net.URI(folder).path ?: "/webdav/" }.getOrDefault("/webdav/")
+    }
+    return JSONObject().put("baseUrl", session.baseUrl).put("user", session.user)
+        .put("title", title).put("loading", loading).put("items", items).toString()
 }
 
 private fun buildHtml5StateJson(
@@ -1022,10 +1175,8 @@ private fun buildHtml5StateJson(
     sysMonitorVM: com.nas.naswebdav.monitor.SystemMonitorViewModel,
     deviceVM: com.nas.naswebdav.device.DeviceManagementViewModel,
     autoBackupVM: com.nas.naswebdav.backup.AutoBackupViewModel,
-    fileBrowserVM: com.nas.naswebdav.browser.FileBrowserViewModel,
     liveVM: com.nas.naswebdav.livestream.LivestreamViewModel,
     smartToolsVM: com.nas.naswebdav.smarttools.SmartToolsViewModel,
-    fileSort: String,
     thumbAudit: ThumbnailAuditData,
     connStatus: String
 ): String {
@@ -1127,38 +1278,6 @@ private fun buildHtml5StateJson(
     root.put("metricsLoading", sysMonitorVM.isLoadingMetrics)
     root.put("metricsError", sysMonitorVM.metricsError ?: "")
 
-    // File Browser snapshot
-    val sortedFiles = when (fileSort) {
-        "date" -> fileBrowserVM.fileList.sortedWith(compareByDescending<NasFile> { it.isDirectory }.thenByDescending { it.lastModified })
-        "size" -> fileBrowserVM.fileList.sortedWith(compareByDescending<NasFile> { it.isDirectory }.thenByDescending { it.contentLength })
-        else -> fileBrowserVM.fileList.sortedWith(compareByDescending<NasFile> { it.isDirectory }.thenBy { it.name.lowercase() })
-    }
-    val fArr = JSONArray()
-    sortedFiles.take(300).forEach { f ->
-        val relPath = runCatching {
-            val uPath = java.net.URI(f.path).path ?: f.path
-            val idx = uPath.indexOf("/webdav/")
-            if (idx >= 0) uPath.substring(idx) else uPath
-        }.getOrDefault(f.path)
-        fArr.put(JSONObject().apply {
-            put("name", f.name)
-            put("path", f.path)
-            put("relPath", relPath)
-            put("isDir", f.isDirectory)
-            put("size", f.contentLength)
-        })
-    }
-    val curTitle = if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle.isNotBlank()) {
-        fileBrowserVM.specialTitle
-    } else {
-        runCatching { java.net.URI(fileBrowserVM.currentUrl).path ?: "/webdav/" }.getOrDefault("/webdav/")
-    }
-    root.put("files", JSONObject().apply {
-        put("title", curTitle)
-        put("loading", fileBrowserVM.isLoading)
-        put("items", fArr)
-    })
-
     // Alert rules snapshot + live evaluation
     val alertRules = com.nas.naswebdav.utils.PreferencesRepository.get(context).getAlertRules()
     root.put("alerts", JSONObject().apply {
@@ -1219,6 +1338,8 @@ private fun buildHtml5StateJson(
         })
     }
     root.put("docker", dArr)
+    root.put("dockerLoading", deviceVM.isFetchingDocker)
+    root.put("dockerLoadError", deviceVM.dockerLoadError)
 
     val lArr = JSONArray()
     val timeFmt = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.getDefault())
@@ -1239,6 +1360,7 @@ private fun buildHtml5StateJson(
             put("platform", job.platform)
             put("watchUsername", job.watchUsername)
             put("duration", job.durationSeconds)
+            put("startedTs", job.startedTs)
             put("speed", job.speed)
             put("fileSize", job.fileSize)
             put("outputFile", job.outputFile)
@@ -1378,17 +1500,74 @@ private fun buildHtml5StateJson(
     val dupRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
     val dupActive = dupRunning || dupPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
     val thumbActive = (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && smartToolsVM.thumbGenerated < smartToolsVM.thumbTotal && smartToolsVM.thumbTotal > 0
+    val imgExts = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif")
+    val vidExts = setOf("mp4", "mkv", "avi", "mov", "mpg", "mpeg", "wmv", "flv", "ts", "m4v", "webm", "3gp")
     val dupGroupsArr = JSONArray()
-    smartToolsVM.duplicateFilesList
-        .groupBy { f -> f.partialHash?.takeIf { it.isNotBlank() } ?: "${f.contentLength}_${f.name}" }
+    val allDupGroups = smartToolsVM.duplicateFilesList
+        .filter { f -> f.partialHash?.length == 64 }
+        .groupBy { f -> f.partialHash!! }
         .values
         .filter { it.size > 1 }
-        .take(50)
+        .sortedByDescending { (it.firstOrNull()?.contentLength ?: 0L) * (it.size - 1) }
+
+    var imgGroupsCount = 0
+    var imgFilesCount = 0
+    var imgWastedBytes = 0L
+
+    var vidGroupsCount = 0
+    var vidFilesCount = 0
+    var vidWastedBytes = 0L
+
+    var otherGroupsCount = 0
+    var otherFilesCount = 0
+    var otherWastedBytes = 0L
+
+    allDupGroups.forEach { grp ->
+        val ext = grp.firstOrNull()?.name?.substringAfterLast('.', "")?.lowercase().orEmpty()
+        val wasted = (grp.firstOrNull()?.contentLength ?: 0L) * (grp.size - 1).coerceAtLeast(0)
+        when {
+            ext in imgExts -> {
+                imgGroupsCount++
+                imgFilesCount += grp.size
+                imgWastedBytes += wasted
+            }
+            ext in vidExts -> {
+                vidGroupsCount++
+                vidFilesCount += grp.size
+                vidWastedBytes += wasted
+            }
+            else -> {
+                otherGroupsCount++
+                otherFilesCount += grp.size
+                otherWastedBytes += wasted
+            }
+        }
+    }
+
+    val totalDupWastedBytes = imgWastedBytes + vidWastedBytes + otherWastedBytes
+    val redundantFiles = allDupGroups.sumOf { (it.size - 1).coerceAtLeast(0) }
+    val originalFiles = allDupGroups.size
+    val redundantImgFiles = allDupGroups.filter { grp ->
+        grp.firstOrNull()?.name?.substringAfterLast('.', "")?.lowercase().orEmpty() in imgExts
+    }.sumOf { (it.size - 1).coerceAtLeast(0) }
+    val redundantVidFiles = allDupGroups.filter { grp ->
+        grp.firstOrNull()?.name?.substringAfterLast('.', "")?.lowercase().orEmpty() in vidExts
+    }.sumOf { (it.size - 1).coerceAtLeast(0) }
+    allDupGroups
         .forEach { grp ->
+            val ext = grp.first().name.substringAfterLast('.', "").lowercase()
+            val grpType = when {
+                ext in imgExts -> "image"
+                ext in vidExts -> "video"
+                else -> "other"
+            }
             val filesArr = JSONArray()
             grp.forEach { f ->
-                val rel = f.path.substringAfter("/webdav/", "").let { raw ->
-                    runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+                val fExt = f.name.substringAfterLast('.', "").lowercase()
+                val rel = f.path.toNasRelativePath().ifBlank {
+                    f.path.substringAfter("/webdav/", "").let { raw ->
+                        runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+                    }
                 }
                 filesArr.put(JSONObject().apply {
                     put("name", f.name)
@@ -1396,11 +1575,16 @@ private fun buildHtml5StateJson(
                     put("relPath", rel)
                     put("size", f.contentLength)
                     put("folder", rel.substringBeforeLast('/', "/"))
+                    put("isImage", fExt in imgExts)
+                    put("isVideo", fExt in vidExts)
+                    put("type", when { fExt in imgExts -> "image"; fExt in vidExts -> "video"; else -> "other" })
                 })
             }
             dupGroupsArr.put(JSONObject().apply {
                 put("size", grp.first().contentLength)
                 put("count", grp.size)
+                put("wastedBytes", (grp.first().contentLength) * (grp.size - 1))
+                put("type", grpType)
                 put("files", filesArr)
             })
         }
@@ -1412,10 +1596,47 @@ private fun buildHtml5StateJson(
         put("percent", (dupPercent * 100f).toDouble())
         put("scanned", DuplicateProgressState.scannedCount.value)
         put("found", DuplicateProgressState.foundCount.value)
-        put("currentFolder", smartToolsVM.scanDuplicatesCurrentFolderUrl)
-        put("currentFile", smartToolsVM.scanDuplicatesCurrentItemName)
+        put("elapsedMs", DuplicateProgressState.elapsedTime.value)
+        put("etaMs", DuplicateProgressState.estimatedTimeRemaining.value)
+        put("currentFolder", DuplicateProgressState.currentFolder.value.ifBlank { smartToolsVM.scanDuplicatesCurrentFolderUrl })
+        put("currentFile", DuplicateProgressState.itemName.value.ifBlank { smartToolsVM.scanDuplicatesCurrentItemName })
         put("count", smartToolsVM.duplicateFilesList.size)
+        put("totalGroups", allDupGroups.size)
+        put("redundantFiles", redundantFiles)
+        put("originalFiles", originalFiles)
+        put("redundantImgFiles", redundantImgFiles)
+        put("redundantVidFiles", redundantVidFiles)
+        put("nasCleanupActive", smartToolsVM.nasCleanupActive)
+        put("serverStatus", smartToolsVM.dupServerStatus)
+        put("sessionDeletedCount", smartToolsVM.dupSessionDeletedCount)
+        put("sessionFreedBytes", smartToolsVM.dupSessionFreedBytes)
+        put("wastedBytes", totalDupWastedBytes)
+        put("imageGroups", imgGroupsCount)
+        put("imageFiles", imgFilesCount)
+        put("imageWasted", imgWastedBytes)
+        put("videoGroups", vidGroupsCount)
+        put("videoFiles", vidFilesCount)
+        put("videoWasted", vidWastedBytes)
+        put("otherGroups", otherGroupsCount)
+        put("otherFiles", otherFilesCount)
+        put("otherWasted", otherWastedBytes)
+        put("deleting", smartToolsVM.isDeletingDuplicates)
+        put("delTotal", smartToolsVM.dupDeleteTotal)
+        put("delDone", smartToolsVM.dupDeleteDone)
+        put("delProcessed", smartToolsVM.dupDeleteProcessed)
+        put("delRemaining", (smartToolsVM.dupDeleteTotal - smartToolsVM.dupDeleteProcessed).coerceAtLeast(0))
+        put("delSkipped", smartToolsVM.dupDeleteSkipped)
+        put("delBytesFreed", smartToolsVM.dupDeleteBytesFreed)
+        put("delCurrentFile", smartToolsVM.dupDeleteCurrentFile)
         put("groups", dupGroupsArr)
+        put("schedule", JSONObject().apply {
+            put("enabled", smartToolsVM.dupSchedEnabled)
+            put("hour", smartToolsVM.dupSchedHour)
+            put("intervalDays", smartToolsVM.dupSchedIntervalDays)
+            put("autoClean", smartToolsVM.dupSchedAutoClean)
+            put("lastRunAt", smartToolsVM.dupSchedLastRunAt)
+            put("lastGroups", smartToolsVM.dupSchedLastGroups)
+        })
     })
     val orgGroupsArr = JSONArray()
     (smartToolsVM.organizerScanResult ?: emptyList()).forEach { g ->

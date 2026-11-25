@@ -359,6 +359,12 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
                     val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
 
+                    // Yêu cầu: Cấm tuyệt đối đổi tên file khi upload lên NAS, tất cả phải giữ nguyên tên gốc, trùng tên không tải lên
+                    if (WebDavManager.fileExists(destUrl)) {
+                        android.util.Log.i("ShareUpload", "Tệp đã tồn tại cùng tên trên NAS ($fileName) — bỏ qua không tải lên (skip)")
+                        return@launch
+                    }
+
                     contentResolver.openInputStream(uri)?.use { inputStream ->
                         val temp = java.io.File(cacheDir, fileName)
                         tempFile = temp
@@ -368,6 +374,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         temp.outputStream().use { inputStream.copyTo(it) }
                         val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
                         WebDavManager.uploadFile(destUrl, temp, mimeType)
+                        FileMutationSync.notifyOrEnqueue(applicationContext, savedUrl, WebDavManager.currentAuthHeader(), "upload", destUrl, destUrl)
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")

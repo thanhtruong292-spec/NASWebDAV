@@ -58,7 +58,7 @@ val gitShortSha: String = runGit("rev-parse", "--short", "HEAD").ifBlank { "nogi
 val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
 // Đã bỏ nhãn +test theo yêu cầu người dùng
 val gitDirtySuffix: String = ""
-val baseVersionName = "1.1"
+val baseVersionName = "1.3"
 
 android {
     namespace = "com.nas.naswebdav"

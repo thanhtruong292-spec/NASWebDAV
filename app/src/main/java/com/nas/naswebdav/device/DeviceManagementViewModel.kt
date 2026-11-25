@@ -73,6 +73,8 @@ class DeviceManagementViewModel(
 
     var dockerContainers by androidx.compose.runtime.mutableStateOf<List<DockerContainer>>(emptyList())
         private set
+    var dockerLoadError by androidx.compose.runtime.mutableStateOf(false)
+        private set
     var isFetchingDocker by androidx.compose.runtime.mutableStateOf(false)
         private set
     var isDockerRunning by androidx.compose.runtime.mutableStateOf(false)
@@ -309,6 +311,7 @@ class DeviceManagementViewModel(
     fun loadDockerContainers(): Job? {
         if (isFetchingDocker) return dockerFetchJob
         isFetchingDocker = true
+        dockerLoadError = false
         val job = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
@@ -330,9 +333,12 @@ class DeviceManagementViewModel(
                             dockerContainers = list
                             isDockerRunning = list.any { it.status == "running" }
                         }
+                    } else {
+                        withContext(Dispatchers.Main) { dockerLoadError = true }
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                withContext(Dispatchers.Main) { dockerLoadError = true }
                 android.util.Log.w("DeviceMgmt", "loadDockerContainers: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingDocker = false }
@@ -641,7 +647,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/speedtest").post(okhttp3.RequestBody.create(null, ByteArray(0))).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/speedtest").post(ByteArray(0).toRequestBody(null)).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -777,7 +783,7 @@ class DeviceManagementViewModel(
                     try {
                         val req = okhttp3.Request.Builder()
                             .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/system_logs/clear")
-                            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                            .post(ByteArray(0).toRequestBody(null))
                             .let(WebDavManager::tagCurrentAuth)
                             .build()
                         NasApplication.instance.fastApiClient.newCall(req).execute().close()

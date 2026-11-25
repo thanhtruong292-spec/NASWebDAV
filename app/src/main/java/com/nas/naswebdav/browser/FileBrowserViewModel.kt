@@ -2,6 +2,8 @@ package com.nas.naswebdav.browser
 
 import com.nas.naswebdav.R
 import android.content.Context
+import android.util.JsonReader
+import android.util.JsonToken
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
@@ -56,7 +58,12 @@ internal fun relativeWebDavSearchRoot(baseUrl: String, folderUrl: String): Strin
     if (!path.startsWith(prefix)) null else path.removePrefix(prefix).trim('/')
 }.getOrNull()
 
-private suspend fun okhttp3.Call.awaitSearchBody(rejectAuthFailure: Boolean = false): String? = suspendCancellableCoroutine { continuation ->
+private suspend fun okhttp3.Call.awaitResponseBody(rejectAuthFailure: Boolean = false): String? =
+    awaitParsedBody(rejectAuthFailure) { it.string() }
+
+private suspend fun <T> okhttp3.Call.awaitParsedBody(
+    rejectAuthFailure: Boolean, parse: (okhttp3.ResponseBody) -> T
+): T? = suspendCancellableCoroutine { continuation ->
     continuation.invokeOnCancellation { cancel() }
     enqueue(object : okhttp3.Callback {
         override fun onFailure(call: okhttp3.Call, error: java.io.IOException) {
@@ -67,7 +74,7 @@ private suspend fun okhttp3.Call.awaitSearchBody(rejectAuthFailure: Boolean = fa
             try {
                 val body = response.use {
                     if (rejectAuthFailure && it.code in listOf(401, 403)) throw SecurityException("NAS từ chối truy cập.")
-                    if (it.isSuccessful) it.body?.string() else null
+                    if (it.isSuccessful) it.body?.let(parse) else null
                 }
                 if (continuation.isActive) continuation.resume(body)
             } catch (error: Exception) {
@@ -75,6 +82,64 @@ private suspend fun okhttp3.Call.awaitSearchBody(rejectAuthFailure: Boolean = fa
             }
         }
     })
+}
+
+internal const val DIRECTORY_PREVIEW_SIZE = 300
+
+private fun JsonReader.readDirectoryEntry(parent: String): NasFile {
+    var name: String? = null
+    var directory: Boolean? = null
+    var size: Long? = null
+    var mtime: Long? = null
+    var mime: String? = null
+    beginObject()
+    while (hasNext()) {
+        when (nextName()) {
+            "name" -> name = nextString()
+            "is_dir" -> directory = nextBoolean()
+            "size" -> size = nextLong()
+            "mtime" -> mtime = nextLong()
+            "mime" -> if (peek() == JsonToken.NULL) nextNull() else mime = nextString().ifBlank { null }
+            else -> skipValue()
+        }
+    }
+    endObject()
+    val child = requireNotNull(name)
+    require(child.isNotEmpty() && child != "." && child != ".." && '/' !in child)
+    val isDir = requireNotNull(directory)
+    val segment = java.net.URLEncoder.encode(child, "UTF-8").replace("+", "%20")
+    val url = parent + segment + if (isDir) "/" else ""
+    return NasFile(child, url, isDir, mime, requireNotNull(size), requireNotNull(mtime))
+}
+
+private fun readDirectoryListing(
+    reader: JsonReader, folder: String, onPreview: ((List<NasFile>) -> Unit)?
+): List<NasFile>? = with(reader) {
+    val parent = folder.trimEnd('/') + "/"
+    var rows: ArrayList<NasFile>? = null
+    var ok: Boolean? = null
+    var total: Int? = null
+    beginObject()
+    while (hasNext()) {
+        when (nextName()) {
+            "items" -> {
+                require(rows == null)
+                val entries = ArrayList<NasFile>()
+                beginArray()
+                while (hasNext()) {
+                    entries.add(readDirectoryEntry(parent))
+                    if (entries.size == DIRECTORY_PREVIEW_SIZE && ok != false) onPreview?.invoke(entries.toList())
+                }
+                endArray()
+                rows = entries
+            }
+            "ok" -> ok = nextBoolean()
+            "total" -> total = nextInt()
+            else -> skipValue()
+        }
+    }
+    endObject()
+    rows?.takeIf { ok == true && (total == null || it.size == total) && peek() == JsonToken.END_DOCUMENT }
 }
 
 /**
@@ -96,7 +161,11 @@ class FileBrowserViewModel(
     private val prefsRepo = com.nas.naswebdav.utils.PreferencesRepository.get(appContext)
     val fileSort: StateFlow<String> = prefsRepo.fileSort
     val viewModeName: StateFlow<String> = prefsRepo.viewMode
-    fun setFileSort(mode: String) = prefsRepo.setFileSort(mode)
+    fun setFileSort(mode: String) {
+        prefsRepo.setFileSort(mode)
+        if (!isNameSort()) clearDirectoryPreview()
+    }
+    private fun isNameSort() = fileSort.value == "name" || fileSort.value == "name_asc"
     fun setViewModeName(mode: String) = prefsRepo.setViewMode(mode)
     fun markFilesViewed(paths: Collection<String>) = prefsRepo.markViewed(paths)
 
@@ -121,7 +190,15 @@ class FileBrowserViewModel(
     internal val pendingDeletes: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Guards against stale coroutines overwriting newer UI state when loadCurrentUrl() is invoked again. */
+    private var directoryJob: Job? = null
     private var loadGeneration = 0
+    private var showingDirectoryPreview = false
+    private fun clearDirectoryPreview() {
+        if (showingDirectoryPreview) {
+            fileList = emptyList()
+            showingDirectoryPreview = false
+        }
+    }
 
     private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
     val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
@@ -130,7 +207,10 @@ class FileBrowserViewModel(
     val thumbnailAudit = _thumbnailAudit.asStateFlow()
     internal fun updateThumbnailAudit(value: ThumbnailAuditData?) { _thumbnailAudit.value = value }
     internal fun updatePagedFilesFlow(value: Flow<PagingData<NasFile>>) { _pagedFilesFlow.value = value }
-    internal fun incrementLoadGeneration(): Int { loadGeneration++; return loadGeneration }
+    internal fun incrementLoadGeneration(): Int {
+        clearDirectoryPreview()
+        return ++loadGeneration
+    }
 
     // ═══ LOADING / ERROR STATE ═══
 
@@ -323,13 +403,13 @@ class FileBrowserViewModel(
                         .header("Authorization", WebDavManager.currentAuthHeader())
                         .get()
                         .build()
-                    val jsonStr = NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody()
+                    val jsonStr = NasApplication.instance.fastApiClient.newCall(request).awaitResponseBody()
                     if (!jsonStr.isNullOrEmpty()) {
                         var jsonObj = org.json.JSONObject(jsonStr)
                         repeat(4) {
                             if (!jsonObj.optBoolean("index_ready") && jsonObj.optString("index_incomplete_reason") == "scan_in_progress") {
                                 delay(250)
-                                val updated = NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody()
+                                val updated = NasApplication.instance.fastApiClient.newCall(request).awaitResponseBody()
                                 if (!updated.isNullOrEmpty()) jsonObj = org.json.JSONObject(updated)
                             }
                         }
@@ -605,6 +685,7 @@ class FileBrowserViewModel(
     fun showRecentVideos() = showRecentMedia("video", "Video gần đây")
 
     private fun showRecentMedia(kind: String, title: String) {
+        directoryJob?.cancel()
         viewModelScope.launch {
             val generation = incrementLoadGeneration()
             val auth = WebDavManager.currentAuthState()
@@ -624,7 +705,7 @@ class FileBrowserViewModel(
                     .header("Authorization", auth.authHeader)
                     .build()
                 val body = try {
-                    NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody(rejectAuthFailure = true)
+                    NasApplication.instance.fastApiClient.newCall(request).awaitResponseBody(rejectAuthFailure = true)
                 } catch (_: java.io.IOException) {
                     null
                 }
@@ -659,78 +740,105 @@ class FileBrowserViewModel(
         }
     }
 
-    private fun loadCurrentUrl(forceRefresh: Boolean = false) {
-        viewModelScope.launch {
-            val gen = incrementLoadGeneration()
-            errorMessage = null
-
-            // Paging Flow from DB
-            updatePagedFilesFlow(repository.getFilesStream(currentUrl).cachedIn(viewModelScope))
-
-            // Static list for ImageViewerScreen
-            val cached = repository.getCachedFiles(currentUrl)
-            val activePendingDeletes = pendingDeletes.toSet()
-            fileList = cached.map {
-                NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
-            }
-                .filter { it.path !in activePendingDeletes }
-                .filter { !it.name.startsWith(".") || isSpecialMode }
-            
-            if (gen != loadGeneration) return@launch // stale newer load in progress
-
-            if (!forceRefresh && cached.isNotEmpty()) {
-                isLoading = false
-                launch(Dispatchers.IO) {
-                    try {
-                        repository.getRemoteFilesAndCache(currentUrl)
-                        // P2-7: refresh nen xong PHAl cap nhat fileList — ban cu chi
-                        // ghi Room, UI giu danh sach cu (file them/xoa tu may khac
-                        // khong hien). Generation guard + ton trong pendingDeletes.
-                        val fresh = repository.getCachedFiles(currentUrl)
-                        val activeDeletes = pendingDeletes.toSet()
-                        withContext(Dispatchers.Main) {
-                            if (gen == loadGeneration) {
-                                fileList = fresh.map {
-                                    NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
-                                }
-                                    .filter { it.path !in activeDeletes }
-                                    .filter { !it.name.startsWith(".") || isSpecialMode }
-                            }
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        android.util.Log.w("FileBrowser", "background refresh: ${e.message}")
-                    }
-                }
-                return@launch
-            }
-
-            // Force Refresh or first time (empty cache)
-            isLoading = true
-            withContext(Dispatchers.IO) {
+    private suspend fun fetchDirectoryViaRustApi(
+        dirUrl: String, auth: WebDavManager.AuthState, showHidden: Boolean,
+        onPreview: ((List<NasFile>) -> Unit)?
+    ): List<NasFile>? {
+        if (auth.baseUrl.isBlank() || relativeWebDavSearchRoot(auth.baseUrl, dirUrl) == null) return null
+        val relPath = com.nas.naswebdav.FileMutationSync.toRelativePath(dirUrl)
+        val encodedPath = java.net.URLEncoder.encode(relPath, "UTF-8")
+        val hiddenFlag = if (showHidden) "1" else "0"
+        val request = okhttp3.Request.Builder()
+            .url("${auth.baseUrl.toApiBaseUrl()}/api/files/list?path=$encodedPath&show_hidden=$hiddenFlag")
+            .tag(WebDavManager.AuthState::class.java, auth)
+            .header("Authorization", auth.authHeader)
+            .build()
+        return try {
+            NasApplication.instance.fastApiClient.newCall(request).awaitParsedBody(rejectAuthFailure = true) { body ->
                 try {
-                    repository.getRemoteFilesAndCache(currentUrl)
-                    val newCached = repository.getCachedFiles(currentUrl)
-                    val activeDeletes = pendingDeletes.toSet()
-                    withContext(Dispatchers.Main) {
-                        if (gen == loadGeneration) {
-                            fileList = newCached.map {
-                                NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
+                    JsonReader(body.charStream()).use { readDirectoryListing(it, dirUrl, onPreview) }
+                } catch (_: IllegalStateException) {
+                    null // JSON token has the wrong type.
+                } catch (_: IllegalArgumentException) {
+                    null // Missing or invalid directory entry.
+                }
+            }
+        } catch (_: java.io.IOException) {
+            null
+        }
+    }
+
+    private fun notifyServerFileMutation(context: Context, action: String, oldUrl: String, newUrl: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.nas.naswebdav.FileMutationSync.notifyOrEnqueue(
+                context = context.applicationContext,
+                baseUrl = WebDavManager.currentBaseUrl,
+                authHeader = WebDavManager.currentAuthHeader(),
+                action = action,
+                oldUrl = oldUrl,
+                newUrl = newUrl
+            )
+        }
+    }
+
+    private fun loadCurrentUrl(forceRefresh: Boolean = false) {
+        directoryJob?.cancel()
+        val gen = incrementLoadGeneration()
+        val folder = currentUrl
+        val showHidden = isSpecialMode
+        val auth = WebDavManager.currentAuthState()
+        fun isCurrent() = gen == loadGeneration && auth == WebDavManager.currentAuthState()
+        fun visible(file: NasFile) = file.path !in pendingDeletes && (showHidden || !file.name.startsWith("."))
+        directoryJob = viewModelScope.launch {
+            errorMessage = null
+            updatePagedFilesFlow(repository.getFilesStream(folder).cachedIn(viewModelScope))
+            try {
+                val cached = withContext(Dispatchers.IO) {
+                    repository.getCachedFiles(folder).map {
+                        NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
+                    }.filter(::visible)
+                }
+                if (!isCurrent()) return@launch
+                fileList = cached
+                isLoading = forceRefresh || cached.isEmpty()
+
+                var reading = true
+                val onPreview: ((List<NasFile>) -> Unit)? = if (cached.isEmpty() && isNameSort()) {
+                    { rows ->
+                        launch(Dispatchers.Main.immediate) {
+                            if (reading && isCurrent() && isNameSort()) {
+                                showingDirectoryPreview = true
+                                fileList = rows.filter(::visible)
                             }
-                                .filter { it.path !in activeDeletes }
-                                .filter { !it.name.startsWith(".") || isSpecialMode }
-                            isLoading = false
                         }
+                        Unit
                     }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        if (gen == loadGeneration) {
-                            isLoading = false
-                            errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty())
-                        }
+                } else null
+                val listing = try {
+                    fetchDirectoryViaRustApi(folder, auth, showHidden, onPreview)
+                } finally {
+                    reading = false
+                }
+                if (!isCurrent()) return@launch
+                if (listing == null) clearDirectoryPreview()
+                val fresh = listing ?: repository.getRemoteFilesAndCache(folder)
+                val filtered = withContext(Dispatchers.Default) { fresh.filter(::visible) }
+                if (!isCurrent()) return@launch
+                showingDirectoryPreview = false
+                fileList = filtered
+                isLoading = false
+                if (listing != null) repository.cacheDirectoryListing(folder, listing, auth, showHidden)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (isCurrent()) {
+                    isLoading = false
+                    if (fileList.isEmpty() || forceRefresh) {
+                        errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty())
                     }
                 }
+            } finally {
+                if (gen == loadGeneration) clearDirectoryPreview()
             }
         }
     }
@@ -751,6 +859,7 @@ class FileBrowserViewModel(
                 try {
                     WebDavManager.renameFile(file.path, trashUrl)
                     deletedSuccessfully = true
+                    notifyServerFileMutation(context, "trash", file.path, trashUrl)
                     try {
                         NasApplication.instance.database.trashMetaDao().insert(
                             com.nas.naswebdav.TrashMeta(trashPath = trashUrl, originalPath = file.path)
@@ -768,6 +877,7 @@ class FileBrowserViewModel(
                             if (trashUrl != null) {
                                 WebDavManager.renameFile(file.path, trashUrl)
                                 deletedSuccessfully = true
+                                notifyServerFileMutation(context, "trash", file.path, trashUrl)
                                 try {
                                     NasApplication.instance.database.trashMetaDao().insert(
                                         com.nas.naswebdav.TrashMeta(trashPath = trashUrl, originalPath = file.path)
@@ -804,6 +914,7 @@ class FileBrowserViewModel(
                 try {
                     WebDavManager.deleteFile(file.path, file.isDirectory)
                     deletedSuccessfully = true
+                    notifyServerFileMutation(context, "delete", file.path)
                 } catch (e: Exception) {
                     android.util.Log.e("FileBrowser", "WebDAV DELETE failed: ${e.message}", e)
                     lastError = e
@@ -851,6 +962,7 @@ class FileBrowserViewModel(
             }
             try {
                 WebDavManager.deleteFile(file.path, file.isDirectory)
+                notifyServerFileMutation(context, "delete", file.path)
                 try {
                     NasApplication.instance.database.trashMetaDao().deleteByTrashPath(file.path)
                 } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
@@ -1019,6 +1131,8 @@ class FileBrowserViewModel(
             try {
                 val newUrl = file.path.substringBeforeLast('/') + "/" + encodeWebDavSegment(newName)
                 WebDavManager.renameFile(file.path, newUrl)
+                notifyServerFileMutation(context, "rename", file.path, newUrl)
+                refresh()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1041,6 +1155,7 @@ class FileBrowserViewModel(
                 val encodedName = encodeWebDavSegment(folderName)
                 val targetUrl = destDir + sep + encodedName + "/"
                 WebDavManager.createFolder(targetUrl)
+                notifyServerFileMutation(context, "create", targetUrl, targetUrl)
                 refresh()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -1073,6 +1188,7 @@ class FileBrowserViewModel(
             }
             try {
                 WebDavManager.renameFile(file.path, targetUrl)
+                notifyServerFileMutation(context, "restore", file.path, targetUrl)
                 trashMetaDao.deleteByTrashPath(file.path)
                 refresh()
             } catch (e: Exception) {

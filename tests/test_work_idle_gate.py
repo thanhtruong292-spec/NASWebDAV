@@ -42,7 +42,7 @@ def test_real_request_stamp_does_not_make_work_claim_look_like_user_activity(tmp
     nas_work_coordinator.request_job(db_path, "duplicates", root, priority=10)
 
     namespace = {
-        "request": request, "jsonify": jsonify, "time": time,
+        "request": request, "jsonify": jsonify, "time": time, "threading": threading,
         "os": SimpleNamespace(path=os.path, getloadavg=lambda: (0.0,)), "sqlite3": sqlite3,
         "_LAST_USER_HIT": {"time": time.time() - 120},
         "_background_heavy_gate_cache": {"time": 0, "allowed": False},
@@ -67,7 +67,8 @@ def test_real_request_stamp_does_not_make_work_claim_look_like_user_activity(tmp
     }
     exec(compile(ast.Module(body=_source_nodes(
         "_NON_INTERACTIVE_HIT_PREFIXES", "_stamp_user_hit",
-        "_background_heavy_work_allowed", "api_nas_work_claim"), type_ignores=[]),
+        "_background_heavy_work_allowed", "api_nas_work_claim",
+        "_DUP_SCAN_LOCK", "_DUP_SCAN_STATE", "_DUP_AUTO_WORKER_LOCK"), type_ignores=[]),
         str(SOURCE), "exec"), namespace)
     app = Flask(__name__)
     app.before_request(namespace["_stamp_user_hit"])
@@ -96,13 +97,14 @@ def test_idle_and_background_work_routes_are_excluded_but_browse_is_not():
     app.add_url_rule("/api/work/request", "work", lambda: "ok")
     app.add_url_rule("/api/system/idle", "idle", lambda: "ok")
     app.add_url_rule("/api/duplicates/hash", "hash", lambda: "ok")
+    app.add_url_rule("/api/duplicates/cleanup", "cleanup", lambda: "ok")
     app.add_url_rule("/api/thumb/activity", "thumb_activity", lambda: "ok")
     app.add_url_rule("/api/disk/fast_index", "fast_index", lambda: "ok")
     app.add_url_rule("/api/browser", "browser", lambda: "ok")
     client = app.test_client()
 
     for path in ("/api/work/request", "/api/system/idle", "/api/duplicates/hash",
-                 "/api/thumb/activity", "/api/disk/fast_index"):
+                 "/api/duplicates/cleanup", "/api/thumb/activity", "/api/disk/fast_index"):
         client.get(path)
         assert namespace["_LAST_USER_HIT"]["time"] == 0
     client.get("/api/browser")

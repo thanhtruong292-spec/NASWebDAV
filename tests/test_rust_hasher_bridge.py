@@ -117,6 +117,25 @@ def test_batch_md5_1mb_parallel_parity(tmp_path):
     assert res["/webdav/two.bin"] == hashlib.md5(d2[:1048576]).hexdigest()
 
 
+@pytest.mark.skipif(not rust_bridge.duplicate_scanner_available(), reason="Rust binary not built")
+def test_duplicate_sha256_uses_open_descriptor(tmp_path):
+    sample = tmp_path / "sample.bin"
+    payload = b"leased descriptor" * 10000
+    sample.write_bytes(payload)
+    with sample.open("rb") as handle:
+        assert rust_bridge.compute_duplicate_sha256_fd(handle.fileno()) == hashlib.sha256(payload).hexdigest()
+
+
+def test_duplicate_scanner_never_falls_back_to_abi(monkeypatch, tmp_path):
+    monkeypatch.setattr(rust_bridge, "_find_nas_hasher_bin", lambda: None)
+    def fail_if_called():
+        pytest.fail("Duplicate scanner fell back to Rust C-ABI")
+    monkeypatch.setattr(rust_bridge, "_init_rust_bridge", fail_if_called)
+    assert rust_bridge.find_duplicates(str(tmp_path)) is None
+    with pytest.raises(OSError, match="unavailable"):
+        rust_bridge.compute_duplicate_sha256_fd(0)
+
+
 def test_find_duplicates_3_stage_parallel(tmp_path):
     """Kiểm tra quét trùng lặp 3 tầng đa luồng (Size -> Partial MD5 -> Full SHA256) và bỏ qua .trash."""
     sub = tmp_path / "sub"

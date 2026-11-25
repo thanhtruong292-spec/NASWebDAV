@@ -2,6 +2,7 @@ use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::BufWriter;
 use std::os::raw::{c_char, c_int, c_longlong};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 pub mod diacritics;
 pub mod dir_scanner;
@@ -19,6 +20,12 @@ pub use photo_tagger::{scan_photo_tags, PhotoTagScanResult};
 pub use search::{build_fts_index, search_file_index};
 pub use smart_organize::{scan_smart_organize, SmartOrganizeResult};
 pub use storage_summary::{compute_storage_summary, StorageSummaryCore};
+
+/// Chặn mọi panic vượt biên C-ABI sang Python ctypes (tránh UB/crash toàn bộ Flask).
+#[inline]
+fn ffi_guard<T, F: FnOnce() -> T>(fallback: T, f: F) -> T {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or(fallback)
+}
 
 pub mod streamer {
     pub use crate::stream_fast_index;
@@ -57,8 +64,12 @@ mod main_logic {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(db_path, flags)
             .map_err(|e| format!("Failed to open DB in read-only mode: {}", e))?;
+        // Bao tron 3 truy van (index_state, COUNT, SELECT) trong cung 1 read snapshot SQLite
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| format!("Begin read snapshot failed: {}", e))?;
 
-        let mut state_stmt = conn
+        let mut state_stmt = tx
             .prepare("SELECT root, generation, ready, scanned_at, catalogue_revision FROM index_state WHERE id=1")
             .map_err(|e| format!("Prepare state failed: {}", e))?;
 
@@ -73,7 +84,7 @@ mod main_logic {
             })
             .map_err(|e| format!("Query state row failed: {}", e))?;
 
-        let total: i64 = conn
+        let total: i64 = tx
             .query_row("SELECT COUNT(*) FROM file_index WHERE is_dir=0", [], |r| r.get(0))
             .map_err(|e| format!("Count total files failed: {}", e))?;
 
@@ -96,7 +107,7 @@ mod main_logic {
             .write_all(format!("{},\"files\":[", header_prefix).as_bytes())
             .map_err(|e| format!("Write header failed: {}", e))?;
 
-        let mut stmt = conn
+        let mut stmt = tx
             .prepare("SELECT path, name, size, mtime, mime FROM file_index WHERE is_dir=0")
             .map_err(|e| format!("Prepare file query failed: {}", e))?;
 
@@ -148,31 +159,33 @@ pub unsafe extern "C" fn nas_indexer_stream_to_file(
     db_path_ptr: *const c_char,
     out_file_ptr: *const c_char,
 ) -> c_int {
-    if db_path_ptr.is_null() || out_file_ptr.is_null() {
-        return -1;
-    }
+    ffi_guard(-1, || {
+        if db_path_ptr.is_null() || out_file_ptr.is_null() {
+            return -1;
+        }
 
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return -2,
+        };
 
-    let out_file = match CStr::from_ptr(out_file_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
+        let out_file = match CStr::from_ptr(out_file_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return -2,
+        };
 
-    let file = match File::create(out_file) {
-        Ok(f) => f,
-        Err(_) => return -3,
-    };
+        let file = match File::create(out_file) {
+            Ok(f) => f,
+            Err(_) => return -3,
+        };
 
-    let writer = BufWriter::with_capacity(128 * 1024, file);
+        let writer = BufWriter::with_capacity(128 * 1024, file);
 
-    match stream_fast_index(db_path, writer) {
-        Ok(count) => count as c_int,
-        Err(_) => -4,
-    }
+        match stream_fast_index(db_path, writer) {
+            Ok(count) => count as c_int,
+            Err(_) => -4,
+        }
+    })
 }
 
 /// C-ABI: Xóa dấu chuỗi tiếng Việt và dấu phụ Latin.
@@ -184,25 +197,27 @@ pub unsafe extern "C" fn nas_indexer_remove_diacritics(
     out_buf: *mut c_char,
     max_len: c_int,
 ) -> c_int {
-    if input_ptr.is_null() || out_buf.is_null() || max_len <= 0 {
-        return -1;
-    }
+    ffi_guard(-1, || {
+        if input_ptr.is_null() || out_buf.is_null() || max_len <= 0 {
+            return -1;
+        }
 
-    let input_str = match CStr::from_ptr(input_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
+        let input_str = match CStr::from_ptr(input_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return -2,
+        };
 
-    let cleaned = remove_diacritics(input_str);
-    let bytes = cleaned.as_bytes();
-    if bytes.len() >= max_len as usize {
-        return -3; // Buffer too small
-    }
+        let cleaned = remove_diacritics(input_str);
+        let bytes = cleaned.as_bytes();
+        if bytes.len() >= max_len as usize {
+            return -3; // Buffer too small
+        }
 
-    std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out_buf, bytes.len());
-    *out_buf.add(bytes.len()) = 0;
+        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out_buf, bytes.len());
+        *out_buf.add(bytes.len()) = 0;
 
-    bytes.len() as c_int
+        bytes.len() as c_int
+    })
 }
 
 /// C-ABI: Tìm kiếm trong file_index SQLite, trả về con trỏ chuỗi JSON mảng các tuple.
@@ -215,91 +230,99 @@ pub unsafe extern "C" fn nas_indexer_search_json(
     root_ptr: *const c_char,
     limit: c_int,
 ) -> *mut c_char {
-    if db_path_ptr.is_null() || query_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() || query_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
 
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let query = match CStr::from_ptr(query_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let root_param = if root_ptr.is_null() {
-        ""
-    } else {
-        match CStr::from_ptr(root_ptr).to_str() {
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
+        };
+        let query = match CStr::from_ptr(query_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let root_param = if root_ptr.is_null() {
+            ""
+        } else {
+            match CStr::from_ptr(root_ptr).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+
+        let rows = match search_file_index(db_path, query, root_param, limit as i64) {
+            Ok(r) => r,
+            Err(_) => return std::ptr::null_mut(),
+        };
+
+        let json = match serde_json::to_string(&rows) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        };
+
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
         }
-    };
-
-    let rows = match search_file_index(db_path, query, root_param, limit as i64) {
-        Ok(r) => r,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    let json = match serde_json::to_string(&rows) {
-        Ok(j) => j,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    })
 }
 
 /// C-ABI: Giải phóng chuỗi được cấp phát bởi nas_indexer_search_json.
 #[no_mangle]
 pub unsafe extern "C" fn nas_indexer_free_string(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        let _ = CString::from_raw(ptr);
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            let _ = CString::from_raw(ptr);
+        }
+    })
 }
 
 /// C-ABI: Xây dựng sidecar FTS5 trigram index (<db_path>.fts.db).
 /// Trả về số bản ghi đã lập chỉ mục (>= 0) nếu thành công, hoặc số âm nếu lỗi.
 #[no_mangle]
 pub unsafe extern "C" fn nas_indexer_build_fts(db_path_ptr: *const c_char) -> c_int {
-    if db_path_ptr.is_null() {
-        return -1;
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
-    match build_fts_index(db_path) {
-        Ok(count) => count as c_int,
-        Err(_) => -3,
-    }
+    ffi_guard(-1, || {
+        if db_path_ptr.is_null() {
+            return -1;
+        }
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return -2,
+        };
+        match build_fts_index(db_path) {
+            Ok(count) => count as c_int,
+            Err(_) => -3,
+        }
+    })
 }
 
 /// C-ABI: Tính toán thống kê lưu trữ (by_type, largest top 10, total_files/bytes/dirs) trong 1 lượt quét.
 /// Caller PHẢI gọi `nas_indexer_free_string(ptr)` sau khi đọc xong.
 #[no_mangle]
 pub unsafe extern "C" fn nas_indexer_storage_summary_json(db_path_ptr: *const c_char) -> *mut c_char {
-    if db_path_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let summary = match compute_storage_summary(db_path) {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let json = match serde_json::to_string(&summary) {
-        Ok(j) => j,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let summary = match compute_storage_summary(db_path) {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let json = match serde_json::to_string(&summary) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// C-ABI: Quét 1 thư mục bằng Rust (`read_dir` + `lstat` + `remove_diacritics` + MIME O(1)).
@@ -308,33 +331,35 @@ pub unsafe extern "C" fn nas_indexer_scan_dir_json(
     dir_path_ptr: *const c_char,
     rel_prefix_ptr: *const c_char,
 ) -> *mut c_char {
-    if dir_path_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let dir_path = match CStr::from_ptr(dir_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let rel_prefix = if rel_prefix_ptr.is_null() {
-        ""
-    } else {
-        match CStr::from_ptr(rel_prefix_ptr).to_str() {
+    ffi_guard(std::ptr::null_mut(), || {
+        if dir_path_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let dir_path = match CStr::from_ptr(dir_path_ptr).to_str() {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
+        };
+        let rel_prefix = if rel_prefix_ptr.is_null() {
+            ""
+        } else {
+            match CStr::from_ptr(rel_prefix_ptr).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+        let res = match scan_directory_entries(dir_path, rel_prefix) {
+            Ok(r) => r,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let json = match serde_json::to_string(&res) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
         }
-    };
-    let res = match scan_directory_entries(dir_path, rel_prefix) {
-        Ok(r) => r,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let json = match serde_json::to_string(&res) {
-        Ok(j) => j,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    })
 }
 
 /// C-ABI: Truy vấn media gần nhất (`api_recent_media`) trực tiếp trên index `mtime DESC, path`.
@@ -345,37 +370,39 @@ pub unsafe extern "C" fn nas_indexer_recent_media_json(
     scope_ptr: *const c_char,
     limit: c_int,
 ) -> *mut c_char {
-    if db_path_ptr.is_null() || kind_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let kind = match CStr::from_ptr(kind_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let scope = if scope_ptr.is_null() {
-        ""
-    } else {
-        match CStr::from_ptr(scope_ptr).to_str() {
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() || kind_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
+        };
+        let kind = match CStr::from_ptr(kind_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let scope = if scope_ptr.is_null() {
+            ""
+        } else {
+            match CStr::from_ptr(scope_ptr).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+        let items = match query_recent_media(db_path, kind, scope, limit.max(1) as usize) {
+            Ok(v) => v,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let json = match serde_json::to_string(&items) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
         }
-    };
-    let items = match query_recent_media(db_path, kind, scope, limit.max(1) as usize) {
-        Ok(v) => v,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let json = match serde_json::to_string(&items) {
-        Ok(j) => j,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    })
 }
 
 /// C-ABI: Truy vấn Timeline ảnh (`api_photos_timeline`) 1 lượt quét duy nhất trên index `mtime DESC, path`.
@@ -387,31 +414,33 @@ pub unsafe extern "C" fn nas_indexer_photos_timeline_json(
     limit: c_int,
     offset: c_int,
 ) -> *mut c_char {
-    if db_path_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let res = match query_photos_timeline(
-        db_path,
-        start_ms as i64,
-        end_ms as i64,
-        limit.max(1) as usize,
-        offset.max(0) as usize,
-    ) {
-        Ok(r) => r,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let json = match serde_json::to_string(&res) {
-        Ok(j) => j,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let res = match query_photos_timeline(
+            db_path,
+            start_ms as i64,
+            end_ms as i64,
+            limit.max(1) as usize,
+            offset.max(0) as usize,
+        ) {
+            Ok(r) => r,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let json = match serde_json::to_string(&res) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// C-ABI: Quét phân nhóm Smart Organize (YYYY/MM) 1 lượt zero-copy trên `file_index`.
@@ -424,38 +453,40 @@ pub unsafe extern "C" fn nas_indexer_smart_organize_scan_json(
     freshness_secs: f64,
     tz_offset_secs: c_longlong,
 ) -> *mut c_char {
-    if db_path_ptr.is_null() || expected_root_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let expected_root = match CStr::from_ptr(expected_root_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let json = match scan_smart_organize(
-        db_path,
-        expected_root,
-        filter_mode.clamp(0, 2) as u8,
-        now_secs,
-        freshness_secs,
-        tz_offset_secs as i64,
-    ) {
-        Ok(res) => match serde_json::to_string(&res) {
-            Ok(j) => j,
-            Err(_) => return std::ptr::null_mut(),
-        },
-        Err(err_msg) => {
-            let err_obj = serde_json::json!({ "success": false, "error": err_msg });
-            err_obj.to_string()
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() || expected_root_ptr.is_null() {
+            return std::ptr::null_mut();
         }
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let expected_root = match CStr::from_ptr(expected_root_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let json = match scan_smart_organize(
+            db_path,
+            expected_root,
+            filter_mode.clamp(0, 2) as u8,
+            now_secs,
+            freshness_secs,
+            tz_offset_secs as i64,
+        ) {
+            Ok(res) => match serde_json::to_string(&res) {
+                Ok(j) => j,
+                Err(_) => return std::ptr::null_mut(),
+            },
+            Err(err_msg) => {
+                let err_obj = serde_json::json!({ "success": false, "error": err_msg });
+                err_obj.to_string()
+            }
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// C-ABI: Tìm ảnh tương đồng theo khoảng cách Hamming trên `image_fingerprints` (ARM64 NEON VCNT popcount).
@@ -467,39 +498,41 @@ pub unsafe extern "C" fn nas_indexer_find_similar_fingerprints_json(
     threshold: c_int,
     limit: c_int,
 ) -> *mut c_char {
-    if db_path_ptr.is_null() || exclude_path_ptr.is_null() || target_hash_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let exclude_path = match CStr::from_ptr(exclude_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let target_hash = match CStr::from_ptr(target_hash_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let matches = match find_similar_fingerprints(
-        db_path,
-        exclude_path,
-        target_hash,
-        threshold.clamp(0, 64) as u32,
-        limit.max(1) as usize,
-    ) {
-        Ok(v) => v,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let json = match serde_json::to_string(&matches) {
-        Ok(j) => j,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() || exclude_path_ptr.is_null() || target_hash_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let exclude_path = match CStr::from_ptr(exclude_path_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let target_hash = match CStr::from_ptr(target_hash_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let matches = match find_similar_fingerprints(
+            db_path,
+            exclude_path,
+            target_hash,
+            threshold.clamp(0, 64) as u32,
+            limit.max(1) as usize,
+        ) {
+            Ok(v) => v,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let json = match serde_json::to_string(&matches) {
+            Ok(j) => j,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// C-ABI: Quét và phân loại ảnh streaming zero-memory-bloat (`_scan_photos_lightweight`),
@@ -513,49 +546,64 @@ pub unsafe extern "C" fn nas_indexer_scan_photo_tags_json(
     freshness_secs: f64,
     generated_at_ptr: *const c_char,
 ) -> *mut c_char {
-    if db_path_ptr.is_null() || expected_root_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let expected_root = match CStr::from_ptr(expected_root_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let ai_tags_json = if ai_tags_json_ptr.is_null() {
-        ""
-    } else {
-        match CStr::from_ptr(ai_tags_json_ptr).to_str() {
-            Ok(s) => s,
-            Err(_) => "",
+    ffi_guard(std::ptr::null_mut(), || {
+        if db_path_ptr.is_null() || expected_root_ptr.is_null() {
+            return std::ptr::null_mut();
         }
-    };
-    let generated_at = if generated_at_ptr.is_null() {
-        ""
-    } else {
-        match CStr::from_ptr(generated_at_ptr).to_str() {
+        let db_path = match CStr::from_ptr(db_path_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => "",
-        }
-    };
-    let json = match scan_photo_tags(
-        db_path,
-        expected_root,
-        ai_tags_json,
-        now_secs,
-        freshness_secs,
-        generated_at,
-    ) {
-        Ok(res) => match serde_json::to_string(&res) {
-            Ok(j) => j,
             Err(_) => return std::ptr::null_mut(),
-        },
-        Err(err_msg) => serde_json::json!({ "success": false, "error": err_msg }).to_string(),
-    };
-    match CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
+        };
+        let expected_root = match CStr::from_ptr(expected_root_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let ai_tags_json = if ai_tags_json_ptr.is_null() {
+            ""
+        } else {
+            match CStr::from_ptr(ai_tags_json_ptr).to_str() {
+                Ok(s) => s,
+                Err(_) => "",
+            }
+        };
+        let generated_at = if generated_at_ptr.is_null() {
+            ""
+        } else {
+            match CStr::from_ptr(generated_at_ptr).to_str() {
+                Ok(s) => s,
+                Err(_) => "",
+            }
+        };
+        let json = match scan_photo_tags(
+            db_path,
+            expected_root,
+            ai_tags_json,
+            now_secs,
+            freshness_secs,
+            generated_at,
+        ) {
+            Ok(res) => match serde_json::to_string(&res) {
+                Ok(j) => j,
+                Err(_) => return std::ptr::null_mut(),
+            },
+            Err(err_msg) => serde_json::json!({ "success": false, "error": err_msg }).to_string(),
+        };
+        match CString::new(json) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffi_guard_catches_panic_and_returns_fallback() {
+        let ptr: *mut c_char = ffi_guard(std::ptr::null_mut(), || panic!("boom"));
+        assert!(ptr.is_null());
+        let code: c_int = ffi_guard(-1, || panic!("boom"));
+        assert_eq!(code, -1);
     }
 }

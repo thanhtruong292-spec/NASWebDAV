@@ -281,17 +281,57 @@ fn main() {
                 exit(1);
             }
             let record = compute_file_hashes(&args[2]);
-            println!("{}", serde_json::to_string(&record).unwrap());
+            if let Ok(json) = serde_json::to_string(&record) {
+                println!("{}", json);
+            } else {
+                exit(1);
+            }
         }
-        "find-duplicates" => {
+        "sha256-stdin" => {
+            let mut input = std::io::stdin().lock();
+            let mut hash = Sha256::new();
+            if let Err(error) = std::io::copy(&mut input, &mut hash) {
+                eprintln!("Could not hash stdin: {error}");
+                exit(1);
+            }
+            println!("{}", hex::encode(hash.finalize()));
+        }
+        "find-duplicates" | "find-duplicates-catalogue" => {
             if args.len() < 3 {
-                eprintln!("Usage: nas_hasher find-duplicates <root_dir> [min_size] [workers] [limit]");
+                eprintln!("Usage: nas_hasher find-duplicates <root_dir> [min_size] [workers] [limit] [cache_in] [cache_out]");
                 exit(1);
             }
             let min_size = args.get(3).and_then(|s| s.parse::<u64>().ok()).unwrap_or(1024);
-            let workers = args.get(4).and_then(|s| s.parse::<usize>().ok()).unwrap_or(4);
+            let workers = args.get(4).and_then(|s| s.parse::<usize>().ok()).unwrap_or(2);
             let limit = args.get(5).and_then(|s| s.parse::<usize>().ok()).unwrap_or(500);
-            match nas_hasher_core::find_duplicates_in_dir(&args[2], min_size, workers, limit) {
+            let cache_in = args.get(6).map(|s| s.as_str()).filter(|s| !s.is_empty());
+            let cache_out = args.get(7).map(|s| s.as_str()).filter(|s| !s.is_empty());
+            let progress_cb = |stage: i32, done: u64, total: u64, extra: u64, rel: &str| -> bool {
+                let payload = serde_json::json!({
+                    "stage": stage,
+                    "done": done,
+                    "total": total,
+                    "extra": extra,
+                    "file": rel,
+                });
+                eprintln!("PROGRESS:{}", payload);
+                false
+            };
+            let result = if args[1] == "find-duplicates-catalogue" {
+                let Some(manifest) = args.get(8).filter(|path| !path.is_empty()) else {
+                    eprintln!("Missing duplicate catalogue manifest");
+                    exit(1);
+                };
+                nas_hasher_core::find_duplicates_from_catalogue(
+                    &args[2], min_size, workers, limit, cache_in, cache_out,
+                    Some(&progress_cb), manifest,
+                )
+            } else {
+                nas_hasher_core::find_duplicates_in_dir_with_cache(
+                    &args[2], min_size, workers, limit, cache_in, cache_out, Some(&progress_cb),
+                )
+            };
+            match result {
                 Ok(report) => {
                     println!("{}", serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string()));
                 }

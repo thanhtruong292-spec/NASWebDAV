@@ -144,13 +144,94 @@ class FileBrowserSearchRequestTest {
     @Test
     fun `folder scope decodes spaces and accents while preserving a literal plus`() = runBlocking {
         val folder = base + "T%C3%A0i%20li%E1%BB%87u+%25_/"
+        server.enqueue(MockResponse().setBody("""{"ok":true,"items":[]}"""))
         viewModel.openSpecificUrl(folder, "Documents")
+        val listing = server.takeRequest(2, TimeUnit.SECONDS)
+        assertEquals("/api/files/list", listing?.requestUrl?.encodedPath)
+        assertEquals("Tài liệu+%_", listing?.requestUrl?.queryParameter("path"))
         awaitCondition { viewModel.currentUrl == folder && !viewModel.isLoading }
         server.enqueue(MockResponse().setBody("""{"success":true,"index_ready":true,"results":[]}"""))
         viewModel.searchGlobal("anh")
         val request = server.takeRequest(2, TimeUnit.SECONDS)
         assertEquals("Tài liệu+%_", request?.requestUrl?.queryParameter("root"))
         awaitCondition { !viewModel.isSearchActive.value }
+    }
+
+    @Test
+    fun `root directory uses JSON and caches literal names for a second visit`() = runBlocking {
+        val db = NasApplication.instance.database
+        val realRepo = WebDavRepository(WebDavManager, db)
+        val browser = FileBrowserViewModel(realRepo)
+        val name = "a+ b#%25?.jpg"
+        val url = base + "a%2B%20b%23%2525%3F.jpg"
+        server.enqueue(MockResponse().setBody(
+            """{"ok":true,"items":[{"name":"$name","is_dir":false,"size":17,"mtime":100,"mime":"image/jpeg"}]}"""))
+        browser.resetToDefaultMode()
+        val request = server.takeRequest(2, TimeUnit.SECONDS)
+        assertEquals("/api/files/list", request?.requestUrl?.encodedPath)
+        assertEquals("", request?.requestUrl?.queryParameter("path"))
+        awaitCondition { db.fileDao().getFiles(base, com.nas.naswebdav.currentAccountKey()).any { it.path == url } }
+        assertEquals(url, browser.fileList.single().path)
+
+        server.enqueue(MockResponse().setBodyDelay(2, TimeUnit.SECONDS).setBody("""{"ok":true,"items":[]}"""))
+        browser.resetToDefaultMode()
+        assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        assertEquals(url, browser.fileList.single().path)
+        awaitCondition { db.fileDao().getFiles(base, com.nas.naswebdav.currentAccountKey()).isEmpty() }
+        assertTrue(browser.fileList.isEmpty())
+        coVerify(exactly = 0) { WebDavManager.listFiles(any(), any()) }
+    }
+
+    @Test
+    fun `cold name listing publishes a preview while the rest is still downloading`() = runBlocking {
+        val folder = base + "large/"
+        viewModel.setFileSort("name_asc")
+        server.enqueue(streamedDirectoryResponse(DIRECTORY_PREVIEW_SIZE + 1))
+        viewModel.navigateToUrl(folder)
+        awaitCondition { viewModel.fileList.size == DIRECTORY_PREVIEW_SIZE && viewModel.isLoading }
+        coVerify(exactly = 0) { repository.cacheDirectoryListing(any(), any(), any(), any()) }
+        awaitCondition { !viewModel.isLoading && viewModel.fileList.size == DIRECTORY_PREVIEW_SIZE + 1 }
+        coVerify(timeout = 1000) { repository.cacheDirectoryListing(folder, match { it.size == DIRECTORY_PREVIEW_SIZE + 1 }, any(), false) }
+    }
+
+    @Test
+    fun `rejected streamed listing removes preview before WebDAV fallback`() = runBlocking {
+        val folder = base + "incomplete/"
+        val fallback = kotlinx.coroutines.CompletableDeferred<List<NasFile>>()
+        coEvery { repository.getRemoteFilesAndCache(folder) } coAnswers { fallback.await() }
+        viewModel.setFileSort("name_asc")
+        server.enqueue(streamedDirectoryResponse(DIRECTORY_PREVIEW_SIZE + 2))
+        viewModel.navigateToUrl(folder)
+        awaitCondition { viewModel.fileList.size == DIRECTORY_PREVIEW_SIZE }
+        awaitCondition { viewModel.isLoading && viewModel.fileList.isEmpty() }
+        fallback.complete(emptyList())
+        awaitCondition { !viewModel.isLoading }
+        coVerify(exactly = 0) { repository.cacheDirectoryListing(any(), any(), any(), any()) }
+    }
+
+    private fun streamedDirectoryResponse(total: Int): MockResponse {
+        fun row(n: Int) = """{"name":"$n.jpg","size":10,"is_dir":false,"mtime":12}"""
+        val first = (1..DIRECTORY_PREVIEW_SIZE).joinToString(",") { row(it) }
+        val prefix = """{"items":[$first,"""
+        val tail = row(DIRECTORY_PREVIEW_SIZE + 1) + """],"ok":true,"total":$total}"""
+        return MockResponse().setBody(prefix + " ".repeat(4000) + tail)
+            .throttleBody((prefix.length + 2000).toLong(), 800, TimeUnit.MILLISECONDS)
+    }
+
+    @Test
+    fun `leaving a directory cancels its network request without starting PROPFIND`() = runBlocking {
+        server.enqueue(MockResponse().setBodyDelay(2, TimeUnit.SECONDS).setBody("""{"ok":true,"items":[]}"""))
+        viewModel.navigateToUrl(base + "first/")
+        assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        server.enqueue(MockResponse().setBody("""{"ok":true,"items":[]}"""))
+        viewModel.navigateToUrl(base + "next/")
+        val next = server.takeRequest(2, TimeUnit.SECONDS)
+        assertEquals("next", next?.requestUrl?.queryParameter("path"))
+        awaitCondition(1000) {
+            !viewModel.isLoading && NasApplication.instance.fastApiClient.dispatcher.runningCalls()
+                .none { it.request().url.queryParameter("path") == "first" }
+        }
+        coVerify(exactly = 0) { repository.getRemoteFilesAndCache(any()) }
     }
 
     @Test

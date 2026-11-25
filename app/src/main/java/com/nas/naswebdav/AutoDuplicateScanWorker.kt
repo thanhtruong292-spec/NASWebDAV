@@ -159,72 +159,126 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     message = applicationContext.getString(R.string.autodup_auto_schedule_log)
                 )
             )
-            // Incremental index — KHÔNG clearAllFiles() vì Fast-Path API dùng INSERT OR REPLACE,
-            // avoids DB churn (hàng triệu row xóa + chèn lại mỗi lần auto-scan).
-            var totalFiles = 0
+            // 100% Rust trên NAS: gọi POST /api/disk/scan_duplicates + poll status, không fallback Room/WebDAV
             val apiBaseUrl = url.toApiBaseUrl()
-            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").tag(WebDavManager.AuthState::class.java,auth).header("Authorization",auth.authHeader).build()
-            val client = NasApplication.instance.sharedHttpClient
-            val mirrorStarted = System.currentTimeMillis()
-            val scanAccount = currentAccountKey()
-            val snapshot = client.newCall(request).execute().use { response ->
-                val body = response.body
-                if (!response.isSuccessful || body == null) {
-                    throw IncompleteNasCatalogueException("Danh mục NAS chưa sẵn sàng; chưa dọn file")
+            val client = NasApplication.instance.fastApiClient
+            val jsonMedia = "application/json; charset=utf-8".toMediaTypeOrNull()
+            val startReq = okhttp3.Request.Builder()
+                .url("$apiBaseUrl/api/disk/scan_duplicates")
+                .tag(WebDavManager.AuthState::class.java, auth)
+                .header("Authorization", auth.authHeader)
+                .post(
+                    JSONObject()
+                        .put("async", true)
+                        .put("min_size", 0)
+                        .put("limit", 0)
+                        .put("client_cleanup", true)
+                        .put("work_lease", activeLease.scanPermit())
+                        .toString()
+                        .toRequestBody(jsonMedia)
+                )
+                .build()
+            var lastJson = client.newCall(startReq).execute().use { resp ->
+                val bodyStr = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    val err = runCatching { JSONObject(bodyStr).optString("error") }.getOrDefault("")
+                        .ifBlank { "HTTP ${resp.code}" }
+                    throw IllegalStateException("Rust duplicate_finder không sẵn sàng: $err")
                 }
-                readNasCatalogue(body.charStream(),url,scanAccount) { batch, received, expected ->
-                    if (isStopped || user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
-                        throw CancellationException("NAS account changed or scan stopped")
-                    }
-                    activeLease.progress("catalogue:$received",received,expected)
-                    WebDavManager.drainPendingCacheClear()
-                    db.withTransaction { db.fileDao().insertFiles(batch) }
-                }
+                JSONObject(bodyStr)
             }
-            require(snapshot.revision == activeLease.revision) {"Danh mục NAS đã thay đổi; chưa dọn file"}
-            activeLease.progress("catalogue-complete",snapshot.total,snapshot.total)
-            finishNasCatalogueMirror(db,url,scanAccount,mirrorStarted,snapshot)
-            totalFiles = snapshot.total
+            val scanId = lastJson.optInt("job_id")
+            var status = lastJson.optString("status", "running")
+            while (status == "running") {
+                currentCoroutineContext().ensureActive()
+                if (isStopped || user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
+                    throw CancellationException("NAS account changed or scan stopped")
+                }
+                activeLease.ensureValid()
+                delay(1500)
+                val pollReq = okhttp3.Request.Builder()
+                    .url("$apiBaseUrl/api/disk/scan_duplicates/status")
+                    .tag(WebDavManager.AuthState::class.java, auth)
+                    .header("Authorization", auth.authHeader)
+                    .get()
+                    .build()
+                lastJson = client.newCall(pollReq).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        throw IllegalStateException("Lỗi poll trạng thái Rust: HTTP ${resp.code}")
+                    }
+                    JSONObject(bodyStr)
+                }
+                check(lastJson.optInt("job_id") == scanId) { "Phiên quét trên NAS đã thay đổi" }
+                status = lastJson.optString("status", "error")
+            }
+            if (status != "done") {
+                throw IllegalStateException("Rust scan không hoàn tất: ${lastJson.optString("error", status)}")
+            }
+            val resultObj = lastJson.optJSONObject("result")
+                ?: throw IllegalStateException("Rust trả về kết quả rỗng")
+            val inventory = requireCompleteDuplicateInventory(resultObj)
+            check(inventory.getLong("catalogue_revision") == activeLease.revision) {
+                "Catalogue đã đổi kể từ khi NAS cấp quyền dọn trùng"
+            }
+            check(!resultObj.optBoolean("server_auto_clean") && lastJson.optJSONObject("schedule")?.let { !resultObj.has("server_auto_clean") && it.optBoolean("auto_clean") } != true) { "NAS đang phụ trách dọn phiên này" }
+            check(resultObj.getJSONArray("groups").length() == resultObj.getInt("total_groups")) { "NAS chỉ trả một phần danh sách nhóm" }
+            val rustFiles = parseRustDuplicateGroups(resultObj, url)
             val key = currentAccountKey()
-            val duplicateSizes = db.fileDao().getDuplicateSizes(key)
             var movedCount = 0
             var savedBytes = 0L
             var totalDuplicatesFound = 0
             var checked = 0
-            for (size in duplicateSizes) {
-                var after = ""
-                while (isActive) {
-                    val page = db.fileDao().getFilesBySizePage(size, key, after, 128)
-                    if (page.isEmpty()) break
-                    for (file in page) {
-                        currentCoroutineContext().ensureActive()
-                        if (user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
-                            throw CancellationException("NAS account changed")
-                        }
-                        while (DuplicateProgressState.isPaused.value) {activeLease.ensureValid();delay(500)}
-                        activeLease.ensureValid()
-                        val proof = try { webDavManager.getCachedVerifiedSha256(file.path, size) }
-                        catch (error: CancellationException) { throw error }
-                        catch (_: Exception) { null }
-                        activeLease.ensureValid()
-                        checked++
-                        if(checked%25==0) activeLease.checkpoint("hash:$checked")
-                        if (proof != null) {
-                            val keeper = db.fileDao().getVerifiedKeeper(proof.first, size, key)
-                            if (keeper != null && canonicalDuplicatePath(keeper.path) != canonicalDuplicatePath(file.path)) {
-                                totalDuplicatesFound++
-                                activeLease.checkpoint("cleanup:$checked")
-                                val deleted = try { webDavManager.deleteVerifiedDuplicate(file, keeper, proof.first,activeLease) }
-                                catch (error: CancellationException) { throw error }
-                                catch (_: Exception) { false }
-                                activeLease.ensureValid()
-                                if (deleted) { movedCount++; savedBytes += size }
-                            }
-                        }
-                        after = file.path
+            val grouped = rustFiles.groupBy { it.partialHash.orEmpty() }
+            for ((sha, group) in grouped) {
+                if (sha.length != 64 || group.size < 2) continue
+                val sorted = group.sortedWith(compareBy<NasFile>({ it.path.length }, { it.path }))
+                val keeperFile = sorted.first()
+                val keeperCached = CachedFile(
+                    path = keeperFile.path,
+                    name = keeperFile.name,
+                    isDirectory = false,
+                    contentType = null,
+                    parentPath = keeperFile.path.substringBeforeLast('/', ""),
+                    contentLength = keeperFile.contentLength,
+                    lastModified = 0L,
+                    partialHash = sha,
+                    fullHash = sha,
+                    accountKey = key
+                )
+                for (victimFile in sorted.drop(1)) {
+                    currentCoroutineContext().ensureActive()
+                    if (user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
+                        throw CancellationException("NAS account changed")
                     }
+                    while (DuplicateProgressState.isPaused.value) { activeLease.ensureValid(); delay(500) }
+                    activeLease.ensureValid()
+                    if (canonicalDuplicatePath(keeperCached.path) == canonicalDuplicatePath(victimFile.path)) continue
+                    totalDuplicatesFound++
+                    checked++
+                    activeLease.checkpoint("cleanup:$checked")
+                    val victimCached = CachedFile(
+                        path = victimFile.path,
+                        name = victimFile.name,
+                        isDirectory = false,
+                        contentType = null,
+                        parentPath = victimFile.path.substringBeforeLast('/', ""),
+                        contentLength = victimFile.contentLength,
+                        lastModified = 0L,
+                        partialHash = sha,
+                        fullHash = sha,
+                        accountKey = key
+                    )
+                    val deleted = try { webDavManager.deleteVerifiedDuplicate(victimCached, keeperCached, sha, activeLease) }
+                    catch (error: CancellationException) { throw error }
+                    catch (_: Exception) { false }
+                    activeLease.ensureValid()
+                    if (deleted) { movedCount++; savedBytes += victimFile.contentLength }
                 }
             }
+            check(movedCount == totalDuplicatesFound) { "Chỉ xóa được $movedCount/$totalDuplicatesFound bản trùng" }
+            throttleJob.cancel()
+            activeLease.complete()
             val durationMin = (System.currentTimeMillis() - startTime) / 60000
             SystemLogger.log(
                 "SUCCESS",
@@ -237,8 +291,6 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     durationMin
                 )
             )
-            throttleJob.cancel()
-            activeLease.complete()
             SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất dọn dẹp trùng lặp tự động")
             Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

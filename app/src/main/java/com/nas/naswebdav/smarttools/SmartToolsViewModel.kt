@@ -13,7 +13,6 @@ import com.nas.naswebdav.OrganizerFilter
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.AutoDuplicateScanWorker
-import com.nas.naswebdav.deleteVerifiedDuplicate
 import com.nas.naswebdav.DuplicateScanWorker
 import com.nas.naswebdav.toApiBaseUrl
 import com.nas.naswebdav.toNasRelativePath
@@ -24,6 +23,25 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import androidx.core.content.edit
+
+internal fun duplicateScanReadout(snapshot: org.json.JSONObject): String {
+    val report = snapshot.optJSONObject("result")
+    val scope = when {
+        snapshot.opt("path") !is String -> "Phạm vi chưa rõ."
+        snapshot.optString("path") in setOf("", "/", "/webdav", "/webdav/") -> "Phạm vi toàn thư mục WebDAV."
+        else -> "Phạm vi một thư mục con."
+    }
+    val count = report?.optLong("total_files_scanned", -1L)?.takeIf { it >= 0 }
+        ?: snapshot.optLong("scanned", -1L).takeIf { it >= 0 }
+    val errors = report?.opt("read_errors")
+    val evidence = when {
+        errors !is Number -> "NAS chưa cung cấp số lỗi đọc."
+        errors.toLong() > 0L -> "Có ${errors.toLong()} lỗi đọc."
+        else -> ""
+    }
+    return listOf(scope, count?.let { "Đã quét $it tệp." }.orEmpty(), evidence)
+        .filter { it.isNotEmpty() }.joinToString(" ")
+}
 
 /**
  * SmartToolsViewModel — Primary owner of smart-tools state.
@@ -73,6 +91,42 @@ class SmartToolsViewModel(
     var scanDuplicatesStageDescription by androidx.compose.runtime.mutableStateOf("")
     var scanDuplicatesIsPaused by androidx.compose.runtime.mutableStateOf(false)
     var autoCleanEnabled by androidx.compose.runtime.mutableStateOf(false)
+    var dupSchedEnabled by androidx.compose.runtime.mutableStateOf(true)
+    var dupSchedHour by androidx.compose.runtime.mutableIntStateOf(3)
+    var dupSchedIntervalDays by androidx.compose.runtime.mutableIntStateOf(7)
+    var dupSchedAutoClean by androidx.compose.runtime.mutableStateOf(false)
+    var dupSchedLastRunAt by androidx.compose.runtime.mutableLongStateOf(0L)
+    var dupSchedLastGroups by androidx.compose.runtime.mutableIntStateOf(0)
+    private var dupSmoothedEtaMs: Long = -1L
+
+    // ═══ LIVE DUPLICATE DELETION PROGRESS (Rust SHA-256 + F_SETLEASE batch) ═══
+    var isDeletingDuplicates by androidx.compose.runtime.mutableStateOf(false)
+        private set
+    var dupDeleteTotal by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var dupDeleteDone by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var dupDeleteProcessed by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var dupDeleteSkipped by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var dupDeleteBytesFreed by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    private var fullReportDisplayed = false
+    private var duplicateStatusJob: kotlinx.coroutines.Job? = null
+    private var cleanupScanReadout = ""
+    private var cleanupJobId: Long? = null
+    val nasCleanupActive get() = cleanupJobId != null
+    var dupServerStatus by androidx.compose.runtime.mutableStateOf("")
+        private set
+    var dupSessionDeletedCount by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    var dupSessionFreedBytes by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    var dupDeleteCurrentFile by androidx.compose.runtime.mutableStateOf("")
+        private set
+    @Volatile private var dupDeleteCancelRequested: Boolean = false
+    private var dupDeleteJob: kotlinx.coroutines.Job? = null
 
     // ═══ SIMILAR IMAGES STATE (NAS Rust NEON Hamming Search) ═══
 
@@ -140,6 +194,187 @@ class SmartToolsViewModel(
         com.nas.naswebdav.GlobalUiViewModel()
     }
 
+    fun fetchDuplicateSchedule(forceReload: Boolean = false) {
+        if (duplicateStatusJob?.isActive == true) return
+        duplicateStatusJob = viewModelScope.launch(Dispatchers.IO) {
+            val baseUrl = WebDavManager.currentBaseUrl
+            val apiBase = baseUrl.toApiBaseUrl()
+            if (apiBase.isBlank()) return@launch
+            val authHeader = WebDavManager.currentAuthHeader()
+            runCatching {
+                val jobId = cleanupJobId
+                if (jobId != null && !forceReload) {
+                    val progressReq = okhttp3.Request.Builder()
+                        .url("$apiBase/api/duplicates/auto_clean/status")
+                        .header("Authorization", authHeader).build()
+                    val progress = NasApplication.instance.fastApiClient.newCall(progressReq).execute().use { response ->
+                        check(response.isSuccessful) { "HTTP ${response.code}" }
+                        org.json.JSONObject(response.body?.string().orEmpty())
+                    }
+                    if (progress.optLong("job_id", -1) == jobId && progress.optString("status") == "running") {
+                        withContext(Dispatchers.Main) {
+                            dupServerStatus = listOf(cleanupScanReadout, cleanupStatusText(progress))
+                                .filter { it.isNotBlank() }.joinToString(" ")
+                        }
+                        return@launch
+                    }
+                }
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/disk/scan_duplicates/status")
+                    .header("Authorization", authHeader)
+                    .get()
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    check(resp.isSuccessful) { "HTTP ${resp.code}" }
+                    val root = org.json.JSONObject(resp.body?.string() ?: return@use)
+                    root.optJSONObject("schedule")?.let { j ->
+                        withContext(Dispatchers.Main) {
+                            dupSchedEnabled = j.optBoolean("enabled", true)
+                            dupSchedHour = j.optInt("hour", 3)
+                            dupSchedIntervalDays = j.optInt("interval_days", 7)
+                            dupSchedAutoClean = j.optBoolean("auto_clean", false) || j.optBoolean("autoClean", false)
+                            dupSchedLastRunAt = (j.optDouble("last_run_at", 0.0) * 1000.0).toLong()
+                            dupSchedLastGroups = j.optInt("last_groups", 0)
+                        }
+                    }
+                    val st = root.optString("status", "idle")
+                    val report = root.optJSONObject("result")
+                    val hasInventory = report?.has("inventory") == true
+                    val completeReport = report != null && (!hasInventory || runCatching {
+                        com.nas.naswebdav.requireCompleteDuplicateInventory(report)
+                    }.isSuccess)
+                    val notice = when {
+                        st != "done" -> ""
+                        !completeReport -> "NAS chưa gửi báo cáo catalogue đầy đủ."
+                        else -> com.nas.naswebdav.duplicateReportNotice(report)
+                    }
+                    val cleanup = root.optJSONObject("cleanup")
+                    val scanReadout = if (st == "done") duplicateScanReadout(root) else ""
+                    val statusText = when {
+                        st == "error" -> root.optString("error", "Quét gặp lỗi")
+                        st == "cancelled" -> "Đã hủy quét"
+                        st == "cancelling" -> "NAS đang dừng phiên quét"
+
+                        cleanup == null -> notice
+                        cleanup.optString("status") == "pending" -> "Đang chờ NAS dọn"
+                        else -> {
+                            listOf(cleanupStatusText(cleanup), notice).filter { it.isNotEmpty() }.joinToString(" ")
+                        }
+                    }
+                    val statusWithScope = listOf(scanReadout, statusText).filter { it.isNotBlank() }.joinToString(" ")
+                    val cleanupChanged = statusWithScope != dupServerStatus
+                    if (cleanupChanged && notice.isNotEmpty()) android.util.Log.i("DuplicateScan", notice)
+                    withContext(Dispatchers.Main) {
+                        cleanupJobId = if (cleanup?.optString("status") in setOf("running", "pending")) root.optLong("job_id", -1) else null
+                        cleanupScanReadout = scanReadout
+                        dupServerStatus = statusWithScope
+                    }
+                    if (st == "running" || st == "cancelling") {
+                        // Tu dong gan lai vao phien quet Rust dang chay tren NAS (ke ca khi vua mo lai app)
+                        val rawElapsedMs = (root.optDouble("elapsed_sec", 0.0) * 1000.0).toLong().coerceAtLeast(0L)
+                        val prevElapsedMs = DuplicateProgressState.elapsedTime.value
+                        val elapsedMs = rawElapsedMs.coerceAtLeast(prevElapsedMs)
+                        val pctReal = (root.optDouble("percent", 1.0).toFloat() / 100f).coerceIn(0.01f, 0.99f)
+                        val rawEtaMs = if (pctReal > 0.03f && elapsedMs >= 3000L) ((elapsedMs / pctReal) - elapsedMs).toLong().coerceAtLeast(0L) else -1L
+                        val etaMs = if (rawEtaMs > 0L) {
+                            dupSmoothedEtaMs = if (dupSmoothedEtaMs <= 0L) rawEtaMs else ((dupSmoothedEtaMs * 3 + rawEtaMs) / 4)
+                            dupSmoothedEtaMs
+                        } else {
+                            dupSmoothedEtaMs = -1L
+                            -1L
+                        }
+                        val curRel = root.optString("current_file", "")
+                        DuplicateProgressState.stage.value = if (st == "cancelling") {
+                            "NAS đang dừng phiên quét"
+                        } else {
+                            root.optString("stage_name", "Rust NAS đang quét...")
+                        }
+                        DuplicateProgressState.stageNumber.value = root.optInt("stage_num", 1).coerceIn(1, 3)
+                        DuplicateProgressState.scannedCount.value = root.optInt("scanned", 0)
+                        DuplicateProgressState.foundCount.value = root.optInt("candidates", 0)
+                        DuplicateProgressState.percent.value = pctReal
+                        DuplicateProgressState.elapsedTime.value = elapsedMs
+                        DuplicateProgressState.estimatedTimeRemaining.value = etaMs
+                        DuplicateProgressState.currentFolder.value = if (curRel.contains('/')) "/" + curRel.substringBeforeLast('/') else "/"
+                        DuplicateProgressState.itemName.value = curRel.substringAfterLast('/')
+                        withContext(Dispatchers.Main) { isScanningDuplicates = true }
+                    } else {
+                        dupSmoothedEtaMs = -1L
+                        val wasScanning = isScanningDuplicates
+                        withContext(Dispatchers.Main) { isScanningDuplicates = false }
+                        // Chỉ nạp lại kết quả khi:
+                        // 1. Người dùng yêu cầu làm mới rõ ràng (forceReload)
+                        // 2. Hoặc tiến trình quét vừa hoàn tất (wasScanning)
+                        // 3. Hoặc danh sách cục bộ đang trống (chưa từng nạp)
+                        // Tuyệt đối không ghi đè khi đang xóa tệp (!isDeletingDuplicates)
+                        if (!isDeletingDuplicates && (forceReload || jobId != null || wasScanning || cleanupChanged || duplicateFilesList.isEmpty())) {
+                            val loaded = if (st == "done" && completeReport) {
+                                com.nas.naswebdav.parseRustDuplicateGroups(report, baseUrl)
+                            } else {
+                                emptyList()
+                            }
+                            DuplicateProgressState.lastRustResults.value = loaded
+                            withContext(Dispatchers.Main) {
+                                val isFull = report != null && (report.optInt("total_groups", -1) <= (report.optJSONArray("groups")?.length() ?: 0))
+                                fullReportDisplayed = st == "done" && isFull
+                                duplicateFilesList = loaded
+                            }
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                android.util.Log.w("DuplicateScan", "Không cập nhật được tiến trình NAS", error)
+                withContext(Dispatchers.Main) { dupServerStatus = "Chưa cập nhật được tiến trình từ NAS." }
+            }
+        }
+    }
+
+    private fun cleanupStatusText(cleanup: org.json.JSONObject): String {
+        val label = when (cleanup.optString("status")) {
+            "running" -> "NAS đang dọn"
+            "partial" -> "NAS dọn chưa hết"
+            "cancelled" -> "NAS đã dừng dọn"
+            "done" -> {
+                if (cleanup.optInt("total", -1) == 0 && cleanup.optInt("deleted") == 0) {
+                    return "Không có tệp trong danh sách dọn của phiên này."
+                }
+                "NAS đã kết thúc lượt dọn"
+            }
+            else -> "Dọn gặp lỗi"
+        }
+        return "$label. Đã xóa ${cleanup.optInt("deleted")}/${cleanup.optInt("total")}, bỏ qua ${cleanup.optInt("skipped")}, giữ ${cleanup.optInt("retained_small")} tệp dưới 1 KiB, chờ đồng bộ ${cleanup.optInt("metadata_pending")}."
+    }
+
+    fun saveDuplicateSchedule(enabled: Boolean, hour: Int, intervalDays: Int, autoClean: Boolean = false, context: Context? = null) {
+        dupSchedEnabled = enabled
+        dupSchedHour = hour.coerceIn(0, 23)
+        dupSchedIntervalDays = intervalDays.coerceIn(1, 30)
+        dupSchedAutoClean = autoClean
+        if (context != null) {
+            toggleAutoClean(context, autoClean)
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+            if (base.isBlank()) return@launch
+            runCatching {
+                val body = org.json.JSONObject()
+                    .put("enabled", dupSchedEnabled)
+                    .put("hour", dupSchedHour)
+                    .put("interval_days", dupSchedIntervalDays)
+                    .put("auto_clean", dupSchedAutoClean)
+                    .toString()
+                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/disk/scan_duplicates/schedule")
+                    .header("Authorization", WebDavManager.currentAuthHeader())
+                    .post(body)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().close()
+            }
+        }
+    }
+
     // ═══ AUTO CLEAN ═══
 
     fun toggleAutoClean(context: Context, enabled: Boolean) {
@@ -183,6 +418,10 @@ class SmartToolsViewModel(
         if (isWorkerRunning) return
 
         isWorkerRunning = true
+        if (forceRestart) {
+            dupSessionDeletedCount = 0
+            dupSessionFreedBytes = 0L
+        }
         scanDuplicatesCurrentFolderUrl = "Đang kết nối..."
         scanDuplicatesCurrentItemName = "Khởi tạo..."
         scanDuplicatesTotalScanned = 0
@@ -211,21 +450,28 @@ class SmartToolsViewModel(
                         when (workInfo.state) {
                             androidx.work.WorkInfo.State.SUCCEEDED -> {
                                 scanDuplicatesStage = "Hoàn tất"
-                                scanDuplicatesCurrentFolderUrl = "Hoàn tất!"
+                                scanDuplicatesCurrentFolderUrl = "Hoàn tất (Rust NAS)!"
                                 scanDuplicatesCurrentItemName = "Đã quét xong toàn bộ."
                                 scanDuplicatesPercent = 1f
                                 scanDuplicatesCurrentStagePercent = 1f
-                                scanDuplicatesStageNumber = 4
-                                scanDuplicatesStageDescription = workInfo.outputData.getString("stageDescription") ?: "Hoàn tất tác vụ quét."
+                                scanDuplicatesStageNumber = 3
+                                scanDuplicatesStageDescription = workInfo.outputData.getString("stageDescription") ?: "Hoàn tất tác vụ quét Rust."
                                 isWorkerRunning = false
+                                isScanningDuplicates = false
                                 loadDuplicateResultsFromCache(context)
                             }
                             androidx.work.WorkInfo.State.FAILED -> {
-                                scanDuplicatesCurrentFolderUrl = "Gặp lỗi hệ thống!"
+                                val err = workInfo.outputData.getString("error") ?: "Rust duplicate_finder gặp lỗi trên NAS!"
+                                scanDuplicatesCurrentFolderUrl = err
+                                scanDuplicatesStage = "Lỗi quét Rust"
+                                scanDuplicatesStageDescription = err
                                 isWorkerRunning = false
+                                isScanningDuplicates = false
+                                _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, err)
                             }
                             androidx.work.WorkInfo.State.CANCELLED -> {
                                 isWorkerRunning = false
+                                isScanningDuplicates = false
                             }
                             else -> { /* RUNNING, ENQUEUED, BLOCKED */ }
                         }
@@ -233,6 +479,7 @@ class SmartToolsViewModel(
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 isWorkerRunning = false
+                isScanningDuplicates = false
             }
         }
     }
@@ -240,73 +487,46 @@ class SmartToolsViewModel(
     fun loadDuplicateResultsFromCache(context: Context) {
         viewModelScope.launch {
             try {
-                // SEPARATION-OF-CONCERNS: Ưu tiên nạp kết quả trùng lặp đã xác minh từ NAS Rust (/api/hash/duplicates)
-                // thay vì phải tải full file về điện thoại để băm SHA-256; fallback Room DB nếu offline.
+                // 100% Rust trên NAS — KHÔNG fallback sang Room DB cục bộ.
                 val duplicates = withContext(Dispatchers.IO) {
-                    val serverDups = fetchServerDuplicates()
-                    if (serverDups != null && serverDups.isNotEmpty()) serverDups else repository.getDuplicateFiles()
+                    fetchServerDuplicates()
+                        ?: error("NAS chưa trả danh sách nhóm cho phiên này.")
                 }
                 withContext(Dispatchers.Main) {
-                    duplicateFilesList = duplicates
+                    fullReportDisplayed = !duplicates.second.contains("Đã nhận")
+                    if (!fullReportDisplayed) dupServerStatus = duplicates.second
+                    duplicateFilesList = duplicates.first
                     isShowingDuplicates = true
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
-                        "Lỗi nạp danh sách từ DB: ${e.message}")
+                        "Lỗi nạp kết quả trùng lặp từ Rust NAS: ${e.message}")
                 }
             }
         }
     }
 
-    /**
-     * Gọi trực tiếp GET /api/hash/duplicates trên NAS (Rust + batch SQLite không N+1).
-     * Trả về danh sách phẳng các NasFile trùng lặp (cùng sha256 nằm ở `partialHash`), hoặc null nếu lỗi mạng.
-     */
-    private fun fetchServerDuplicates(minSize: Long = 1024L): List<com.nas.naswebdav.NasFile>? {
-        val baseUrl = WebDavManager.currentBaseUrl
-        if (baseUrl.isBlank()) return null
+    private fun fetchServerDuplicates(): Pair<List<com.nas.naswebdav.NasFile>, String>? {
+        val auth = WebDavManager.currentAuthState()
+        if (auth.baseUrl.isBlank()) return null
+        val apiBase = auth.baseUrl.toApiBaseUrl()
+        val request = okhttp3.Request.Builder()
+            .url("$apiBase/api/disk/scan_duplicates/status")
+            .header("Authorization", auth.authHeader)
+            .get()
+            .build()
         return try {
-            val apiUrl = "${baseUrl.toApiBaseUrl()}/api/hash/duplicates?min_size=$minSize"
-            val req = okhttp3.Request.Builder()
-                .url(apiUrl)
-                .header("Authorization", WebDavManager.currentAuthHeader())
-                .get()
-                .build()
-            NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val body = resp.body?.string() ?: return null
-                val root = org.json.JSONObject(body)
-                val groups = root.optJSONArray("groups") ?: return emptyList()
-                val webdavRoot = baseUrl.trimEnd('/')
-                val out = mutableListOf<com.nas.naswebdav.NasFile>()
-                for (i in 0 until groups.length()) {
-                    val g = groups.getJSONObject(i)
-                    val sha = g.optString("sha256", "")
-                    val count = g.optInt("count", 0)
-                    val wasted = g.optLong("wasted_bytes", 0L)
-                    val perFileSize = if (count > 0) wasted / count else 0L
-                    val filesArr = g.optJSONArray("files") ?: continue
-                    for (j in 0 until filesArr.length()) {
-                        val relPath = filesArr.optString(j, "").trim()
-                        if (relPath.isEmpty()) continue
-                        val cleanRel = relPath.removePrefix("/webdav/").removePrefix("/")
-                        val fullUrl = com.nas.naswebdav.toValidUrl("$webdavRoot/$cleanRel")
-                        val name = cleanRel.substringAfterLast('/')
-                        out.add(
-                            com.nas.naswebdav.NasFile(
-                                name = name,
-                                path = fullUrl,
-                                isDirectory = false,
-                                contentType = null,
-                                contentLength = perFileSize,
-                                lastModified = 0L,
-                                partialHash = sha
-                            )
-                        )
-                    }
+            NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val state = org.json.JSONObject(response.body?.string() ?: return null)
+                if (state.optString("status") != "done") return null
+                val report = state.optJSONObject("result") ?: return null
+                if (report.optJSONArray("groups") == null) return null
+                if (report.has("inventory")) {
+                    com.nas.naswebdav.requireCompleteDuplicateInventory(report)
                 }
-                out
+                com.nas.naswebdav.parseRustDuplicateGroups(report, auth.baseUrl) to com.nas.naswebdav.duplicateReportNotice(report)
             }
         } catch (_: Exception) {
             null
@@ -427,13 +647,51 @@ class SmartToolsViewModel(
         deleteSelectedDuplicates(listOf(file))
     }
 
+    fun cancelDuplicateDeletion() {
+        dupDeleteCancelRequested = true
+        dupDeleteJob?.cancel()
+    }
+
+    fun autoCleanAllDuplicates(filterType: String = "all") {
+        if (isDeletingDuplicates) return
+        val candidates = duplicateFilesList.filter { !it.isDirectory && (it.partialHash?.length == 64) }
+        if (candidates.isEmpty()) {
+            android.widget.Toast.makeText(NasApplication.instance, "Không có tệp trùng lặp nào để dọn dẹp.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val imgExts = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "gif", "bmp")
+        val vidExts = setOf("mp4", "mov", "mkv", "avi", "webm", "3gp", "m4v")
+        val filtered = when (filterType.lowercase()) {
+            "image" -> candidates.filter { it.name.substringAfterLast('.', "").lowercase() in imgExts }
+            "video" -> candidates.filter { it.name.substringAfterLast('.', "").lowercase() in vidExts }
+            else -> candidates
+        }
+        val victims = mutableListOf<com.nas.naswebdav.NasFile>()
+        val grouped = filtered.groupBy { it.partialHash.orEmpty() }
+        for ((_, group) in grouped) {
+            if (group.size < 2) continue
+            // Bản gốc tốt nhất: đường dẫn ngắn nhất, tên tệp chuẩn nhất
+            val sorted = group.sortedWith(compareBy<com.nas.naswebdav.NasFile>(
+                { it.path.length },
+                { it.path }
+            ))
+            // Giữ lại bản đầu tiên (sorted.first()), tất cả các bản còn lại là victim cần dọn
+            victims.addAll(sorted.drop(1))
+        }
+        if (victims.isEmpty()) {
+            android.widget.Toast.makeText(NasApplication.instance, "Tất cả các nhóm đã là bản gốc duy nhất.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        deleteSelectedDuplicates(victims)
+    }
+
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) {
-        if (files.isEmpty()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val db = NasApplication.instance.database
+        if (files.isEmpty() || isDeletingDuplicates || nasCleanupActive) return
+        dupDeleteCancelRequested = false
+        dupDeleteJob = viewModelScope.launch(Dispatchers.IO) {
             val accountKey = com.nas.naswebdav.currentAccountKey()
             val selected = files.map { it.path }.toSet()
-            val roomCandidates = db.fileDao().getVerifiedDuplicateFiles(accountKey)
+            // 100% Rust trên NAS: chỉ dùng danh sách đã xác minh SHA-256 từ Rust, không fallback Room DB
             val serverCandidates = duplicateFilesList
                 .filter { !it.isDirectory && (it.partialHash?.length == 64) }
                 .map { f ->
@@ -450,26 +708,157 @@ class SmartToolsViewModel(
                         accountKey = accountKey
                     )
                 }
-            val plan = com.nas.naswebdav.planVerifiedDuplicateCleanup(
-                roomCandidates + serverCandidates, selected)
-            val deleted = mutableSetOf<String>()
-            for ((victim, keeper) in plan) {
-                try {
-                    if (WebDavManager.deleteVerifiedDuplicate(victim, keeper, keeper.fullHash ?: continue)) {
-                        deleted.add(victim.path)
-                    }
-                } catch (error: kotlinx.coroutines.CancellationException) { throw error }
-                catch (error: Exception) {
-                    android.util.Log.w("SmartToolsVM", "Verified cleanup skipped: ${victim.path}", error)
+            val mediaExts = setOf(
+                "jpg", "jpeg", "png", "webp", "heic", "heif", "gif", "bmp",
+                "mp4", "mov", "mkv", "avi", "webm", "3gp", "m4v"
+            )
+            // Ưu tiên xóa tệp ảnh/video có dung lượng thấp trước để giải phóng nhanh & tiến trình mượt
+            val plan = com.nas.naswebdav.planVerifiedDuplicateCleanup(serverCandidates, selected)
+                .sortedWith(
+                    compareBy<Pair<com.nas.naswebdav.CachedFile, com.nas.naswebdav.CachedFile>>(
+                        { (v, _) -> if (v.name.substringAfterLast('.', "").lowercase() in mediaExts) 0 else 1 },
+                        { (v, _) -> v.contentLength }
+                    )
+                )
+            if (plan.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        NasApplication.instance,
+                        "Không có bản trùng hợp lệ để xóa (đã giữ bản gốc mỗi nhóm).",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
                 }
+                return@launch
             }
-            val remaining = fetchServerDuplicates() ?: repository.getDuplicateFiles()
             withContext(Dispatchers.Main) {
-                duplicateFilesList = remaining
-                selectedDuplicates.clear()
-                android.widget.Toast.makeText(NasApplication.instance,
-                    "Đã xóa ${deleted.size} bản trùng; giữ bản gốc và bỏ qua tệp chưa xác minh.",
-                    android.widget.Toast.LENGTH_LONG).show()
+                isDeletingDuplicates = true
+                dupDeleteTotal = plan.size
+                dupDeleteDone = 0
+                dupDeleteProcessed = 0
+                dupDeleteSkipped = 0
+                dupDeleteBytesFreed = 0L
+                dupDeleteCurrentFile = plan.first().first.name
+            }
+            val deleted = mutableSetOf<String>()
+            var totalBytesFreed = 0L
+            var totalSkipped = 0
+            var processedCount = 0
+            var metadataPending = 0
+            val auth = WebDavManager.currentAuthState()
+            val webdavBase = auth.baseUrl
+            val apiBase = webdavBase.toApiBaseUrl()
+            val authHeader = auth.authHeader
+            val batchSupported = apiBase.isNotBlank() && authHeader.isNotBlank()
+            val batchClient = NasApplication.instance.fastApiClient.newBuilder()
+                .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val jsonMedia = "application/json; charset=utf-8".toMediaTypeOrNull()
+
+            try {
+                if (batchSupported) {
+                    val relToFull = mutableMapOf<String, String>()
+                    for (chunk in plan.chunked(20)) {
+                        if (dupDeleteCancelRequested) break
+                        val curName = chunk.first().first.name
+                        withContext(Dispatchers.Main) { dupDeleteCurrentFile = curName }
+                        val arr = org.json.JSONArray()
+                        for ((victim, keeper) in chunk) {
+                            val sha = keeper.fullHash ?: continue
+                            val victimPath = com.nas.naswebdav.relativeDuplicatePath(webdavBase, victim.path)
+                            val keeperPath = com.nas.naswebdav.relativeDuplicatePath(webdavBase, keeper.path)
+                            if (victimPath == null || keeperPath == null) {
+                                totalSkipped++
+                                continue
+                            }
+                            // Ánh xạ toàn diện các biến thể định dạng đường dẫn để khớp 100% phản hồi từ server
+                            relToFull[victimPath] = victim.path
+                            relToFull[victim.path] = victim.path
+                            val vClean = victimPath.removePrefix("/webdav/").removePrefix("webdav/").removePrefix("/")
+                            relToFull[vClean] = victim.path
+                            relToFull["/webdav/$vClean"] = victim.path
+                            runCatching { java.net.URLDecoder.decode(victimPath, "UTF-8") }.getOrNull()?.let { decoded ->
+                                relToFull[decoded] = victim.path
+                                val dClean = decoded.removePrefix("/webdav/").removePrefix("webdav/").removePrefix("/")
+                                relToFull[dClean] = victim.path
+                                relToFull["/webdav/$dClean"] = victim.path
+                            }
+                            arr.put(
+                                org.json.JSONObject()
+                                    .put("victim", victimPath)
+                                    .put("keeper", keeperPath)
+                                    .put("sha256", sha)
+                            )
+                        }
+                        try {
+                            if (arr.length() > 0) {
+                                val req = okhttp3.Request.Builder()
+                                    .url("$apiBase/api/duplicates/cleanup_batch")
+                                    .header("Authorization", authHeader)
+                                    .post(org.json.JSONObject().put("items", arr).toString().toRequestBody(jsonMedia))
+                                    .build()
+                                batchClient.newCall(req).execute().use { resp ->
+                                    if (resp.isSuccessful) {
+                                        val resObj = org.json.JSONObject(resp.body?.string().orEmpty())
+                                        val delArr = resObj.optJSONArray("deleted_paths")
+                                        if (delArr != null) {
+                                            for (i in 0 until delArr.length()) {
+                                                val rel = delArr.optString(i)
+                                                relToFull[rel]?.let { deleted.add(it) }
+                                            }
+                                        }
+                                        totalSkipped += resObj.optInt("skipped", 0)
+                                        metadataPending += resObj.optInt("metadata_pending", 0)
+                                        totalBytesFreed += resObj.optLong("bytes_removed", 0L)
+                                    } else {
+                                        totalSkipped += arr.length()
+                                    }
+                                }
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            android.util.Log.w("SmartToolsVM", "Batch duplicate cleanup chunk failed", e)
+                            totalSkipped += arr.length()
+                        }
+                        processedCount += chunk.size
+                        withContext(Dispatchers.Main) {
+                            dupDeleteProcessed = processedCount.coerceAtMost(plan.size)
+                            dupDeleteDone = deleted.size
+                            dupDeleteSkipped = totalSkipped
+                            dupDeleteBytesFreed = totalBytesFreed
+                        }
+                    }
+                }
+            } finally {
+                val pruned = duplicateFilesList
+                    .filter { it.path !in deleted }
+                    .groupBy { it.partialHash.orEmpty() }
+                    .values
+                    .filter { it.size > 1 }
+                    .flatten()
+                DuplicateProgressState.lastRustResults.value = pruned
+                val wasCancelled = dupDeleteCancelRequested
+                withContext(Dispatchers.Main) {
+                    isDeletingDuplicates = false
+                    dupDeleteCurrentFile = ""
+                    duplicateFilesList = pruned
+                    selectedDuplicates.clear()
+                    dupSessionDeletedCount += deleted.size
+                    dupSessionFreedBytes += totalBytesFreed
+                    val freedText = com.nas.naswebdav.utils.FormatUtils.formatBytes(totalBytesFreed)
+                    val msg = if (wasCancelled) {
+                        "Đã dừng xóa: đã xóa ${deleted.size}/${plan.size} bản trùng ($freedText)."
+                    } else if (deleted.isEmpty()) {
+                        "Xóa không thành công (0/${plan.size} tệp; đã bỏ qua $totalSkipped tệp do lỗi kết nối hoặc tệp đã bị thay đổi)."
+                    } else if (deleted.size < plan.size) {
+                        "Dọn chưa hết. Đã xóa ${deleted.size}/${plan.size} bản trùng ($freedText); bỏ qua $totalSkipped tệp."
+                    } else {
+                        "Đã xóa ${deleted.size}/${plan.size} bản trùng ($freedText); giữ bản gốc."
+                    }
+                    val status = if (metadataPending > 0) "$msg $metadataPending tệp đang chờ đồng bộ danh mục." else msg
+                    dupServerStatus = status
+                    android.widget.Toast.makeText(NasApplication.instance, status, android.widget.Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -483,11 +872,14 @@ class SmartToolsViewModel(
         scanDuplicatesIsPaused = false
         androidx.work.WorkManager.getInstance(context).cancelUniqueWork("Unique_Scan_V3")
         isWorkerRunning = false
+        dupSmoothedEtaMs = -1L
         scanJob?.cancel()
         isScanningDuplicates = false
         duplicateFilesList = emptyList()
+        DuplicateProgressState.lastRustResults.value = emptyList()
         DuplicateProgressState.stage.value = "Khởi động..."
         DuplicateProgressState.percent.value = 0f
+
     }
 
 

@@ -197,7 +197,8 @@ fn main() {
             }
             let stdout = io::stdout();
             let handle = stdout.lock();
-            if let Err(e) = stream_fast_index(&args[2], handle) {
+            // Goi thang ham chuan trong lib.rs (co unchecked_transaction read snapshot nhat quan)
+            if let Err(e) = nas_indexer_core::stream_fast_index(&args[2], handle) {
                 eprintln!("Stream error: {}", e);
                 exit(1);
             }

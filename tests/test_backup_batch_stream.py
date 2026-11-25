@@ -251,3 +251,37 @@ def test_backup_resumable_chunked_upload_resume_and_sha256(client, monkeypatch, 
     assert os.path.isfile(final_file)
     with open(final_file, "rb") as f:
         assert f.read() == full_data
+
+    # 6. Thu upload lai cung filename voi noi dung khac -> BAT BUOC KHONG DOI TEN, BO QUA (SKIP)
+    diff_data = b"DIFFERENT_CONTENT_FOR_SAME_FILENAME_12345"
+    diff_sha = hashlib.sha256(diff_data).hexdigest()
+    client.post(
+        "/api/backup/resumable/chunk?upload_id=%s&offset=0" % diff_sha,
+        data=diff_data,
+        headers=auth_headers,
+        content_type="application/octet-stream",
+    )
+    r_fin2 = client.post(
+        "/api/backup/resumable/finish",
+        data=json.dumps({
+            "upload_id": diff_sha,
+            "dest": "/AutoBackup/DCIM/Screen recordings",
+            "filename": "Screen_Recording_1GB__id10001.mp4",
+            "size": len(diff_data),
+            "sha256": diff_sha,
+        }),
+        headers=auth_headers,
+        content_type="application/json",
+    )
+    assert r_fin2.status_code == 200
+    fin_body2 = json.loads(r_fin2.data.decode("utf-8"))
+    assert fin_body2["ok"] is True
+    assert fin_body2.get("status") == "ok"
+    assert fin_body2.get("skipped") is True
+    assert fin_body2["filename"] == "Screen_Recording_1GB__id10001.mp4"
+    # Dam bao khong co bat ky file __v nao duoc tao ra
+    dest_folder = os.path.join(webdav_root, "AutoBackup", "DCIM", "Screen recordings")
+    file_list = os.listdir(dest_folder)
+    assert len(file_list) == 1
+    assert file_list[0] == "Screen_Recording_1GB__id10001.mp4"
+    assert "__v" not in file_list[0]

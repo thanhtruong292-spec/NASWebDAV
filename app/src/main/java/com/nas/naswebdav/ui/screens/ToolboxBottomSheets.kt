@@ -466,18 +466,12 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                 // ── ACTION ROW: Tạm dừng / Huỷ / Thu nhỏ ──
                 Spacer(Modifier.height(12.dp))
                 if (smartToolsVM.isWorkerRunning && !smartToolsVM.scanDuplicatesStage.contains("Hoàn tất", ignoreCase = true)) {
-                    val isPaused by com.nas.naswebdav.DuplicateProgressState.isPaused.collectAsState()
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = { smartToolsVM.cancelDuplicateScan(context) },
                             modifier = Modifier.weight(1f),
                             border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
                         ) { Text("Huỷ", color = AccentRed, fontWeight = FontWeight.SemiBold) }
-                        OutlinedButton(
-                            onClick = { smartToolsVM.togglePauseDuplicateScan() },
-                            modifier = Modifier.weight(1f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue)
-                        ) { Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = AccentBlue, fontWeight = FontWeight.SemiBold) }
                         Button(
                             onClick = { smartToolsVM.isScanningDuplicates = false },
                             modifier = Modifier.weight(1f),

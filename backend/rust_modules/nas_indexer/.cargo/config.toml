@@ -1,0 +1,4 @@
+# Verified on NAS RK3328 (100.90.135.102) /proc/cpuinfo:
+# Features: fp asimd evtstrm aes pmull sha1 sha2 crc32 cpuid
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=cortex-a53", "-C", "target-feature=+crc,+neon"]

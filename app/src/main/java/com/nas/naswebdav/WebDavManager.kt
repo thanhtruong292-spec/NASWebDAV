@@ -175,8 +175,7 @@ internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fi
  * P2-8 (lop 2): dinh danh phien cho files_cache (user@host:port/root).
  * Top-level de ca WebDavManager (object) va WebDavRepository (class) deu dung.
  */
-internal fun currentAccountKey(): String {
-    val a = WebDavManager.currentAuthState()
+internal fun currentAccountKey(a: WebDavManager.AuthState = WebDavManager.currentAuthState()): String {
     if (a.baseUrl.isBlank()) return ""
     val host = runCatching { java.net.URL(a.baseUrl).host ?: a.baseUrl }.getOrDefault(a.baseUrl)
     val port = runCatching { java.net.URL(a.baseUrl).port.takeIf { it > 0 } ?: java.net.URL(a.baseUrl).defaultPort }.getOrDefault(-1)
@@ -765,6 +764,10 @@ object WebDavManager {
     /** ETag hiện tại của file trên NAS (null nếu chưa tồn tại/lỗi) — dùng cho If-Match khi upload. */
     suspend fun getFileETag(url: String): String? =
         headFileHeaders(url)?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** Kiểm tra xem tệp có tồn tại trên NAS hay không qua HTTP HEAD. */
+    suspend fun fileExists(url: String): Boolean =
+        headFileHeaders(url) != null
 
     suspend fun headFileHeaders(url: String): okhttp3.Headers? = withContext(Dispatchers.IO) {
 
@@ -1754,6 +1757,39 @@ class WebDavRepository(
     }
 
 
+
+    /** Reconcile a complete directory response without discarding hashes for unchanged files. */
+    internal suspend fun cacheDirectoryListing(
+        url: String, files: List<NasFile>, auth: WebDavManager.AuthState, showHidden: Boolean
+    ) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            if (auth != WebDavManager.currentAuthState()) return@withTransaction
+            val key = currentAccountKey(auth)
+            WebDavManager.drainPendingCacheClear()
+            val dao = database.fileDao()
+            val previous = dao.getFiles(url, key).associateBy { it.path }.toMutableMap()
+            val changed = mutableListOf<CachedFile>()
+            for (file in files) {
+                val old = previous.remove(file.path)
+                if (old != null && old.contentLength == file.contentLength &&
+                    old.lastModified == file.lastModified && old.isDirectory == file.isDirectory
+                ) {
+                    if (old.name != file.name || old.contentType != file.contentType || old.accountKey != key) {
+                        changed.add(old.copy(name = file.name, contentType = file.contentType, accountKey = key))
+                    }
+                } else {
+                    changed.add(CachedFile(file.path, file.name, file.isDirectory, file.contentType,
+                        url, file.contentLength, file.lastModified, accountKey = key))
+                }
+            }
+            changed.chunked(500).forEach { dao.insertFiles(it) }
+            previous.values.forEach {
+                if (showHidden || (!it.name.startsWith(".") && it.name != "@eaDir" && it.name != "#recycle")) {
+                    dao.deleteFileByPath(it.path)
+                }
+            }
+        }
+    }
 
     suspend fun getRemoteFilesAndCache(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 

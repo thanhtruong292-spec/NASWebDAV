@@ -11,7 +11,7 @@ import java.security.MessageDigest
 
 internal enum class BackupContentState { MISSING, MATCH, DIFFERENT, UNVERIFIABLE }
 internal data class BackupSourceDigest(val sha256: String, val version: String?)
-internal data class BackupTargetPlan(val path: String, val skip: Boolean)
+internal data class BackupTargetPlan(val path: String, val skip: Boolean, val isContentMatch: Boolean = true)
 internal data class SourceFileVersion(val size: Long, val fileId: String, val value: String)
 private const val LOCAL_BACKUP_HASH_ACCOUNT = "@local-backup-source-v1"
 
@@ -259,8 +259,8 @@ internal suspend fun WebDavManager.planBackupTarget(stable: String, size: Long, 
         BackupContentState.MISSING -> BackupTargetPlan(stable, false)
         BackupContentState.UNVERIFIABLE -> throw IOException("Không đủ bằng chứng xác minh đích; giữ nguồn và không tạo thêm bản sao")
         BackupContentState.DIFFERENT -> {
-            val dot = stable.lastIndexOf('.').takeIf { it > stable.lastIndexOf('/') } ?: stable.length
-            BackupTargetPlan(stable.substring(0,dot) + "__v" + System.currentTimeMillis() + stable.substring(dot), false)
+            // Yêu cầu: Cấm tuyệt đối đổi tên file khi upload lên NAS, tất cả phải giữ nguyên tên gốc, trùng tên không tải lên
+            BackupTargetPlan(stable, skip = true, isContentMatch = false)
         }
     }
 }

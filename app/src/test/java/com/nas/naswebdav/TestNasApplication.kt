@@ -6,6 +6,15 @@ package com.nas.naswebdav
  * (schedule worker cần WorkManager init, DB, Sentry...).
  */
 class TestNasApplication : NasApplication() {
+    private val inMemoryDb by lazy {
+        androidx.room.Room.inMemoryDatabaseBuilder(this, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+    }
+
+    override val database: AppDatabase
+        get() = inMemoryDb
+
     override fun onCreate() {
         // Không gọi super — chỉ gán instance để lazy clients dùng được.
         NasApplication.setInstanceForTest(this)

@@ -11,6 +11,7 @@ Tương thích hoàn toàn với Python 3.5.3 (không dùng f-strings, type anno
 import os
 import sys
 import json
+import codecs
 import hashlib
 import ctypes
 import logging
@@ -59,6 +60,42 @@ def _init_rust_bridge():
                     if hasattr(lib, "nas_hasher_find_duplicates_json"):
                         lib.nas_hasher_find_duplicates_json.argtypes = [ctypes.c_char_p, ctypes.c_ulonglong, ctypes.c_int, ctypes.c_int]
                         lib.nas_hasher_find_duplicates_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_find_duplicates_progress_json"):
+                        _dup_cb_type = ctypes.CFUNCTYPE(
+                            ctypes.c_int,
+                            ctypes.c_int,
+                            ctypes.c_ulonglong,
+                            ctypes.c_ulonglong,
+                            ctypes.c_ulonglong,
+                            ctypes.c_char_p,
+                        )
+                        lib.nas_hasher_find_duplicates_progress_json.argtypes = [
+                            ctypes.c_char_p,
+                            ctypes.c_ulonglong,
+                            ctypes.c_int,
+                            ctypes.c_int,
+                            _dup_cb_type,
+                        ]
+                        lib.nas_hasher_find_duplicates_progress_json.restype = ctypes.c_void_p
+                    if hasattr(lib, "nas_hasher_find_duplicates_cached_json"):
+                        _dup_cb_type2 = ctypes.CFUNCTYPE(
+                            ctypes.c_int,
+                            ctypes.c_int,
+                            ctypes.c_ulonglong,
+                            ctypes.c_ulonglong,
+                            ctypes.c_ulonglong,
+                            ctypes.c_char_p,
+                        )
+                        lib.nas_hasher_find_duplicates_cached_json.argtypes = [
+                            ctypes.c_char_p,
+                            ctypes.c_ulonglong,
+                            ctypes.c_int,
+                            ctypes.c_int,
+                            ctypes.c_char_p,
+                            ctypes.c_char_p,
+                            _dup_cb_type2,
+                        ]
+                        lib.nas_hasher_find_duplicates_cached_json.restype = ctypes.c_void_p
                     if hasattr(lib, "nas_hasher_parse_mp4_json"):
                         lib.nas_hasher_parse_mp4_json.argtypes = [ctypes.c_char_p]
                         lib.nas_hasher_parse_mp4_json.restype = ctypes.c_void_p
@@ -175,8 +212,8 @@ def _find_indexer_binary():
     candidates = [
         os.path.join(os.path.dirname(__file__), "rust_modules", "nas_indexer", "target", "release", "nas_indexer.exe"),
         os.path.join(os.path.dirname(__file__), "rust_modules", "nas_indexer", "target", "release", "nas_indexer"),
-        "/usr/local/bin/nas_indexer",
         "/opt/nas_hasher/nas_indexer",
+        "/usr/local/bin/nas_indexer",
     ]
     for p in candidates:
         if os.path.isfile(p):
@@ -192,11 +229,14 @@ def is_indexer_accelerated():
 class _RustIndexerStream(object):
     """
     Iterator đọc luồng JSON theo khối 64KB từ stdout của tiến trình nas_indexer.
+    Dùng UTF-8 incremental decoder dùng chung cho toàn stream để không cắt đứt
+    ký tự đa byte (tiếng Việt) nằm vắt qua ranh giới 65.536 byte.
     Tương thích Python 3.5.3, dọn dẹp tiến trình an toàn khi kết thúc hoặc GeneratorExit.
     """
-    def __init__(self, proc, first_chunk):
+    def __init__(self, proc, first_chunk, decoder=None):
         self._proc = proc
         self._first_chunk = first_chunk
+        self._decoder = decoder or codecs.getincrementaldecoder("utf-8")(errors="ignore")
         self._closed = False
 
     def __iter__(self):
@@ -208,12 +248,19 @@ class _RustIndexerStream(object):
         if self._first_chunk is not None:
             chunk = self._first_chunk
             self._first_chunk = None
-            return chunk
-        raw = self._proc.stdout.read(65536)
-        if not raw:
-            self.close()
-            raise StopIteration
-        return raw.decode("utf-8", errors="ignore")
+            if chunk:
+                return chunk
+        while True:
+            raw = self._proc.stdout.read(65536)
+            if not raw:
+                tail = self._decoder.decode(b"", final=True)
+                self.close()
+                if tail:
+                    return tail
+                raise StopIteration
+            text = self._decoder.decode(raw, final=False)
+            if text:
+                return text
 
     def next(self):
         return self.__next__()
@@ -279,8 +326,9 @@ def stream_fast_index(db_path):
                     pass
             return None
 
-        first_chunk = first_raw.decode("utf-8", errors="ignore")
-        return _RustIndexerStream(proc, first_chunk)
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
+        first_chunk = decoder.decode(first_raw, final=False)
+        return _RustIndexerStream(proc, first_chunk, decoder=decoder)
     except Exception as e:
         log.warning("Failed to start Rust nas_indexer: %s", e)
         return None
@@ -490,36 +538,143 @@ def compute_batch_md5_1mb(pairs, workers=4):
                 pass
 
 
-def find_duplicates(root_dir, min_size=1024, workers=4, limit=500):
+_DUP_PROGRESS_CB_TYPE = ctypes.CFUNCTYPE(
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_ulonglong,
+    ctypes.c_ulonglong,
+    ctypes.c_ulonglong,
+    ctypes.c_char_p,
+)
+
+
+def _find_nas_hasher_bin():
+    """Tim binary Rust doc lap nas_hasher de chay quet trung lap co lap (tranh SIGBUS ctypes/rayon)."""
+    rel_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rust_modules", "nas_hasher", "target", "release")
+    if os.name == "nt":
+        candidates = [os.path.join(rel_dir, "nas_hasher.exe")]
+    else:
+        candidates = ["/opt/nas_hasher/nas_hasher", os.path.join(rel_dir, "nas_hasher")]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def duplicate_scanner_available():
+    return _find_nas_hasher_bin() is not None
+
+
+def compute_duplicate_sha256_fd(fd):
+    """Hash the already-open, leased descriptor without reopening its path."""
+    bin_path = _find_nas_hasher_bin()
+    if not bin_path:
+        raise OSError("Rust nas_hasher binary is unavailable")
+    proc = subprocess.run([bin_path, "sha256-stdin"], stdin=fd,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    digest = proc.stdout.decode("ascii", errors="ignore").strip()
+    if proc.returncode != 0 or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise OSError("Rust nas_hasher could not verify SHA-256")
+    return digest
+
+
+def find_duplicates(root_dir, min_size=1024, workers=4, limit=500, progress_cb=None,
+                    cache_in=None, cache_out=None, catalogue_manifest=None):
     """
-    Quét tệp trùng lặp 3 tầng đa luồng bằng Rust rayon (Size -> Partial MD5 1MB -> Full SHA-256).
-    Trả về dict DuplicateReport nếu thành công, hoặc None nếu thư viện Rust chưa sẵn sàng.
+    Quét tệp trùng lặp 3 tầng đa luồng bằng Rust rayon (Size -> Partial 64KB đầu+cuối -> Full SHA-256).
+    Ưu tiên chạy binary Rust độc lập (`nas_hasher find-duplicates`) đọc progress JSON qua stderr
+    để cách ly tuyệt đối khỏi Python/ctypes/libffi (chống SIGBUS trên ARM64 và hỗ trợ hủy tức thì bằng terminate).
     """
-    if not _init_rust_bridge() or not hasattr(_RUST_LIB, "nas_hasher_find_duplicates_json"):
-        return None
     if not root_dir or not os.path.isdir(root_dir):
         return None
-    ptr = None
-    try:
-        ptr = _RUST_LIB.nas_hasher_find_duplicates_json(
-            str(root_dir).encode("utf-8"),
-            int(max(0, min_size)),
-            int(max(1, min(4, workers))),
-            int(max(0, limit))
-        )
-        if not ptr:
+    bin_path = _find_nas_hasher_bin()
+    if bin_path:
+        cmd = [
+            bin_path,
+            "find-duplicates-catalogue" if catalogue_manifest is not None else "find-duplicates",
+            str(root_dir),
+            str(int(max(0, min_size))),
+            str(int(max(1, min(4, workers)))),
+            str(int(max(0, limit))),
+            str(cache_in or ""),
+            str(cache_out or ""),
+        ]
+        if catalogue_manifest is not None:
+            cmd.append(str(catalogue_manifest))
+        proc = None
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout_chunks = []
+
+            def _drain_stdout():
+                try:
+                    data = proc.stdout.read()
+                    if data:
+                        stdout_chunks.append(data)
+                except Exception:
+                    pass
+
+            t_out = threading.Thread(target=_drain_stdout, daemon=True)
+            t_out.start()
+
+            cancelled = False
+            while True:
+                raw_line = proc.stderr.readline()
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if line.startswith("PROGRESS:") and progress_cb is not None:
+                    try:
+                        ev = json.loads(line[9:])
+                        should_stop = progress_cb(
+                            int(ev.get("stage", 1)),
+                            int(ev.get("done", 0)),
+                            int(ev.get("total", 0)),
+                            int(ev.get("extra", 0)),
+                            str(ev.get("file", "") or ""),
+                        )
+                        if should_stop:
+                            cancelled = True
+                            try:
+                                proc.terminate()
+                            except Exception:
+                                pass
+                            break
+                    except Exception:
+                        pass
+
+            if cancelled:
+                try:
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                    proc.wait()
+                t_out.join()
+                return None
+
+            proc.wait()
+            t_out.join(timeout=5)
+            if proc.returncode != 0:
+                log.warning("Rust nas_hasher find-duplicates exited with code %s", proc.returncode)
+                return None
+            raw_json = b"".join(stdout_chunks).decode("utf-8", errors="ignore").strip()
+            if not raw_json:
+                return None
+            return json.loads(raw_json)
+        except Exception as e:
+            log.warning("Rust nas_hasher subprocess find_duplicates failed: %s", e)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                proc.wait()
             return None
-        raw_json = ctypes.string_at(ptr).decode("utf-8", errors="ignore")
-        return json.loads(raw_json)
-    except Exception as e:
-        log.warning("Rust find_duplicates failed: %s", e)
-        return None
-    finally:
-        if ptr and hasattr(_RUST_LIB, "nas_hasher_free_string"):
-            try:
-                _RUST_LIB.nas_hasher_free_string(ptr)
-            except Exception:
-                pass
+
+    return None
 
 
 def parse_mp4_header(filepath):

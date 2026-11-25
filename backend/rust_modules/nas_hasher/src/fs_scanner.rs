@@ -137,9 +137,9 @@ pub fn scan_broken_mp4_candidates(scan_dir: &Path, workers: usize) -> BrokenMp4S
             .collect::<Vec<String>>()
     };
 
-    let suspect_files = match rayon::ThreadPoolBuilder::new().num_threads(n_threads).build() {
-        Ok(pool) => pool.install(check_all),
-        Err(_) => check_all(),
+    let suspect_files = match crate::shared_rayon_pool(n_threads) {
+        Some(pool) => pool.install(check_all),
+        None => check_all(),
     };
 
     BrokenMp4ScanResult {

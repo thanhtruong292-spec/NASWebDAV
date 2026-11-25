@@ -92,13 +92,13 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         val activeHost = runCatching { java.net.URL(preUrl).host ?: preUrl }.getOrDefault(preUrl)
         val activePort = runCatching { java.net.URL(preUrl).port.takeIf { it > 0 } ?: java.net.URL(preUrl).defaultPort }.getOrDefault(-1)
         val activeRoot = runCatching {
-            val p = java.net.URL(preUrl).path.trimEnd('/')
-            if (p.isEmpty()) "/" else p
+            FileMutationSync.normalizeRoot(java.net.URL(preUrl).path)
         }.getOrDefault("/")
         val preUser = SecurePrefsHelper.getUser(applicationContext)
         fun isInScope(a: com.nas.naswebdav.SyncAction): Boolean {
             if (a.nasHost.isEmpty() && a.nasUser.isEmpty() && a.nasPort == -1 && a.nasRoot.isEmpty()) return true
-            return a.nasHost == activeHost && a.nasUser == preUser && a.nasPort == activePort && a.nasRoot == activeRoot
+            val rootMatches = a.nasRoot == activeRoot || (activeRoot == "/" && a.nasRoot.isEmpty() && a.actionType == "SYNC_MUTATION")
+            return a.nasHost == activeHost && a.nasUser == preUser && a.nasPort == activePort && rootMatches
         }
         if (retryActionId > 0) {
             priorityAction = db.syncActionDao().getById(retryActionId)
@@ -125,7 +125,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             pendingActions
         }
 
-        val user = SecurePrefsHelper.getUser(applicationContext)
+        val user = preUser
         val pass = SecurePrefsHelper.getPass(applicationContext)
         // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
         val url = preUrl
@@ -171,10 +171,13 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                             val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
                             webDavManager.deleteFile(sourceUrl, sourceUrl.endsWith("/"))
                             trashMetaDao.deleteByTrashPath(sourceUrl)
+                            FileMutationSync.notifyOrEnqueue(applicationContext, url, auth.authHeader, "delete", sourceUrl)
                             handled = true
                         }
                         "CREATE_FOLDER" -> {
-                            webDavManager.createFolder(resolveQueuedWebDavPath(action.sourcePath, url))
+                            val targetUrl = resolveQueuedWebDavPath(action.sourcePath, url)
+                            webDavManager.createFolder(targetUrl)
+                            FileMutationSync.notifyOrEnqueue(applicationContext, url, auth.authHeader, "create", targetUrl, targetUrl)
                             handled = true
                         }
                         "RENAME", "MOVE" -> {
@@ -183,7 +186,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                 val destUrl = resolveQueuedWebDavPath(action.destPath, url)
                                 val encodedDest = destUrl.split("/").joinToString("/") { segment ->
                                     if (segment.isEmpty() || segment.contains(":")) segment
-                                    else encodeWebDavSegment(segment)
+                                    else encodeWebDavSegment(segment.replace("+", "%2B"))
                                 }
                                 webDavManager.renameFile(sourceUrl, encodedDest)
                                 if (sourceUrl.contains(".trash/") && !encodedDest.contains(".trash/")) {
@@ -191,6 +194,8 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                 } else if (!sourceUrl.contains(".trash/") && encodedDest.contains(".trash/")) {
                                     trashMetaDao.insert(TrashMeta(trashPath = encodedDest, originalPath = sourceUrl))
                                 }
+                                val mutAct = if (action.actionType == "RENAME") "rename" else "move"
+                                FileMutationSync.notifyOrEnqueue(applicationContext, url, auth.authHeader, mutAct, sourceUrl, encodedDest)
                                 handled = true
                             }
                         }
@@ -203,12 +208,28 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     val destUrl = resolveQueuedWebDavPath(action.destPath, url)
                                     val encodedDest = destUrl.split("/").joinToString("/") { segment ->
                                         if (segment.isEmpty() || segment.contains(":")) segment
-                                        else encodeWebDavSegment(segment)
+                                        else encodeWebDavSegment(segment.replace("+", "%2B"))
                                     }
-                                    webDavManager.uploadFile(encodedDest, file, mime)
+                                    // Yêu cầu: Cấm tuyệt đối đổi tên file khi upload lên NAS, tất cả phải giữ nguyên tên gốc, trùng tên không tải lên
+                                    if (webDavManager.fileExists(encodedDest)) {
+                                        SystemLogger.log("INFO", "OfflineSync", "Tệp đã tồn tại cùng tên trên NAS ($encodedDest) — bỏ qua không tải lên (skip)")
+                                    } else {
+                                        webDavManager.uploadFile(encodedDest, file, mime)
+                                        FileMutationSync.notifyOrEnqueue(applicationContext, url, auth.authHeader, "upload", encodedDest, encodedDest)
+                                    }
                                     // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images.
                                     // NAS daemon handles thumbnail generation (idle 24/7 + on-demand /api/thumb).
                                 }
+                                handled = true
+                            }
+                        }
+                        FileMutationSync.ACTION_TYPE -> {
+                            val sep = action.sourcePath.indexOf('|')
+                            if (sep > 0) {
+                                val mutAct = action.sourcePath.substring(0, sep)
+                                val rawOld = action.sourcePath.substring(sep + 1)
+                                handled = FileMutationSync.sendNow(url, auth.authHeader, mutAct, rawOld, action.destPath)
+                            } else {
                                 handled = true
                             }
                         }
@@ -229,9 +250,10 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     val destUrl = resolveQueuedWebDavPath(action.destPath, url)
                                     val encodedDest = destUrl.split("/").joinToString("/") { segment ->
                                         if (segment.isEmpty() || segment.contains(":")) segment
-                                        else encodeWebDavSegment(segment)
+                                        else encodeWebDavSegment(segment.replace("+", "%2B"))
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
+                                    FileMutationSync.notifyOrEnqueue(applicationContext, url, auth.authHeader, "upload", encodedDest)
                                     file.delete() // dọn temp sau khi upload thành công
                                     handled = true
                                 } else {

@@ -1,5 +1,7 @@
 package com.nas.naswebdav
 
+import com.nas.naswebdav.smarttools.duplicateScanReadout
+import org.json.JSONObject
 import androidx.room.Room
 import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
@@ -16,6 +18,17 @@ import java.net.URI
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[26], application=TestNasApplication::class)
 class NasCatalogueTest {
+    @Test fun `legacy subfolder result describes its scope and missing read evidence`() {
+        val snapshot = JSONObject("""{"path":"fixture","result":{"total_files_scanned":2}}""")
+        val label = duplicateScanReadout(snapshot)
+        assertEquals("Phạm vi một thư mục con. Đã quét 2 tệp. NAS chưa cung cấp số lỗi đọc.", label)
+    }
+
+    @Test fun `full root report exposes actual read errors`() {
+        val snapshot = JSONObject("""{"path":"","result":{"total_files_scanned":34,"read_errors":1}}""")
+        assertEquals("Phạm vi toàn thư mục WebDAV. Đã quét 34 tệp. Có 1 lỗi đọc.", duplicateScanReadout(snapshot))
+    }
+
     private val base="http://nas.local/webdav/"
     private val account="u@nas.local:80/webdav"
     private fun document(rows: String, total: Int, ready: Boolean=true, truncated: Boolean=false) =
@@ -33,6 +46,41 @@ class NasCatalogueTest {
         for (path in listOf("/private/file.bin","/webdav/../private.bin","//other/webdav/a")) {
             try { catalogueFileUrl(base,path);fail("Unsafe path accepted") } catch (_: IllegalArgumentException) {}
         }
+    }
+
+    @Test fun `partial report preserves received groups and explains the count`() {
+        val group = org.json.JSONObject().put("sha256", "a".repeat(64)).put("size", 2)
+            .put("files", org.json.JSONArray(listOf("one.bin", "copy.bin")))
+        val report = org.json.JSONObject().put("groups", org.json.JSONArray().put(group))
+            .put("total_groups", 21407).put("read_errors", 0)
+        assertEquals("Đã nhận 1/21407 nhóm trùng từ NAS.", duplicateReportNotice(report))
+        assertEquals(2, parseRustDuplicateGroups(report, base).size)
+        report.put("total_groups", 1)
+        assertEquals("", duplicateReportNotice(report))
+        report.remove("read_errors")
+        assertEquals("", duplicateReportNotice(report))
+    }
+
+    @Test fun `Rust duplicate names survive URL conversion for cleanup`() {
+        val names = listOf("webdav/a#b.bin", "a?b+%20.bin")
+        val group = org.json.JSONObject()
+            .put("sha256", "a".repeat(64))
+            .put("size", 2048)
+            .put("files", org.json.JSONArray(names))
+        val report = org.json.JSONObject().put("groups", org.json.JSONArray().put(group))
+        val files = parseRustDuplicateGroups(report, base)
+        assertEquals(names, files.map { relativeDuplicatePath(base, it.path) })
+    }
+
+    @Test fun `Rust duplicate groups safely ignore malformed paths without aborting`() {
+        val group = org.json.JSONObject()
+            .put("sha256", "b".repeat(64))
+            .put("size", 100)
+            .put("files", org.json.JSONArray(listOf("valid1.txt", "valid2.txt", "../escaped.txt", "//double//slash.txt")))
+        val report = org.json.JSONObject().put("groups", org.json.JSONArray().put(group))
+        val files = parseRustDuplicateGroups(report, base)
+        assertEquals(2, files.size)
+        assertEquals(listOf("valid1.txt", "valid2.txt"), files.map { relativeDuplicatePath(base, it.path) })
     }
 
     @Test fun `batching includes non media without retaining the full catalogue`() = runBlocking {

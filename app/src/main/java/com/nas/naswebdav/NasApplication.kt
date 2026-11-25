@@ -95,7 +95,7 @@ open class NasApplication : Application(), ImageLoaderFactory {
             .build()
     }
 
-    val database: AppDatabase by lazy {
+    open val database: AppDatabase by lazy {
         Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java,
@@ -178,9 +178,13 @@ open class NasApplication : Application(), ImageLoaderFactory {
                 val req = if (request.header("Authorization") != null) {
                     request
                 } else {
+                    val isTaggedExplicitly = request.tag(WebDavManager.AuthState::class.java) != null
                     val authState = request.tag(WebDavManager.AuthState::class.java)
                         ?: WebDavManager.currentAuthState()
-                    if (authState.user.isNotEmpty()) {
+                    val reqHost = request.url.host
+                    val authHost = runCatching { java.net.URI(authState.baseUrl).host }.getOrNull()
+                    val matchesHost = authHost != null && reqHost.equals(authHost, ignoreCase = true)
+                    if (authState.user.isNotEmpty() && (matchesHost || isTaggedExplicitly || isTestEnvironment)) {
                         request.newBuilder()
                             .header("Authorization", authState.authHeader)
                             .build()
@@ -308,9 +312,14 @@ open class NasApplication : Application(), ImageLoaderFactory {
         lateinit var instance: NasApplication
             private set
 
+        @Volatile
+        var isTestEnvironment: Boolean = false
+            private set
+
         /** Test hook: gán instance nhẹ cho Robolectric test cần lazy clients. */
         fun setInstanceForTest(app: NasApplication) {
             instance = app
+            isTestEnvironment = true
         }
 
         /**

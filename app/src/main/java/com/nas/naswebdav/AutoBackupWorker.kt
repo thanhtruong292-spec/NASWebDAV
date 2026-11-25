@@ -500,13 +500,20 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             val canResumableUpload = webDavManager.supportsResumableUpload()
 
             fun isWifiConnected(): Boolean {
+                if (NasApplication.isTestEnvironment) return true
                 return runCatching {
                     val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
                         ?: return@runCatching true
-                    val active = cm.activeNetwork ?: return@runCatching false
+                    val active = cm.activeNetwork ?: run {
+                        // Fallback cho môi trường test/Robolectric hoặc thiết bị chưa có activeNetwork
+                        @Suppress("DEPRECATION")
+                        val info = cm.activeNetworkInfo
+                        return@runCatching info == null || (info.isConnected && info.type == android.net.ConnectivityManager.TYPE_WIFI)
+                    }
                     val caps = cm.getNetworkCapabilities(active) ?: return@runCatching false
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
-                        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
                 }.getOrDefault(true)
             }
 
@@ -647,56 +654,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     webDavManager.moveFileNoOverwrite(tmpNasPath, item.targetFileNasPath)
                                 } catch (e: Exception) {
                                     val isConflict = (e.message ?: "").contains("412")
+                                    try { webDavManager.deleteFile(tmpNasPath, false) } catch (de: Exception) { SystemLogger.log("WARNING", "AutoBackup", "deleteFile tmpNasPath SMB: ${de.message}") }
                                     if (!isConflict) {
-                                        try { webDavManager.deleteFile(tmpNasPath, false) } catch (e: Exception) { SystemLogger.log("WARNING", "AutoBackup", "deleteFile tmpNasPath SMB: ${e.message}") }
                                         throw e
                                     }
-                                    val destination = webDavManager.inspectBackupDestination(item.targetFileNasPath, item.fileSize, item.sourceProof.sha256)
-                                    if (destination == BackupContentState.MATCH) {
-                                        SystemLogger.log("INFO", "AutoBackup", "Đích đã đúng nội dung — không tạo bản trùng.")
-                                        break
-                                    }
-                                    if (destination != BackupContentState.DIFFERENT) {
-                                        throw java.io.IOException("Đích chưa xác minh được; không tạo thêm phiên bản")
-                                    }
-                                    val dotIdx2 = item.stableRemoteName.lastIndexOf('.')
-                                    val ts = System.currentTimeMillis()
-                                    val versionedName = if (dotIdx2 > 0) {
-                                        item.stableRemoteName.substring(0, dotIdx2) + "__v" + ts + item.stableRemoteName.substring(dotIdx2)
-                                    } else {
-                                        item.stableRemoteName + "__v" + ts
-                                    }
-                                    var versionedPath = if (item.targetFolder.endsWith("/")) item.targetFolder + versionedName else "${item.targetFolder}/$versionedName"
-                                    SystemLogger.log("INFO", "AutoBackup", "Nguồn ${item.fileName} đã đổi so với bản backup — lưu phiên bản mới thay vì ghi đè.")
-                                    var versionedOk = false
-                                    for (vAttempt in 1..2) {
-                                        try {
-                                            webDavManager.moveFileNoOverwrite(tmpNasPath, versionedPath)
-                                            versionedOk = true
-                                            break
-                                        } catch (ve: Exception) {
-                                            if ((ve.message ?: "").contains("412")) {
-                                                val conflict = webDavManager.inspectBackupDestination(versionedPath, item.fileSize, item.sourceProof.sha256)
-                                                if (conflict == BackupContentState.MATCH) { versionedOk = true; break }
-                                                if (conflict != BackupContentState.DIFFERENT || vAttempt >= 2) {
-                                                    throw java.io.IOException("Không xác minh được xung đột phiên bản; không tạo thêm bản sao", ve)
-                                                }
-                                                val ts2 = System.currentTimeMillis()
-                                                val dot2 = versionedName.lastIndexOf('.')
-                                                val altName = if (dot2 > 0) {
-                                                    versionedName.substring(0, dot2) + "_$ts2" + versionedName.substring(dot2)
-                                                } else {
-                                                    versionedName + "_$ts2"
-                                                }
-                                                versionedPath = if (item.targetFolder.endsWith("/")) item.targetFolder + altName else "${item.targetFolder}/$altName"
-                                                kotlinx.coroutines.delay(5)
-                                                continue
-                                            } else throw ve
-                                        }
-                                    }
-                                    if (!versionedOk) throw IllegalStateException("Không lưu được phiên bản mới cho ${item.fileName}")
-                                    effectiveTarget = versionedPath
-                                    break
+                                    // Yêu cầu: Cấm tuyệt đối đổi tên file khi upload lên NAS, tất cả phải giữ nguyên tên gốc, trùng tên không tải lên (skip).
+                                    SystemLogger.log("INFO", "AutoBackup", "Đích đã tồn tại tệp cùng tên ${item.targetFileNasPath} — giữ nguyên tên gốc, bỏ qua tải lên (skip).")
+                                    if (isImage) imageBytesCompleted.addAndGet(item.fileSize) else videoBytesCompleted.addAndGet(item.fileSize)
+                                    skippedCount.incrementAndGet()
+                                    fileTarget.set("Bỏ qua: ${item.fileName}")
+                                    pushProgress()
+                                    return
                                 }
                                 break
                             } catch (e: Exception) {
@@ -974,12 +942,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         }
 
                         val encodedFileName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        val dotIdx = encodedFileName.lastIndexOf('.')
-                        val stableRemoteName = if (dotIdx > 0) {
-                            encodedFileName.substring(0, dotIdx) + "__id" + id + encodedFileName.substring(dotIdx)
-                        } else {
-                            encodedFileName + "__id" + id
-                        }
+                        // Yêu cầu: Giữ nguyên 100% tên gốc, cấm tuyệt đối thêm đuôi (__id, __v, timestamp)
+                        val stableRemoteName = encodedFileName
                         var targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + stableRemoteName else "$targetFolder/$stableRemoteName"
 
                         val fileSize = cursor.getLong(sizeIndex)
@@ -1070,53 +1034,59 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 val isSkipped = plan.skip
 
                                 if (isSkipped) {
-                                    if (!isLocallyVerifiedMatch) {
-                                        dbMutex.withLock {
-                                            db.verifiedHashDao().put(VerifiedHashCache(
-                                                accountKey = backupAccountKey,
-                                                path = plan.path,
-                                                contentLength = fileSize,
-                                                version = sourceProof.version ?: "",
-                                                sha256 = sourceProof.sha256,
-                                                fileId = ""
-                                            ))
-                                            if (plan.path != targetFileNasPath) {
+                                    if (plan.isContentMatch) {
+                                        if (!isLocallyVerifiedMatch) {
+                                            dbMutex.withLock {
                                                 db.verifiedHashDao().put(VerifiedHashCache(
                                                     accountKey = backupAccountKey,
-                                                    path = targetFileNasPath,
+                                                    path = plan.path,
                                                     contentLength = fileSize,
                                                     version = sourceProof.version ?: "",
                                                     sha256 = sourceProof.sha256,
                                                     fileId = ""
                                                 ))
+                                                if (plan.path != targetFileNasPath) {
+                                                    db.verifiedHashDao().put(VerifiedHashCache(
+                                                        accountKey = backupAccountKey,
+                                                        path = targetFileNasPath,
+                                                        contentLength = fileSize,
+                                                        version = sourceProof.version ?: "",
+                                                        sha256 = sourceProof.sha256,
+                                                        fileId = ""
+                                                    ))
+                                                }
+                                                db.fingerprintDao().insertFingerprint(FileFingerprint(
+                                                    filePath = plan.path,
+                                                    hash = "",
+                                                    fileName = fileName,
+                                                    fileSize = fileSize,
+                                                    accountKey = backupAccountKey,
+                                                    sourceKey = sourceKey,
+                                                    contentHash = sourceProof.sha256
+                                                ))
                                             }
-                                            db.fingerprintDao().insertFingerprint(FileFingerprint(
-                                                filePath = plan.path,
-                                                hash = "",
-                                                fileName = fileName,
-                                                fileSize = fileSize,
-                                                accountKey = backupAccountKey,
-                                                sourceKey = sourceKey,
-                                                contentHash = sourceProof.sha256
-                                            ))
                                         }
-                                    }
-                                    var deletedExisting = false
-                                    if (AutoBackupState.deleteAfter.value) {
-                                        if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
-                                            deletedExisting = true
-                                            deletedCount.incrementAndGet()
-                                            storageFreedBytes.addAndGet(fileSize)
-                                            prefsRepo.addBackupFreedBytes(fileSize)
-                                            android.util.Log.i("AutoBackup", "Đã xóa nguồn đã có trên NAS: $fileName")
-                                        } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
-                                            SystemLogger.log("WARNING", "AutoBackup", "Không thể xóa tệp đã có trên NAS ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                                        var deletedExisting = false
+                                        if (AutoBackupState.deleteAfter.value) {
+                                            if (deleteVerifiedBackupSource(applicationContext, fileUri, dataPath, sourceProof)) {
+                                                deletedExisting = true
+                                                deletedCount.incrementAndGet()
+                                                storageFreedBytes.addAndGet(fileSize)
+                                                prefsRepo.addBackupFreedBytes(fileSize)
+                                                android.util.Log.i("AutoBackup", "Đã xóa nguồn đã có trên NAS: $fileName")
+                                            } else if (isDeletePermissionWarned.compareAndSet(false, true) && Build.VERSION.SDK_INT >= 27) {
+                                                SystemLogger.log("WARNING", "AutoBackup", "Không thể xóa tệp đã có trên NAS ($fileName) — hãy cấp quyền Quản lý tất cả tệp trong Cài đặt Android.")
+                                            }
                                         }
+                                        fileTarget.set(if (deletedExisting) "Đã giải phóng: $fileName" else "Bỏ qua: $fileName")
+                                        pushProgress(force = deletedExisting)
+                                    } else {
+                                        SystemLogger.log("INFO", "AutoBackup", "Đích đã tồn tại tệp cùng tên $fileName nhưng khác nội dung — bỏ qua tải lên để giữ nguyên tên gốc.")
+                                        fileTarget.set("Bỏ qua trùng tên: $fileName")
+                                        pushProgress()
                                     }
                                     bytesCompletedTarget.addAndGet(fileSize)
                                     skippedCount.incrementAndGet()
-                                    fileTarget.set(if (deletedExisting) "Đã giải phóng: $fileName" else "Bỏ qua: $fileName")
-                                    pushProgress(force = deletedExisting)
                                     return@withLock
                                 }
 

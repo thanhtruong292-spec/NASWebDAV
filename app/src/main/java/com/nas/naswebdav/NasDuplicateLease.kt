@@ -67,9 +67,14 @@ internal class NasDuplicateLease private constructor(
         }
     }
 
+    fun scanPermit(): JSONObject {
+        ensureValid()
+        return JSONObject().put("name", "duplicates").put("owner", owner).put("token", token)
+    }
+
     suspend fun cleanupPermit(): JSONObject {
         checkpoint()
-        return JSONObject().put("name","duplicates").put("owner",owner).put("token",token)
+        return scanPermit()
     }
 
     suspend fun retryAndRelease() = withContext(NonCancellable+Dispatchers.IO) {

@@ -430,7 +430,8 @@ interface SyncActionDao {
         WHERE runState = 'PENDING'
           AND (
             (nasHost = :activeHost AND nasUser = :activeUser
-             AND nasPort = :activePort AND nasRoot = :activeRoot)
+             AND nasPort = :activePort
+             AND (nasRoot = :activeRoot OR (:activeRoot = '/' AND nasRoot = '' AND actionType = 'SYNC_MUTATION')))
             OR (nasHost = '' AND nasUser = '' AND nasPort = -1 AND nasRoot = '')
           )
         ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC
@@ -456,7 +457,8 @@ interface SyncActionDao {
         WHERE runState = 'PENDING'
           AND (
             (nasHost = :activeHost AND nasUser = :activeUser
-             AND nasPort = :activePort AND nasRoot = :activeRoot)
+             AND nasPort = :activePort
+             AND (nasRoot = :activeRoot OR (:activeRoot = '/' AND nasRoot = '' AND actionType = 'SYNC_MUTATION')))
             OR (nasHost = '' AND nasUser = '' AND nasPort = -1 AND nasRoot = '')
           )
     """)

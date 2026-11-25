@@ -18,7 +18,7 @@ class DuplicateCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
-        self.root = self.work.name
+        self.root = os.path.realpath(self.work.name)
         source = Path(os.environ.get('NAS_BACKEND_SOURCE', str(Path(__file__).resolve().parents[1] / '.specify/patches/verified-duplicate-service.py')))
         nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(n, ast.FunctionDef)]
         for node in nodes:

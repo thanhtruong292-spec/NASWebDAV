@@ -49,10 +49,80 @@ object DuplicateProgressState {
     val currentStagePercent = MutableStateFlow(0f)
     val currentFolderUrl = MutableStateFlow("")
     val stageNumber = MutableStateFlow(1)
-    val totalStages = MutableStateFlow(4)
+    val totalStages = MutableStateFlow(3)
     val stageDescription = MutableStateFlow("")
     val elapsedTime = MutableStateFlow(0L)
     val estimatedTimeRemaining = MutableStateFlow(-1L)
+    val lastRustResults = MutableStateFlow<List<NasFile>>(emptyList())
+}
+
+private val rustSha256Regex = Regex("^[0-9a-f]{64}$")
+
+internal fun requireCompleteDuplicateInventory(report: JSONObject): JSONObject {
+    val inventory = report.optJSONObject("inventory")
+        ?: throw IncompleteNasCatalogueException("Báo cáo thiếu danh mục inventory")
+    val files = report.optInt("total_files_scanned", -1)
+    check(inventory.optInt("protocol", -1) == 1 &&
+        inventory.optString("source") == "file_index" &&
+        inventory.optBoolean("complete") &&
+        inventory.optLong("generation", -1) >= 0 &&
+        inventory.optLong("catalogue_revision", -1) >= 0 &&
+        (files < 0 || inventory.optInt("total", -1) == files) &&
+        report.optInt("read_errors", 0) == 0) { "Danh mục quét trùng trên NAS chưa đầy đủ" }
+    return inventory
+}
+
+internal fun duplicateReportNotice(report: JSONObject): String {
+    val listed = report.optJSONArray("groups")?.length() ?: return "NAS chưa gửi danh sách nhóm."
+    val total = report.optInt("total_groups", -1)
+    val errors = report.optInt("read_errors", 0)
+    val notices = mutableListOf<String>()
+    if (total >= 0 && listed < total) {
+        notices += "Đã nhận $listed/$total nhóm trùng từ NAS."
+    } else if (total < 0 && listed > 0) {
+        notices += "Đã nhận $listed nhóm. NAS chưa gửi tổng số nhóm."
+    }
+    if (errors > 0) notices += "NAS ghi nhận $errors lỗi đọc."
+    return notices.joinToString(" ")
+}
+
+internal fun parseRustDuplicateGroups(resultJson: JSONObject, webdavBaseUrl: String): List<NasFile> {
+    val groups = resultJson.optJSONArray("groups") ?: return emptyList()
+    val webdavRoot = java.net.URI(webdavBaseUrl).path.trimEnd('/')
+    val out = mutableListOf<NasFile>()
+    for (i in 0 until groups.length()) {
+        val g = groups.optJSONObject(i) ?: continue
+        val sha = g.optString("sha256", "").trim().lowercase()
+        if (!rustSha256Regex.matches(sha)) continue
+        val count = g.optInt("count", 0)
+        val perFileSize = g.optLong("size", -1L).takeIf { it >= 0L }
+            ?: if (count > 1) g.optLong("wasted_bytes", 0L) / (count - 1) else 0L
+        val filesArr = g.optJSONArray("files") ?: continue
+        if (filesArr.length() < 2) continue
+        val groupFiles = ArrayList<NasFile>(filesArr.length())
+        for (j in 0 until filesArr.length()) {
+            val relPath = filesArr.optString(j, "")
+            if (relPath.isEmpty()) continue
+            val cleanRel = relPath.removePrefix("/webdav/").removePrefix("/")
+            val fullUrl = runCatching { catalogueFileUrl(webdavBaseUrl, "$webdavRoot/$cleanRel") }.getOrNull() ?: continue
+            val name = cleanRel.substringAfterLast('/')
+            groupFiles.add(
+                NasFile(
+                    name = name,
+                    path = fullUrl,
+                    isDirectory = false,
+                    contentType = null,
+                    contentLength = perFileSize,
+                    lastModified = 0L,
+                    partialHash = sha
+                )
+            )
+        }
+        if (groupFiles.size >= 2) {
+            out.addAll(groupFiles)
+        }
+    }
+    return out
 }
 
 class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
@@ -61,17 +131,24 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
     private val channelId = "scan_channel"
 
     override suspend fun doWork(): Result {
-        SystemLogger.log("INFO", "DuplicateScan", "Bắt đầu quét tệp trùng lặp trên NAS")
+        SystemLogger.log("INFO", "DuplicateScan", "Bắt đầu quét tệp trùng lặp 100% bằng Rust trên NAS")
         val currentUrl = inputData.getString("currentUrl")
-        if (currentUrl.isNullOrBlank()) { SystemLogger.log("WARNING", "DuplicateScan", "Thiếu currentUrl — kết thúc thất bại"); return Result.failure() }
+        if (currentUrl.isNullOrBlank()) {
+            SystemLogger.log("WARNING", "DuplicateScan", "Thiếu currentUrl — kết thúc thất bại")
+            return Result.failure()
+        }
         val forceRestart = inputData.getBoolean("forceRestart", false)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        if (user.isEmpty() || pass.isEmpty()) { SystemLogger.log("WARNING", "DuplicateScan", "Thiếu credentials NAS — kết thúc thất bại"); return Result.failure() }
+        if (user.isEmpty() || pass.isEmpty()) {
+            SystemLogger.log("WARNING", "DuplicateScan", "Thiếu credentials NAS — kết thúc thất bại")
+            return Result.failure()
+        }
 
-        return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(WebDavManager.AuthState(currentUrl, user, pass))) {
+        val auth = WebDavManager.AuthState(currentUrl, user, pass)
+        return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(auth)) {
             try {
-                setForeground(makeForegroundInfo(channelId, "Quét dọn hệ thống", notificationId, "Đang quét dữ liệu trùng lặp..."))
+                setForeground(makeForegroundInfo(channelId, "Quét trùng lặp Rust", notificationId, "Đang gửi lệnh quét Rust tới NAS..."))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 val exName = e.javaClass.name
                 val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
@@ -79,359 +156,265 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
                     && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
                 when {
-                    isBgRestriction -> {
-                        android.util.Log.w("DuplicateScan", "Background restriction: skip foreground (worker continues)", e)
-                    }
+                    isBgRestriction -> android.util.Log.w("DuplicateScan", "Background restriction: skip foreground", e)
                     isMissingType -> {
-                        android.util.Log.e("DuplicateScan", "setForeground failed: missing foregroundServiceType", e)
-                        SystemLogger.log("ERROR", "DuplicateScan", "Lỗi thiếu foregroundServiceType (Android 14+): ${e.message}")
+                        SystemLogger.log("ERROR", "DuplicateScan", "Lỗi thiếu foregroundServiceType: ${e.message}")
                         return@withContext Result.failure()
                     }
                     else -> android.util.Log.w("DuplicateScan", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
                 }
             }
 
-            val webDavManager = WebDavManager
-        setThumbnailActivity("sync", true)
-        val db = NasApplication.instance.database
+            setThumbnailActivity("sync", true)
+            val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notificationBuilder = NotificationCompat.Builder(applicationContext, channelId)
+                .setSmallIcon(android.R.drawable.ic_search_category_default)
+                .setOnlyAlertOnce(true)
+                .setOngoing(true)
 
-        // KHỞI TẠO HỆ THỐNG THÔNG BÁO ĐỘNG (DYNAMIC NOTIFICATION)
-        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, channelId)
-            .setSmallIcon(android.R.drawable.ic_search_category_default)
-            .setOnlyAlertOnce(true) // Quan trọng: Tránh rung/kêu liên tục khi cập nhật
-            .setOngoing(true)
+            val apiBaseUrl = currentUrl.toApiBaseUrl()
+            val client = NasApplication.instance.fastApiClient
+            val startTime = System.currentTimeMillis()
+            var lastSmoothedEtaMs = -1L
+            val jsonMedia = "application/json; charset=utf-8".toMediaTypeOrNull()
 
-        val isUiUpdating = java.util.concurrent.atomic.AtomicBoolean(true)
-        var uiUpdaterJob: kotlinx.coroutines.Job? = null
-        // FIX D1: Khai báo uiScope ở ngoài inner try {} để finally có thể gọi .cancel() dọn dẹp bộ nhớ
-        // nếu Worker bị kill trong trường hợp bất ngờ (exception trước khi isUiUpdating.set(false))
-        val uiScope = kotlinx.coroutines.CoroutineScope(
-            kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob()
-        )
-        var lease: NasDuplicateLease? = null
-        try {
-            val activeLease=NasDuplicateLease.acquire(WebDavManager.currentAuthState())
-            lease=activeLease
-            activeLease.start(this)
-            // ═══════════════════════════════════════════════════
-            // BIẾN THEO DÕI TIẾN TRÌNH CHÍNH XÁC
-            // ═══════════════════════════════════════════════════
-            val totalFilesIndexed = AtomicInteger(0)    // Tổng file đã index (Stage 1)
-            val duplicateGroupsFound = AtomicInteger(0) // Số nhóm trùng lặp tìm thấy
-            val hashesComputed = AtomicInteger(0)       // Số hash đã tính (Stage 2)
-            val totalHashesNeeded = AtomicInteger(0)    // Tổng hash cần tính
-
-            val currentStage = AtomicReference("Khởi động...")      // Giai đoạn hiện tại
-            val currentFolder = AtomicReference("")                  // Thư mục đang quét
-            val currentFileName = AtomicReference("")                // File đang xử lý
-            val progressPercent = AtomicReference(0f)                // % TỔNG (0-100%)
-            val currentStagePercent = AtomicReference(0f)            // % GIAI ĐOẠN HIỆN TẠI (0-100% của Stage này)
-            val stageNumber = AtomicInteger(1)                       // Số thứ tự giai đoạn (1-4)
-            val totalStages = 4                                      // Tổng số giai đoạn
-            val stageDescription = AtomicReference("Đang kết nối tới NAS...") // Mô tả chi tiết giai đoạn
-
-            val mediaExtensions = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "mp4", "mkv", "mov", "avi")
-            val bufferMutex = Mutex()
-
-            // FIX D9: uiScope được khai báo bên ngoài try để có thể cancel() trong finally
-            uiUpdaterJob = uiScope.launch {
-                val startTime = System.currentTimeMillis()
-                var ticks = 0
-                while (isUiUpdating.get() && isActive) {
-                    ticks++
-                    // FIX-THUMB-STUCK: heartbeat mỗi 3 phút — nếu app alive, server giữ block.
-                    // Nếu app die, server auto-clear block sau 10 phút (TTL).
-                    if (ticks % 180 == 0) {
-                        setThumbnailActivity("sync", true)
-                    }
-                    val now = System.currentTimeMillis()
-                    val elapsedMs = now - startTime
-                    DuplicateProgressState.elapsedTime.value = elapsedMs
-                    
-                    val pct = progressPercent.get()
-                    if (pct > 0.01f) {
-                        val totalEstimatedMs = (elapsedMs / pct).toLong()
-                        DuplicateProgressState.estimatedTimeRemaining.value = maxOf(0L, totalEstimatedMs - elapsedMs)
-                    } else {
-                        DuplicateProgressState.estimatedTimeRemaining.value = -1L
-                    }
-
-                    DuplicateProgressState.stage.value = currentStage.get()
-                    DuplicateProgressState.currentFolder.value = currentFolder.get()
-                    DuplicateProgressState.currentFolderUrl.value = currentFolder.get()
-                    DuplicateProgressState.itemName.value = currentFileName.get()
-                    DuplicateProgressState.scannedCount.value = totalFilesIndexed.get()
-                    DuplicateProgressState.foundCount.value = duplicateGroupsFound.get()
-                    DuplicateProgressState.hashCount.value = hashesComputed.get()
-                    DuplicateProgressState.totalHashes.value = totalHashesNeeded.get()
-                    DuplicateProgressState.percent.value = progressPercent.get()
-                    DuplicateProgressState.currentStagePercent.value = currentStagePercent.get()
-                    DuplicateProgressState.stageNumber.value = stageNumber.get()
-                    DuplicateProgressState.stageDescription.value = stageDescription.get()
-
-                    if (ticks % 20 == 0) {
-                        try {
-                            setProgress(workDataOf(
-                                "stage" to safeWorkerText(currentStage.get()),
-                                "currentFolder" to safeWorkerText(currentFolder.get(), 220),
-                                "itemName" to safeWorkerText(currentFileName.get(), 180),
-                                "isFolder" to false,
-                                "scannedCount" to totalFilesIndexed.get(),
-                                "foundCount" to duplicateGroupsFound.get(),
-                                "hashCount" to hashesComputed.get(),
-                                "totalHashes" to totalHashesNeeded.get(),
-                                "percent" to progressPercent.get(),
-                                "currentStagePercent" to currentStagePercent.get(),
-                                "currentFolderUrl" to safeWorkerText(currentFolder.get(), 220),
-                                "stageNumber" to stageNumber.get(),
-                                "totalStages" to totalStages,
-                                "stageDescription" to safeWorkerText(stageDescription.get()),
-                                "elapsedTime" to DuplicateProgressState.elapsedTime.value,
-                                "estimatedTimeRemaining" to DuplicateProgressState.estimatedTimeRemaining.value
-                            ))
-                            
-                            // CẬP NHẬT THÔNG BÁO HỆ THỐNG (NOTIFICATION BAR) MỖI GIÂY
-                            val pct = (progressPercent.get() * 100).toInt()
-                            notificationBuilder
-                                .setContentTitle("Quét rác: ${currentStage.get()} (${pct}%)")
-                                .setContentText(stageDescription.get())
-                                .setProgress(100, pct, false)
-                            notificationManager.notify(notificationId, notificationBuilder.build())
-                        } catch (e: Exception) {
-                            android.util.Log.w("DuplicateScan", "notification update failed: ${e.message}")
-                        }
-                    }
-                    ticks++
-                    // FIX #11: Tăng tử 50ms lên 250ms (giảm từ 20fps xuống 4fps)
-                    // 95% vòng lặp trước đây chỉ cập nhật StateFlow mà không setProgress() → lãng phí CPU
-                    delay(250)
+            var ownedScanId = 0L
+            var cancelToken = ""
+            suspend fun cancelOwnedScan() = withContext<Unit>(NonCancellable) {
+                if (cancelToken.isBlank()) return@withContext
+                runCatching {
+                    val body = JSONObject().put("job_id", ownedScanId).put("cancel_token", cancelToken)
+                    val req = okhttp3.Request.Builder()
+                        .url("$apiBaseUrl/api/disk/scan_duplicates/cancel")
+                        .header("Authorization", auth.authHeader)
+                        .post(body.toString().toRequestBody(jsonMedia))
+                        .build()
+                    val call = client.newCall(req)
+                    call.timeout().timeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    call.execute().close()
                 }
             }
 
-            coroutineScope {
-                // ═══════════════════════════════════════════════════
-                // GIAI ĐOẠN 1: THU THẬP FILE INDEX (0% → 50%)
-                // ═══════════════════════════════════════════════════
-                currentStage.set("Thu thập danh sách file")
-                stageNumber.set(1)
-                stageDescription.set("Nhận danh mục file dùng chung từ NAS")
-                var isFastPathSuccess = false
-                val apiBaseUrl = currentUrl.toApiBaseUrl()
+            try {
+                DuplicateProgressState.stage.value = "Khởi động Rust trên NAS..."
+                DuplicateProgressState.stageNumber.value = 1
+                DuplicateProgressState.totalStages.value = 3
+                DuplicateProgressState.percent.value = 0.05f
+                DuplicateProgressState.currentStagePercent.value = 0.2f
+                DuplicateProgressState.currentFolder.value = "Rust NAS (kích thước → băm nhanh 64 KiB đầu/cuối → SHA-256)"
+                DuplicateProgressState.currentFolderUrl.value = "NAS Rust Engine"
+                DuplicateProgressState.itemName.value = "Đang kích hoạt..."
+                DuplicateProgressState.stageDescription.value = "Đang kích hoạt trình quét Rust đa luồng trên NAS..."
+                DuplicateProgressState.scannedCount.value = 0
+                DuplicateProgressState.foundCount.value = 0
 
-                try {
-                    val forceParam = if (forceRestart) "1" else "0"
-                    val request = okhttp3.Request.Builder()
-                        .url("$apiBaseUrl/api/disk/fast_index?force=$forceParam")
-                        .tag(WebDavManager.AuthState::class.java, WebDavManager.currentAuthState())
-                        .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
+                val startBody = JSONObject()
+                    .put("async", true)
+                    .put("min_size", 0)
+                    .put("limit", 0)
+                    .put("force", forceRestart)
+                    .toString()
+                    .toRequestBody(jsonMedia)
+                val startReq = okhttp3.Request.Builder()
+                    .url("$apiBaseUrl/api/disk/scan_duplicates")
+                    .header("Authorization", auth.authHeader)
+                    .post(startBody)
+                    .build()
+
+                val startResp = client.newCall(startReq).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        val errMsg = runCatching { JSONObject(bodyStr).optString("error") }.getOrDefault("")
+                            .ifBlank { "HTTP ${resp.code}" }
+                        throw IllegalStateException("Rust NAS từ chối quét: $errMsg")
+                    }
+                    JSONObject(bodyStr)
+                }
+
+                ownedScanId = startResp.optLong("job_id")
+                cancelToken = startResp.optString("cancel_token")
+                var status = startResp.optString("status", "running")
+                var lastJson = startResp
+                var pollTicks = 0
+                var consecutivePollErrors = 0
+
+                while (status == "running" || status == "cancelling") {
+                    if (isStopped) {
+                        cancelOwnedScan()
+                        return@withContext Result.failure()
+                    }
+                    delay(1500)
+                    pollTicks++
+                    if (pollTicks % 120 == 0) {
+                        setThumbnailActivity("sync", true)
+                    }
+
+                    val pollReq = okhttp3.Request.Builder()
+                        .url("$apiBaseUrl/api/disk/scan_duplicates/status")
+                        .header("Authorization", auth.authHeader)
+                        .get()
                         .build()
-                    val client = NasApplication.instance.sharedHttpClient
-                    val call = client.newCall(request)
-                    val cancelJob = launch {
-                        while (isActive) {
-                            if (isStopped) { call.cancel(); break }
-                            kotlinx.coroutines.delay(1000)
+                    val polled = try {
+                        client.newCall(pollReq).execute().use { resp ->
+                            val bodyStr = resp.body?.string().orEmpty()
+                            if (!resp.isSuccessful) {
+                                throw IllegalStateException("HTTP ${resp.code}")
+                            }
+                            JSONObject(bodyStr)
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        consecutivePollErrors++
+                        if (consecutivePollErrors >= 6) {
+                            throw IllegalStateException("Mất kết nối NAS khi kiểm tra tiến độ Rust: ${e.message}")
+                        }
+                        delay(2000)
+                        continue
+                    }
+                    consecutivePollErrors = 0
+                    check(polled.optInt("job_id") == startResp.optInt("job_id")) { "Phiên quét trên NAS đã thay đổi" }
+                    lastJson = polled
+                    status = lastJson.optString("status", "error")
+                    val elapsedMs = System.currentTimeMillis() - startTime
+                    val elapsedSec = lastJson.optDouble("elapsed_sec", elapsedMs / 1000.0)
+                    val stageNum = lastJson.optInt("stage_num", 1).coerceIn(1, 3)
+                    val stageName = lastJson.optString("stage_name", "").ifBlank {
+                        "Rust NAS đang quét 3 tầng (${elapsedSec.toInt()}s)..."
+                    }
+                    val scannedReal = lastJson.optInt("scanned", 0)
+                    val doneReal = lastJson.optInt("done", 0)
+                    val totalReal = lastJson.optInt("total", 0)
+                    val candidatesReal = lastJson.optInt("candidates", 0)
+                    val pctReal = (lastJson.optDouble("percent", 0.0).toFloat() / 100f).coerceIn(0.01f, 0.99f)
+                    val curRel = lastJson.optString("current_file", "")
+                    val curFolder = if (curRel.contains('/')) "/" + curRel.substringBeforeLast('/') else "/"
+                    val curFile = if (curRel.isNotBlank()) curRel.substringAfterLast('/') else "Đang duyệt dữ liệu trên ổ cứng NAS..."
+                    val desc = if (totalReal > 0) {
+                        "$stageName • ${elapsedSec.toInt()}s"
+                    } else {
+                        "$stageName • Đã duyệt $scannedReal tệp (${elapsedSec.toInt()}s)"
+                    }
+
+                    val effectiveElapsedMs = (elapsedSec * 1000.0).toLong().coerceAtLeast(elapsedMs)
+                    val rawEtaMs = if (pctReal > 0.03f && effectiveElapsedMs >= 3000L) {
+                        ((effectiveElapsedMs / pctReal) - effectiveElapsedMs).toLong().coerceAtLeast(0L)
+                    } else -1L
+                    if (rawEtaMs > 0L) {
+                        lastSmoothedEtaMs = if (lastSmoothedEtaMs <= 0L) rawEtaMs else ((lastSmoothedEtaMs * 3 + rawEtaMs) / 4)
+                    } else {
+                        lastSmoothedEtaMs = -1L
+                    }
+                    DuplicateProgressState.elapsedTime.value = effectiveElapsedMs
+                    DuplicateProgressState.estimatedTimeRemaining.value = lastSmoothedEtaMs
+                    DuplicateProgressState.stage.value = stageName
+                    DuplicateProgressState.stageNumber.value = stageNum
+                    DuplicateProgressState.stageDescription.value = desc
+                    DuplicateProgressState.scannedCount.value = scannedReal
+                    DuplicateProgressState.foundCount.value = candidatesReal
+                    DuplicateProgressState.hashCount.value = doneReal
+                    DuplicateProgressState.totalHashes.value = totalReal
+                    DuplicateProgressState.percent.value = pctReal
+                    DuplicateProgressState.currentStagePercent.value = pctReal
+                    DuplicateProgressState.currentFolder.value = curFolder
+                    DuplicateProgressState.currentFolderUrl.value = curFolder
+                    DuplicateProgressState.itemName.value = curFile
+
+                    if (pollTicks % 2 == 0) {
+                        val pctInt = (pctReal * 100).toInt()
+                        setProgress(workDataOf(
+                            "stage" to stageName,
+                            "stageDescription" to desc,
+                            "scannedCount" to scannedReal,
+                            "foundCount" to candidatesReal,
+                            "percent" to pctReal,
+                            "stageNumber" to stageNum,
+                            "totalStages" to 3,
+                            "elapsedTime" to effectiveElapsedMs
+                        ))
+                        runCatching {
+                            notificationBuilder
+                                .setContentTitle("Quét trùng lặp Rust ($pctInt%)")
+                                .setContentText(desc)
+                                .setProgress(100, pctInt, false)
+                            notificationManager.notify(notificationId, notificationBuilder.build())
                         }
                     }
-                    try {
-                        call.execute().use { response ->
-                            if (response.code in listOf(401,403,409,503)) {
-                                throw IncompleteNasCatalogueException("Danh mục NAS chưa sẵn sàng; chờ thử lại")
-                            }
-                            val body = response.body
-                            if (response.isSuccessful && body != null) {
-                                val mirrorStarted = System.currentTimeMillis()
-                                val scanAccount = currentAccountKey()
-                                val snapshot = readNasCatalogue(body.charStream(),currentUrl,scanAccount) { batch, received, expected ->
-                                    if (isStopped || user != SecurePrefsHelper.getUser(applicationContext) || pass != SecurePrefsHelper.getPass(applicationContext)) {
-                                        throw CancellationException("NAS account changed or scan stopped")
-                                    }
-                                    activeLease.progress("catalogue:$received",received,expected)
-                                    WebDavManager.drainPendingCacheClear()
-                                    db.withTransaction { db.fileDao().insertFiles(batch) }
-                                    totalFilesIndexed.set(received)
-                                    currentStage.set("Nhận danh mục NAS dùng chung")
-                                    currentFolder.set("Danh mục file NAS")
-                                    stageDescription.set("Đã nhận $received/$expected tệp đã lập chỉ mục")
-                                    currentStagePercent.set(received.toFloat()/expected.coerceAtLeast(1))
-                                    progressPercent.set(currentStagePercent.get()*0.5f)
-                                }
-                                require(snapshot.revision == activeLease.revision) {"Danh mục NAS đã thay đổi; thử lại"}
-                                activeLease.progress("catalogue-complete",snapshot.total,snapshot.total)
-                                finishNasCatalogueMirror(db,currentUrl,scanAccount,mirrorStarted,snapshot)
-                                db.checkpointDao().clearCheckpoint("DuplicateScan")
-                                totalFilesIndexed.set(snapshot.total)
-                                isFastPathSuccess = true
-                                progressPercent.set(0.5f)
-                                SystemLogger.log("SUCCESS","IndexEngine","Đã nhận đủ ${snapshot.total} tệp từ catalogue NAS")
-                            }
-                        }
-                    } finally {
-                        cancelJob.cancel()
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException || e is IncompleteNasCatalogueException) throw e
-                    throw IncompleteNasCatalogueException("Không kết nối được catalogue NAS; chưa quét lại filesystem",e)
                 }
 
-                if (!isFastPathSuccess) {
-                    throw IncompleteNasCatalogueException("Không nhận được catalogue NAS đầy đủ; chờ thử lại")
+                if (status != "done") {
+                    val errMsg = lastJson.optString("error", "").ifBlank { "Trạng thái: $status" }
+                    throw IllegalStateException("Quét trùng lặp Rust không hoàn tất: $errMsg")
                 }
 
-                // ═══════════════════════════════════════════════════
-                // GIAI ĐOẠN 2: TÌM FILE TRÙNG (50% → 60%)
-                // TỐI ƯU: Dùng COUNT query + getDuplicateSizes() thay vì load toàn bộ vào RAM
-                // ═══════════════════════════════════════════════════
-                currentStage.set("Phân tích tệp trùng lặp (1/2)")
-                stageNumber.set(2)
-                stageDescription.set("Đang phân lớp sơ bộ các tệp có cùng kích thước...")
-                currentStagePercent.set(0f)
-                progressPercent.set(0.50f)
-
-                // CHỈ đếm số lượng, KHÔNG load object vào RAM
-                // P2-8: scope theo phien hien tai.
-                val scanKey = currentAccountKey()
-                val actualDuplicatesCount = db.fileDao().countDuplicateFiles(scanKey)
-                // Lấy danh sách kích thước trùng (chỉ là List<Long>, rất nhẹ)
-                val duplicateSizes = db.fileDao().getDuplicateSizes(scanKey)
-                
-                if (actualDuplicatesCount > 0) {
-                    currentFileName.set("Tìm thấy $actualDuplicatesCount file nghi ngờ trùng lặp (${duplicateSizes.size} nhóm kích thước)")
-                    duplicateGroupsFound.set(actualDuplicatesCount)
-                } else {
-                    currentFileName.set("Không tìm thấy tệp trùng lặp tiềm năng.")
-                    delay(500)
-                    currentStagePercent.set(1f)
-                    progressPercent.set(0.95f)
+                val resultObj = lastJson.optJSONObject("result")
+                    ?: throw IllegalStateException("Rust trả về kết quả rỗng")
+                if (resultObj.has("inventory")) {
+                    requireCompleteDuplicateInventory(resultObj)
                 }
-                
-                duplicateGroupsFound.set(actualDuplicatesCount)
+                val notice = duplicateReportNotice(resultObj)
+                val parsedFiles = parseRustDuplicateGroups(resultObj, currentUrl)
+                val totalScanned = resultObj.optInt("total_files_scanned", 0)
+                val totalGroups = resultObj.optInt("total_groups", 0)
+                val totalWasted = resultObj.optLong("total_wasted_bytes", 0L)
+                val detectedGroups = resultObj.optInt("detected_groups", totalGroups)
+                val isPartial = resultObj.optInt("total_groups", -1) > (resultObj.optJSONArray("groups")?.length() ?: 0)
+                val stageLabel = if (isPartial) "Có kết quả từng phần" else "Hoàn tất"
+                val summary = if (notice.isNotEmpty()) notice else "Đã duyệt $totalScanned tệp. Phát hiện $detectedGroups nhóm trong phạm vi WebDAV. Báo cáo còn $totalGroups nhóm, dư ${com.nas.naswebdav.utils.FormatUtils.formatBytes(totalWasted)}."
 
-                // ═══════════════════════════════════════════════════
-                // GIAI ĐOẠN 3: HASH CHÍNH XÁC (Trải đều Bước 2 & 3 từ 50% → 95%)
-                // Mới: Gộp Stage 2 và Stage 3 để chia đều thanh tiến trình. Nửa đầu số nhóm tính cho Stage 2, nửa sau cho Stage 3.
-                // ═══════════════════════════════════════════════════
-                if (duplicateSizes.isNotEmpty()) {
-                    totalHashesNeeded.set(actualDuplicatesCount)
-                    val hashSemaphore = Semaphore(3)
-                    for ((groupIndex, size) in duplicateSizes.withIndex()) {
-                        var after = ""
-                        while (isActive) {
-                            while (DuplicateProgressState.isPaused.value) {activeLease.ensureValid();delay(500)}
-                            val page = db.fileDao().getFilesBySizePage(size, currentAccountKey(), after, 128)
-                            if (page.isEmpty()) break
-                            coroutineScope {
-                                page.map { file -> async(Dispatchers.IO) {
-                                    hashSemaphore.withPermit {
-                                        activeLease.ensureValid()
-                                        if (verifyDuplicateFile(webDavManager, file)) hashesComputed.incrementAndGet()
-                                        activeLease.ensureValid()
-                                    }
-                                } }.awaitAll()
-                            }
-                            after = page.last().path
-                            activeLease.checkpoint("hash:${hashesComputed.get()}")
-                            currentStage.set("Xác minh nội dung đầy đủ")
-                            stageNumber.set(3)
-                            stageDescription.set("Đã xác minh ${hashesComputed.get()}/${totalHashesNeeded.get()} tệp ứng viên")
-                            currentStagePercent.set(hashesComputed.get().toFloat() / totalHashesNeeded.get().coerceAtLeast(1))
-                        }
-                        progressPercent.set(0.5f + (groupIndex + 1f) / duplicateSizes.size * 0.45f)
-                    }
-                    currentStagePercent.set(1f)
-                }
-                // SỬA LỖI: Không dùng cancel() để dừng job vì nó sẽ để lại một Future Pending của WorkManager
-                isUiUpdating.set(false)
-                uiUpdaterJob.join()
-
-                // ═══════════════════════════════════════════════════
-                // GIAI ĐOẠN 4: TỔNG HỢP KẾT QUẢ (95% → 100%)
-                // Hiển thị UI rõ ràng cho người dùng thấy đang tổng hợp
-                // ═══════════════════════════════════════════════════
-                currentStage.set("Đang tổng hợp kết quả...")
-                stageNumber.set(4)
-                stageDescription.set("Đang tổng hợp và đếm kết quả từ cơ sở dữ liệu...")
-                currentStagePercent.set(0f)
-                progressPercent.set(0.95f)
-                DuplicateProgressState.stage.value = "Đang tổng hợp kết quả..."
-                DuplicateProgressState.stageNumber.value = 4
-                DuplicateProgressState.stageDescription.value = "Đang tổng hợp và đếm kết quả từ cơ sở dữ liệu..."
-                delay(100) // Cho UI kịp vẽ ra bước mới
-
-                // Đếm lại duplicate groups chính xác từ DB (CHỈ ĐẾM, không load object)
-                val finalDuplicateCount = db.fileDao().countVerifiedDuplicateFiles(currentAccountKey())
-                
-                currentStage.set("Hoàn tất")
-                val unverified = maxOf(0, totalHashesNeeded.get() - hashesComputed.get())
-                val summary = "Đã quét ${totalFilesIndexed.get()} tệp; $finalDuplicateCount tệp trùng đã xác minh; $unverified tệp chưa xác minh."
-                stageDescription.set(summary)
-                progressPercent.set(1f)
-                currentStagePercent.set(1f)
-                DuplicateProgressState.stage.value = "Hoàn tất"
-                DuplicateProgressState.stageDescription.value = "Hoàn tất!"
+                DuplicateProgressState.lastRustResults.value = parsedFiles
+                DuplicateProgressState.scannedCount.value = totalScanned
+                DuplicateProgressState.foundCount.value = parsedFiles.size
+                DuplicateProgressState.stage.value = stageLabel
+                DuplicateProgressState.stageNumber.value = 3
+                DuplicateProgressState.stageDescription.value = summary
+                DuplicateProgressState.percent.value = 1f
+                DuplicateProgressState.currentStagePercent.value = 1f
+                DuplicateProgressState.itemName.value = stageLabel
+                DuplicateProgressState.currentFolderUrl.value = "$stageLabel ($totalScanned tệp)"
 
                 setProgress(workDataOf(
-                    "stage" to "Hoàn tất",
-                    "itemName" to "Quét xong!",
-                    "scannedCount" to totalFilesIndexed.get(),
-                    "foundCount" to finalDuplicateCount,
+                    "stage" to stageLabel,
+                    "itemName" to stageLabel,
+                    "scannedCount" to totalScanned,
+                    "foundCount" to parsedFiles.size,
                     "percent" to 1f,
                     "currentStagePercent" to 1f,
-                    "currentFolderUrl" to "Hoàn tất quét ${totalFilesIndexed.get()} tệp",
-                    "stageNumber" to 4,
-                    "totalStages" to totalStages,
-                    "stageDescription" to summary,
-                    "unverifiedCount" to unverified
+                    "stageNumber" to 3,
+                    "totalStages" to 3,
+                    "stageDescription" to summary
                 ))
-                
-                // PHASE 6: Hiển thị Push Notification nếu có rác
-                if (finalDuplicateCount > 0) {
-                    UploadNotificationHelper.showDuplicateFoundNotification(applicationContext, finalDuplicateCount)
+
+                if (parsedFiles.isNotEmpty()) {
+                    UploadNotificationHelper.showDuplicateFoundNotification(applicationContext, parsedFiles.size)
                 } else {
                     notificationBuilder
-                        .setContentTitle("Dọn rác hoàn tất")
-                        .setContentText(if (unverified > 0) "Còn $unverified tệp chưa xác minh; chưa thể kết luận không trùng." else "Không tìm thấy tệp trùng lặp mới.")
+                        .setContentTitle(stageLabel)
+                        .setContentText(summary)
                         .setProgress(0, 0, false)
                         .setOngoing(false)
                     notificationManager.notify(notificationId, notificationBuilder.build())
                 }
+
+                SystemLogger.log(if (notice.isEmpty()) "SUCCESS" else "WARN", "DuplicateScan", summary)
+                return@withContext Result.success(workDataOf(
+                    "stageDescription" to summary,
+                    "scannedCount" to totalScanned,
+                    "foundCount" to parsedFiles.size
+                ))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                cancelOwnedScan()
+                throw e
+            } catch (e: Exception) {
+                val msg = e.message ?: "Lỗi không xác định"
+                DuplicateProgressState.stage.value = "Lỗi quét Rust"
+                DuplicateProgressState.stageDescription.value = msg
+                DuplicateProgressState.percent.value = 0f
+                SystemLogger.log("ERROR", "DuplicateScan", "Quét trùng lặp Rust thất bại (không fallback): $msg")
+                return@withContext Result.failure(workDataOf("error" to msg))
+            } finally {
+                setThumbnailActivity("sync", false)
             }
-
-            db.checkpointDao().clearCheckpoint("DuplicateScan")
-            SystemLogger.log("SUCCESS", "DuplicateScan", "Hoàn tất quét tệp trùng lặp")
-            activeLease.complete()
-            return@withContext Result.success()
-
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
-            if (isStopped) return@withContext Result.retry()
-            SystemLogger.log("WARNING", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
-            return@withContext Result.retry()
-        } finally {
-            lease?.retryAndRelease()
-            isUiUpdating.set(false)
-            // Chờ UI updater tự thoát sau khi isUiUpdating = false (vòng lặp kiểm tra flag này)
-            uiUpdaterJob?.join()
-            // FIX D1: Thực sự cancel uiScope để giải phóng tất cả coroutine trong scope
-            uiScope.cancel()
-            // FIX-THUMB-STUCK: luôn giải phóng block "sync" — DuplicateScanWorker
-            // không gọi setThumbnailActivity("sync", false) trước đây, nên NAS
-            // daemon bị pause vĩnh viễn (block_reasons={'sync'}) cho đến khi restart.
-            setThumbnailActivity("sync", false)
-        }
-    }
-    }
-
-    private suspend fun verifyDuplicateFile(manager: WebDavManager, file: CachedFile): Boolean {
-        return try {
-            manager.getCachedVerifiedSha256(file.path, file.contentLength) != null
-        } catch (error: CancellationException) { throw error }
-        catch (error: Exception) {
-            android.util.Log.w("DuplicateScan", "File could not be verified: ${file.path}", error)
-            false
         }
     }
 }

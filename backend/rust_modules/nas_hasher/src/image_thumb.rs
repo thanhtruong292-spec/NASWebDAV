@@ -173,7 +173,7 @@ pub fn compute_batch_ahash(paths: &[String], workers: usize) -> Vec<(String, Opt
             .collect()
     };
 
-    if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(n_threads).build() {
+    if let Some(pool) = crate::shared_rayon_pool(n_threads) {
         pool.install(runner)
     } else {
         runner()

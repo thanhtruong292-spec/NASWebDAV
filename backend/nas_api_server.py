@@ -504,9 +504,12 @@ _NON_INTERACTIVE_HIT_PREFIXES = (
     "/api/work/", "/api/v1/work/",
     "/api/system/idle", "/api/v1/system/idle",
     "/api/disk/fast_index", "/api/v1/disk/fast_index",
+    "/api/disk/scan_duplicates", "/api/v1/disk/scan_duplicates",
     "/api/duplicates/file", "/api/v1/duplicates/file",
     "/api/duplicates/hash", "/api/v1/duplicates/hash",
     "/api/duplicates/compute_hash", "/api/v1/duplicates/compute_hash",
+    "/api/duplicates/auto_clean", "/api/v1/duplicates/auto_clean",
+    "/api/duplicates/cleanup", "/api/v1/duplicates/cleanup",
     "/api/backup/batch_stream", "/api/v1/backup/batch_stream",
     "/api/backup/resumable/", "/api/v1/backup/resumable/",
     "/api/backup/session", "/api/v1/backup/session",
@@ -667,6 +670,8 @@ def _index_readiness(conn):
 
 
 def _scan_file_index(search_root):
+    if search_root and os.path.dirname(os.path.realpath(search_root)) == os.path.realpath(search_root):
+        raise ValueError("Invalid WebDAV index root")
     if not _index_scan_lock.acquire(False):
         return {"index_ready": False, "index_incomplete_reason": "scan_in_progress", "checked_dirs": 0, "enumerated_dirs": 0}
     try:
@@ -776,6 +781,11 @@ def _run_file_index_job(search_root, ignore_user_idle=False):
 
 def _refresh_file_index_for_search():
     """Warm indexes validate directory changes at most once every five seconds."""
+    try:
+        if os.path.isfile(_pending_mutations_path()):
+            _drain_pending_file_mutations()
+    except Exception:
+        pass
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
     try:
         row = conn.execute("SELECT root, scanned_at, built FROM index_state WHERE id=1").fetchone()
@@ -803,7 +813,7 @@ def _scan_file_index_pass(search_root, work_lease=None, ignore_user_idle=False):
     """Stat known directories; reconcile only stable successful directory reads."""
     import stat
     root = os.path.realpath(search_root) if search_root else ""
-    if not root or root == os.path.abspath(os.sep) or not os.path.isdir(root):
+    if not root or os.path.dirname(root) == root or not os.path.isdir(root):
         raise ValueError("Invalid WebDAV index root")
     storage_boundary = _index_storage_boundary(root)
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_30", 30.0))
@@ -1013,6 +1023,16 @@ def _file_indexer_watchdog():
     while True:
         _index_mutation_wake.clear()
         try:
+            try:
+                _replay_duplicate_batch_journals()
+            except (OSError, ValueError) as error:
+                log.warning("[Duplicates] Recovery unavailable: %s", error)
+            try:
+                drain_fn = globals().get("_drain_pending_file_mutations")
+                if callable(drain_fn):
+                    drain_fn()
+            except Exception as drain_err:
+                log.warning("[FileMutation] Watchdog drain pending mutations failed: %s", drain_err)
             result = _scan_file_index(_get_webdav_public_dir())
             log.info("[FileIndex] Checked %s directories, enumerated %s, ready=%s",
                      result["checked_dirs"], result["enumerated_dirs"], result["index_ready"])
@@ -2639,6 +2659,23 @@ def requires_auth(f):
             else:
                 return jsonify({"detail": "Sai mat khau"}), 401
 
+        # Query auth param bypass (cho phep <img>, <video>, media stream chua auth header)
+        q_auth = request.args.get("auth")
+        if q_auth:
+            try:
+                import base64
+                raw_b64 = q_auth.encode("ascii") if isinstance(q_auth, str) else q_auth
+                decoded = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
+                if ":" in decoded:
+                    quser, qpass = decoded.split(":", 1)
+                    if check_auth(quser, qpass):
+                        if ip and ip not in _AUTHORIZED_IPS_CACHE.get("ips", set()):
+                            _remember_authorized_ip(ip)
+                            _async_persist_trusted_ip(ip)
+                        return f(*args, **kwargs)
+            except Exception:
+                pass
+
         # LAN whitelist bypass (chi danh cho request chua co header Auth)
         if _ip_in_whitelist(ip):
             return f(*args, **kwargs)
@@ -2647,7 +2684,10 @@ def requires_auth(f):
         if ip and ip in _refresh_authorized_ips_cache():
             return f(*args, **kwargs)
 
-        return jsonify({"detail": "Chua xac thuc"}), 401
+        resp = jsonify({"detail": "Chua xac thuc"})
+        resp.status_code = 401
+        resp.headers["WWW-Authenticate"] = 'Basic realm="NAS"'
+        return resp
 
     return decorated
 
@@ -4897,8 +4937,11 @@ def _cron_worker():
                 try:
                     df, dd, db = _clean_empty_files_and_dirs(WEBDAV_FILE_ROOT)
                     dt = _clean_managed_tmp_root()
-                    if df + dd + db + dt > 0:
+                    oh, ot = _prune_orphaned_hashes_and_thumbs()
+                    if df + dd + db + dt + oh + ot > 0:
                         msg = "Tự động dọn dẹp: Đã xóa %d tệp tạm, %d thư mục tạm (trong đó tmp backend: %d)." % (df, dd, dt)
+                        if oh + ot > 0:
+                            msg = msg + " Dọn mồ côi: %d hash DB, %d thumbnail." % (oh, ot)
                         if db > 0:
                             msg = msg + " FLV hỏng cũ: %d." % db
                         _push_alert("EMPTY_CLEANED", msg, "INFO")
@@ -4923,6 +4966,12 @@ def _cron_worker():
                 if started:
                     _push_alert("AI_SCAN_STARTED", "Smart Gallery: Đã phân loại ảnh theo thư mục.", "INFO")
                     _update_process_state("smart_gallery", ai_last_scan=now_ts, ai_scan_started=True)
+
+            # --- 5b. Tự động quét trùng lặp Rust trên NAS theo lịch (không phụ thuộc điện thoại) ---
+            try:
+                _maybe_trigger_scheduled_dup_scan(now_dt, now_ts)
+            except Exception as _dse:
+                log.warning("[Cron] Lỗi kiểm tra lịch quét trùng lặp Rust: %s", _dse)
 
             # --- 6. Tạo Báo Cáo Hàng Ngày lúc 6h sáng ---
             is_6am = (now_dt.hour == 6 and now_dt.minute < 2)
@@ -6117,7 +6166,7 @@ def api_scan_broken_mp4():
         return jsonify({"error": str(e)}), 500
 
 
-def _telegram_send(bot_token: str, chat_id: str, message: str) -> dict:
+def _telegram_send(bot_token, chat_id, message):
     """Gửi tin nhắn qua Telegram Bot API.
 
     Args:
@@ -8150,7 +8199,9 @@ def _duplicate_namespace_teardown_request(error):
 
 
 def _duplicate_file_info(relative):
-    if not isinstance(relative, str) or not relative or relative.startswith('/') or '\\' in relative:
+    if not isinstance(relative, str) or not relative:
+        raise ValueError('Invalid public file path')
+    if relative.startswith('/') or '\\' in relative:
         raise ValueError('Invalid public file path')
     if any(not part or part in ('.', '..') or part.startswith('.') for part in relative.split('/')):
         raise ValueError('Hidden or unsafe file path')
@@ -8201,6 +8252,8 @@ def _duplicate_open_lease(info):
 
 
 def _duplicate_sync_directory(directory):
+    if not hasattr(os, "O_DIRECTORY"):
+        return
     fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
@@ -8210,25 +8263,39 @@ def _duplicate_sync_directory(directory):
 
 def _duplicate_db():
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
-    conn.execute("CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL, path TEXT NOT NULL DEFAULT '')")
-    if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
-        try:
-            conn.execute("ALTER TABLE verified_file_hashes ADD COLUMN path TEXT NOT NULL DEFAULT ''")
-        except sqlite3.OperationalError:
-            if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
-                conn.close()
-                raise
-    conn.execute('CREATE INDEX IF NOT EXISTS verified_sha_size_path ON verified_file_hashes(sha256,size,path)')
-    conn.commit()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL, path TEXT NOT NULL DEFAULT '', provenance TEXT NOT NULL DEFAULT '')")
+        cols = [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]
+        if 'path' not in cols:
+            try:
+                conn.execute("ALTER TABLE verified_file_hashes ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                if 'path' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
+                    raise
+        if 'provenance' not in cols:
+            try:
+                conn.execute("ALTER TABLE verified_file_hashes ADD COLUMN provenance TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                if 'provenance' not in [row[1] for row in conn.execute('PRAGMA table_info(verified_file_hashes)')]:
+                    raise
+        conn.execute('CREATE INDEX IF NOT EXISTS verified_sha_size_path ON verified_file_hashes(sha256,size,path)')
+        conn.commit()
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
-def _duplicate_lookup(info):
+def _duplicate_lookup(info, require_server_provenance=False):
     conn = _duplicate_db()
     try:
-        row = conn.execute('SELECT sha256,path FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
+        row = conn.execute('SELECT sha256,path,provenance FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
                            (info['file_id'], info['version'], info['size'])).fetchone()
-        if row and row[1] != info['path']:
+        if not row:
+            return ''
+        if require_server_provenance and (row[2] or '') != 'server_lease':
+            return ''
+        if row[1] != info['path']:
             valid_path = False
             if row[1]:
                 try:
@@ -8237,24 +8304,32 @@ def _duplicate_lookup(info):
                 except (OSError, ValueError):
                     pass
             if not valid_path:
-                conn.execute('UPDATE verified_file_hashes SET path=? WHERE file_id=?', (info['path'],info['file_id']))
+                conn.execute('UPDATE verified_file_hashes SET path=? WHERE file_id=?', (info['path'], info['file_id']))
                 conn.commit()
-        return row[0] if row else ''
+        return row[0]
     finally:
         if conn is not None:
             conn.close()
 
 
-def _duplicate_save_hash(relative, version, sha256):
+def _duplicate_save_hash(relative, version, sha256, provenance='client'):
     if not isinstance(sha256, str) or len(sha256) != 64 or any(c not in '0123456789abcdef' for c in sha256):
         raise ValueError('A complete SHA256 is required')
     info = _duplicate_file_info(relative)
     if info['version'] != version:
         raise ValueError('File changed during verification')
+    prov = provenance if provenance in ('server_lease', 'client') else 'client'
     conn = _duplicate_db()
     try:
-        conn.execute('INSERT OR REPLACE INTO verified_file_hashes(file_id,version,size,sha256,verified_at,path) VALUES(?,?,?,?,?,?)',
-                     (info['file_id'], info['version'], info['size'], sha256, time.time(), info['path']))
+        if prov != 'server_lease':
+            existing = conn.execute(
+                'SELECT provenance FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
+                (info['file_id'], info['version'], info['size']),
+            ).fetchone()
+            if existing and existing[0] == 'server_lease':
+                return info
+        conn.execute('INSERT OR REPLACE INTO verified_file_hashes(file_id,version,size,sha256,verified_at,path,provenance) VALUES(?,?,?,?,?,?,?)',
+                     (info['file_id'], info['version'], info['size'], sha256, time.time(), info['path'], prov))
         conn.commit()
     finally:
         if conn is not None:
@@ -8269,15 +8344,113 @@ def _duplicate_work_dir():
     root = os.path.realpath(configured)
     directory = os.path.join(_index_storage_boundary(root) or root, '.naswebdav', 'verified_duplicates')
     os.makedirs(directory, mode=0o700, exist_ok=True)
-    if os.path.realpath(directory) != os.path.abspath(directory) or os.lstat(directory).st_uid != os.geteuid():
+    if os.path.realpath(directory) != os.path.abspath(directory) or (hasattr(os, "geteuid") and os.lstat(directory).st_uid != os.geteuid()):
         raise ValueError('Unsafe duplicate work directory')
     os.chmod(directory, 0o700)
     return directory
 
 
+def _replay_duplicate_batch_journals():
+    """Restore quarantined files or reconcile completed deletions after interruption."""
+    if not _get_webdav_public_dir():
+        return
+    directory = _duplicate_work_dir()
+    with os.fdopen(_duplicate_open_namespace_lock(True), 'r'):
+        for entry in os.scandir(directory):
+            if not entry.name.endswith('.json') or not entry.is_file(follow_symlinks=False):
+                continue
+            try:
+                _replay_duplicate_batch_journal(directory, entry.path)
+            except (OSError, ValueError, sqlite3.Error) as error:
+                log.warning('[Duplicates] Recovery deferred for %s: %s', entry.name, error)
+
+
+def _record_duplicate_deletion(conn, journal, record):
+    conn.execute("CREATE TABLE IF NOT EXISTS duplicate_deletions (receipt TEXT PRIMARY KEY, "
+                 "victim TEXT NOT NULL, keeper TEXT NOT NULL, sha256 TEXT NOT NULL, "
+                 "victim_version TEXT NOT NULL, keeper_version TEXT NOT NULL, bytes INTEGER NOT NULL, "
+                 "created_at REAL NOT NULL)")
+    conn.execute("INSERT OR IGNORE INTO duplicate_deletions VALUES (?,?,?,?,?,?,?,?)",
+                 (os.path.basename(journal), record["original_path"], record["keeper"], record["sha256"],
+                  record["version"], record["keeper_version"], record["size"], record["created_at"]))
+
+
+def _replay_duplicate_batch_journal(directory, journal):
+    with open(journal, 'r', encoding='utf-8') as source:
+        record = json.load(source)
+    if not isinstance(record, dict) or record.get('kind') != 'duplicate_batch_v1':
+        return
+    quarantine = journal[:-5]
+    relative = record.get('original_path')
+    if quarantine != record.get('quarantine') or not isinstance(relative, str):
+        raise ValueError('Invalid duplicate recovery record')
+    if '\\' in relative or any(not part or part.startswith('.') for part in relative.split('/')):
+        raise ValueError('Invalid duplicate recovery path')
+    configured = _get_webdav_public_dir()
+    if not configured:
+        raise ValueError('Public root unavailable')
+    root = os.path.realpath(configured)
+    logical = os.path.join(root, relative)
+    parent = _index_resolve_directory(os.path.dirname(logical), root, _index_storage_boundary(root))
+    if parent is None:
+        raise ValueError('Duplicate recovery parent unavailable')
+    physical = os.path.join(parent, os.path.basename(logical))
+    if physical != record.get('physical'):
+        raise ValueError('Duplicate recovery path changed')
+    if os.path.lexists(quarantine):
+        current = os.lstat(quarantine)
+        identity = '%s:%s' % (current.st_dev, current.st_ino)
+        if (not stat.S_ISREG(current.st_mode) or identity != record.get('file_id') or
+                current.st_size != record.get('size') or current.st_mtime_ns != record.get('mtime_ns')):
+            raise ValueError('Quarantined file identity changed')
+        try:
+            os.link(quarantine, physical)
+        except FileExistsError:
+            published = os.lstat(physical)
+            if not os.path.samestat(current, published):
+                raise ValueError('Original path is occupied; quarantine preserved')
+        _duplicate_sync_directory(parent)
+        os.unlink(quarantine)
+    _duplicate_sync_directory(directory)
+    # The mutation handler refreshes a replacement if the name was recreated.
+    result = _sync_file_mutation('delete', relative, _allow_enqueue=False)
+    if result.get('ok'):
+        if record.get('status') == 'completed' and record.get('keeper_version'):
+            conn = _duplicate_db()
+            try:
+                _record_duplicate_deletion(conn, journal, record)
+                conn.commit()
+            finally:
+                conn.close()
+        os.unlink(journal)
+        _duplicate_sync_directory(directory)
+
+
+
+def _duplicate_validate_quarantine(quarantine, victim, keeper, keeper_fd, victim_fd):
+    import fcntl
+    moved = os.lstat(quarantine)
+    if ('%s:%s' % (moved.st_dev, moved.st_ino) != victim['file_id'] or
+            moved.st_size != victim['size'] or moved.st_mtime_ns != victim['mtime_ns']):
+        raise ValueError('Candidate was replaced during cleanup')
+    if _duplicate_file_info(keeper['path'])['version'] != keeper['version']:
+        raise ValueError('Survivor changed during cleanup')
+    if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
+        raise ValueError('File was requested for writing; cleanup cancelled')
+
+
+def _owns_duplicate_work_lease(lease):
+    return (isinstance(lease, dict) and lease.get('name') == 'duplicates' and
+            isinstance(lease.get('owner'), str) and 0 < len(lease['owner']) <= 128 and
+            isinstance(lease.get('token'), str) and 0 < len(lease['token']) <= 128 and
+            nas_work_coordinator.owns_lease(INDEX_DB_PATH, 'duplicates', lease['owner'], lease['token']))
+
+
 def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256, work_lease=None):
     import fcntl
     import uuid
+    if not isinstance(victim_path, str) or not isinstance(keeper_path, str):
+        raise ValueError('Invalid paths')
     _duplicate_validate_namespace()
     directory = _duplicate_work_dir()
     def require_work_lease():
@@ -8296,7 +8469,18 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
             raise ValueError('Both URLs address the same physical file')
         if keeper['version'] != keeper_version or victim['version'] != victim_version:
             raise ValueError('File version changed')
-        if keeper['size'] != victim['size'] or not sha256 or _duplicate_lookup(keeper) != sha256 or _duplicate_lookup(victim) != sha256:
+        if keeper['size'] != victim['size'] or not sha256:
+            raise ValueError('Full-content verification is missing')
+        keeper_sha = _duplicate_lookup(keeper, require_server_provenance=True)
+        if not keeper_sha:
+            # Legacy/upgraded DB row or client-only digest: re-verify on disk under F_SETLEASE before trusting for deletion.
+            if _duplicate_lookup(keeper, require_server_provenance=False) == sha256:
+                keeper_sha = _duplicate_compute_hash(keeper_path, keeper_version).get('sha256', '')
+        victim_sha = _duplicate_lookup(victim, require_server_provenance=True)
+        if not victim_sha:
+            if _duplicate_lookup(victim, require_server_provenance=False) == sha256:
+                victim_sha = _duplicate_compute_hash(victim_path, victim_version).get('sha256', '')
+        if keeper_sha != sha256 or victim_sha != sha256:
             raise ValueError('Full-content verification is missing')
         keeper_fd = _duplicate_open_lease(keeper)
         victim_fd = None
@@ -8316,15 +8500,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                 os.rename(victim['physical'], quarantine)
                 _duplicate_sync_directory(os.path.dirname(victim['physical']))
                 _duplicate_sync_directory(directory)
-                moved = os.lstat(quarantine)
-                if ('%s:%s' % (moved.st_dev, moved.st_ino) != victim['file_id'] or
-                        moved.st_size != victim['size'] or moved.st_mtime_ns != victim['mtime_ns']):
-                    raise ValueError('Candidate was replaced during cleanup')
-                survivor = _duplicate_file_info(keeper_path)
-                if survivor['version'] != keeper_version:
-                    raise ValueError('Survivor changed during cleanup')
-                if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
-                    raise ValueError('File was requested for writing; cleanup cancelled')
+                _duplicate_validate_quarantine(quarantine, victim, keeper, keeper_fd, victim_fd)
                 # shortcut: external root/SSH mutations are outside the managed namespace lock.
                 require_work_lease()
                 os.unlink(quarantine)
@@ -8351,9 +8527,17 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                              (victim_path, '/webdav/' + victim_path))
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='thumb_neg_cache'").fetchone():
                 conn.execute('DELETE FROM thumb_neg_cache WHERE path=?', (victim['physical'],))
+            _delete_thumb_for_file(victim['physical'])
             parent = victim_path.rsplit('/', 1)[0] + '/' if '/' in victim_path else ''
             conn.execute('UPDATE index_directories SET stamp=NULL,complete=0 WHERE path=?', (parent,))
-            nas_work_coordinator.bump_catalogue_revision(conn)
+            previous_revision = nas_work_coordinator.catalogue_revision(conn) if work_lease else None
+            revision = nas_work_coordinator.bump_catalogue_revision(conn)
+            if work_lease:
+                # Acknowledge only this lease's own committed mutation. An unrelated
+                # revision change must still invalidate the client's completion.
+                conn.execute("UPDATE nas_work_lease SET catalogue_revision=? WHERE id=1 AND name='duplicates' "
+                             "AND owner=? AND token=? AND expires_at>? AND catalogue_revision=?",
+                             (revision, work_lease['owner'], work_lease['token'], time.time(), previous_revision))
             conn.execute("UPDATE index_state SET ready=0,incomplete_reason='file_mutation_pending',scanned_at=0 WHERE id=1")
             conn.commit()
         except sqlite3.Error as error:
@@ -8361,6 +8545,10 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
         finally:
             if conn is not None:
                 conn.close()
+        try:
+            _prune_dup_scan_state_paths([victim_path])
+        except Exception as e_prune:
+            log.warning('[Duplicates] Prune scan state failed: %s', e_prune)
         return {'deleted': True, 'path': victim_path, 'keeper': keeper_path,
                 'logical_bytes_removed': victim['size']}
 
@@ -8450,6 +8638,16 @@ def api_duplicate_hash():
         return jsonify({'error': str(error)}), 409
 
 
+def _retry_duplicate_hash_db(operation, *args, **kwargs):
+    for attempt in range(3):
+        try:
+            return operation(*args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            if attempt == 2 or not any(reason in str(exc).lower() for reason in ('busy', 'locked')):
+                raise
+            time.sleep(0.25 * (attempt + 1))
+
+
 def _duplicate_compute_hash(relative, version=None):
     if isinstance(relative, str) and relative.startswith("/webdav/"):
         relative = relative[len("/webdav/"):]
@@ -8458,7 +8656,7 @@ def _duplicate_compute_hash(relative, version=None):
     info = _duplicate_file_info(relative)
     if version is not None and info['version'] != version:
         raise ValueError('File version changed')
-    known = _duplicate_lookup(info)
+    known = _retry_duplicate_hash_db(_duplicate_lookup, info, require_server_provenance=True)
     if known and len(known) == 64:
         return {
             'path': info['path'],
@@ -8469,23 +8667,22 @@ def _duplicate_compute_hash(relative, version=None):
             'cached': True,
         }
     import fcntl
+    bridge = globals().get("rust_bridge")
+    if not bridge or not hasattr(bridge, "compute_duplicate_sha256_fd"):
+        raise OSError("Rust duplicate verifier is unavailable")
     fd = _duplicate_open_lease(info)
     try:
-        sha256 = rust_bridge.compute_fast_sha256(info['physical'])
-        if not sha256 or len(sha256) != 64:
-            raise ValueError('Failed to compute SHA256 on NAS')
-        try:
-            gl = fcntl.fcntl(fd, fcntl.F_GETLEASE)
-            unlck = getattr(fcntl, 'F_UNLCK', 2)
-            if gl not in (fcntl.F_RDLCK, unlck):
-                raise ValueError('File requested for writing during verification')
-        except (OSError, IOError, ValueError, AttributeError):
-            pass
+        sha256 = bridge.compute_duplicate_sha256_fd(fd)
+        gl = fcntl.fcntl(fd, fcntl.F_GETLEASE)
+        if gl != fcntl.F_RDLCK:
+            raise ValueError('No valid read lease on hashed file descriptor')
         if _duplicate_stat_version(os.fstat(fd)) != info['version']:
             raise ValueError('File changed during verification')
     finally:
         os.close(fd)
-    _duplicate_save_hash(info['path'], info['version'], sha256)
+    # Luu server provenance fail-closed: chi ghi khi da xac minh duoc lease hop le
+    # tren FD da bam. Khong co lối fallback ghi provenance client/''.
+    _retry_duplicate_hash_db(_duplicate_save_hash, info['path'], info['version'], sha256, provenance='server_lease')
     return {
         'path': info['path'],
         'version': info['version'],
@@ -8986,30 +9183,28 @@ def api_backup_resumable_finish():
             final_name = filename
             final_path = os.path.join(dest_dir, final_name)
             if os.path.exists(final_path):
-                # Neu file dich da ton tai voi cung size & sha256 thi giu nguyen dich, xoa .part
-                existing_rel = (dest_clean + "/" + final_name).strip("/")
-                same_existing = False
+                # Neu file dich da ton tai tren NAS:
+                # CAM TUYET DOI DOI TEN FILE KHI UPLOAD. GIU NGUYEN TEN GOC, TRUNG TEN THI BO QUA (SKIP).
                 try:
-                    if os.path.getsize(final_path) == expected_size:
-                        ex_info = _duplicate_file_info(existing_rel)
-                        if _duplicate_lookup(ex_info) == expected_sha:
-                            same_existing = True
+                    os.remove(part_path)
                 except Exception:
                     pass
-                if same_existing:
-                    try:
-                        os.remove(part_path)
-                    except Exception:
-                        pass
-                else:
-                    dot_idx = final_name.rfind(".")
-                    ts_ms = int(time.time() * 1000)
-                    if dot_idx > 0:
-                        final_name = final_name[:dot_idx] + ("__v%d" % ts_ms) + final_name[dot_idx:]
-                    else:
-                        final_name = final_name + ("__v%d" % ts_ms)
-                    final_path = os.path.join(dest_dir, final_name)
-                    os.replace(part_path, final_path)
+                log.info("[AutoBackup] File dich da ton tai cung ten tren NAS: %s -> Bo qua upload (skip), giu nguyen ban tren dia.", final_path)
+                rel_final = (dest_clean + "/" + final_name).strip("/")
+                existing_size = 0
+                try:
+                    existing_size = os.path.getsize(final_path)
+                except Exception:
+                    existing_size = expected_size
+                return jsonify({
+                    "ok": True,
+                    "status": "ok",
+                    "path": rel_final,
+                    "filename": final_name,
+                    "size": existing_size,
+                    "sha256": expected_sha,
+                    "skipped": True,
+                })
             else:
                 os.replace(part_path, final_path)
 
@@ -9057,6 +9252,454 @@ def api_duplicate_cleanup():
         return jsonify(result)
     except (OSError, ValueError) as error:
         return jsonify({'deleted': False, 'error': str(error)}), 409
+
+
+def _execute_duplicate_cleanup_batch_items(items):
+    """Xoa hang loat tep trung lap da xac minh SHA-256 (Rust + F_SETLEASE) trong 1 transaction SQLite.
+
+    Dung lai bao dam cua luong don (_duplicate_cleanup): moi victim duoc quarantine vao
+    file tam, kiem tra ten cuoi (file_id/size/mtime_ns) va lease F_RDLCK tren dung
+    FD duoc bam truoc khi unlink; neu bi ngat hoac metadata commit loi thi phuc hoi
+    quarantine ve lai. Tat ca xoa o duoc ghi trong mot transaction SQLite mot luc.
+    """
+    import fcntl
+    import uuid
+    if not isinstance(items, list):
+        return {'ok': False, 'error': 'items must be a list'}
+    _duplicate_validate_namespace()
+    deleted_records = []
+    deleted_paths = []
+    skipped = 0
+    bytes_removed = 0
+    metadata_pending = 0
+    verified_keepers = {}
+
+    def _norm_rel(path):
+        if not isinstance(path, str):
+            return ''
+        if path.startswith(('http://', 'https://')):
+            path = urllib.parse.unquote(urllib.parse.urlsplit(path).path)
+        return _norm_rel_dup_path(path)
+
+    with os.fdopen(_duplicate_open_namespace_lock(True), 'r') as _lock:
+        for it in items:
+            if not isinstance(it, dict):
+                skipped += 1
+                continue
+            v_rel = _norm_rel(it.get('victim'))
+            k_rel = _norm_rel(it.get('keeper'))
+            sha = str(it.get('sha256') or '').lower()
+            if not v_rel or not k_rel or len(sha) != 64:
+                skipped += 1
+                continue
+            try:
+                keeper = _duplicate_file_info(k_rel)
+                victim = _duplicate_file_info(v_rel)
+                if keeper['file_id'] == victim['file_id'] or keeper['size'] != victim['size']:
+                    skipped += 1
+                    continue
+                k_key = (keeper['file_id'], keeper['version'])
+                k_sha = verified_keepers.get(k_key)
+                if not k_sha:
+                    k_sha = _duplicate_compute_hash(k_rel, keeper['version'])['sha256']
+                    if k_sha:
+                        verified_keepers[k_key] = k_sha
+                if k_sha != sha:
+                    skipped += 1
+                    continue
+                v_sha = _duplicate_compute_hash(v_rel, victim['version'])['sha256']
+                if v_sha != sha:
+                    skipped += 1
+                    continue
+
+                # --- Luong don: verify lease/phien ban, tai dong FD, rename vao quarantine,
+                # xac minh ten cuoi, unlink (giong _duplicate_cleanup). Tat ca xoa o duoc
+                # ghi trong mot transaction SQLite mot luc.
+                keeper_fd = _duplicate_open_lease(keeper)
+                victim_fd = None
+                journal = None
+                try:
+                    victim_fd = _duplicate_open_lease(victim)
+                    if (_duplicate_stat_version(os.fstat(keeper_fd)) != keeper['version'] or
+                            _duplicate_stat_version(os.fstat(victim_fd)) != victim['version']):
+                        skipped += 1
+                        continue
+                    if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
+                        skipped += 1
+                        continue
+                    # Giu ca 2 FD (va lease F_RDLCK) den sau thao tac xoa thuc
+                    # su tren NAS Linux; chi dong trong finally (khong double close,
+                    # khong dong fd cua luong khac).
+                    directory = _duplicate_work_dir()
+                    quarantine = os.path.join(directory, uuid.uuid4().hex)
+                    journal = quarantine + '.json'
+                    with open(journal, 'x') as recovery:
+                        receipt = {'kind': 'duplicate_batch_v1', 'size': victim['size'],
+                                   'keeper': k_rel, 'keeper_version': keeper['version'], 'sha256': sha,
+                                   'mtime_ns': victim['mtime_ns'], 'original_path': v_rel,
+                                   'physical': victim['physical'],
+                                   'quarantine': quarantine, 'file_id': victim['file_id'],
+                                   'version': victim['version'], 'created_at': time.time()}
+                        json.dump(receipt, recovery)
+                        recovery.flush()
+                        os.fsync(recovery.fileno())
+                    _duplicate_sync_directory(directory)
+                    os.rename(victim['physical'], quarantine)
+                    _duplicate_sync_directory(os.path.dirname(victim['physical']))
+                    _duplicate_sync_directory(directory)
+                    _duplicate_validate_quarantine(quarantine, victim, keeper, keeper_fd, victim_fd)
+                    os.unlink(quarantine)
+                except Exception:
+                    try:
+                        if journal is not None:
+                            _replay_duplicate_batch_journal(directory, journal)
+                    except Exception as err:
+                        log.warning("[Duplicates] Immediate batch item rollback failed: %s", err)
+                    _index_mutation_wake.set()
+                    raise
+                finally:
+                    if victim_fd is not None:
+                        try:
+                            os.close(victim_fd)
+                        except OSError:
+                            pass
+                    if keeper_fd is not None:
+                        try:
+                            os.close(keeper_fd)
+                        except OSError:
+                            pass
+                # Danh dau journal da hoan tat (vi duoc unlink thanh cong) nhung CHUA xoa:
+                # chi xoa sau khi catalogue duoc commit thanh transaction ben duoi.
+                try:
+                    if os.path.lexists(journal):
+                        with open(journal, 'r', encoding='utf-8', errors='ignore') as jf:
+                            jrec = json.load(jf)
+                        jrec['status'] = 'completed'
+                        tmp_j = journal + '.tmp'
+                        with open(tmp_j, 'w', encoding='utf-8') as jw:
+                            json.dump(jrec, jw, ensure_ascii=False)
+                            jw.flush()
+                            os.fsync(jw.fileno())
+                        os.replace(tmp_j, journal)
+                        _duplicate_sync_directory(directory)
+                except (OSError, ValueError):
+                    pass
+                deleted_records.append((v_rel, victim['file_id'], victim['physical'], journal, receipt))
+                deleted_paths.append(v_rel)
+                raw_v = str(it.get('victim') or '').strip()
+                if raw_v and raw_v != v_rel:
+                    deleted_paths.append(raw_v)
+                bytes_removed += int(victim['size'])
+                try:
+                    _delete_thumb_for_file(victim['physical'])
+                except Exception as err:
+                    log.warning('[Duplicates] Thumbnail cleanup deferred: %s', err)
+            except (OSError, ValueError, sqlite3.Error):
+                skipped += 1
+                continue
+
+        if deleted_records:
+            conn = None
+            try:
+                conn = _duplicate_db()
+                tables = set(r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall())
+                dirty_parents = set()
+                for v_rel, v_fid, v_phys, journal, receipt in deleted_records:
+                    _record_duplicate_deletion(conn, journal, receipt)
+                    conn.execute('DELETE FROM verified_file_hashes WHERE file_id=?', (v_fid,))
+                    if 'file_index' in tables:
+                        conn.execute('DELETE FROM file_index WHERE path=?', (v_rel,))
+                    if 'file_hashes' in tables:
+                        conn.execute('DELETE FROM file_hashes WHERE path IN (?,?)', (v_rel, '/webdav/' + v_rel))
+                    if 'image_fingerprints' in tables:
+                        conn.execute('DELETE FROM image_fingerprints WHERE path IN (?,?)', (v_rel, '/webdav/' + v_rel))
+                    if 'ai_image_tags' in tables:
+                        conn.execute('DELETE FROM ai_image_tags WHERE path IN (?,?)', (v_rel, '/webdav/' + v_rel))
+                    if 'thumb_neg_cache' in tables:
+                        conn.execute('DELETE FROM thumb_neg_cache WHERE path=?', (v_phys,))
+                    dirty_parents.add(v_rel.rsplit('/', 1)[0] + '/' if '/' in v_rel else '')
+                if 'index_directories' in tables:
+                    for par in dirty_parents:
+                        conn.execute('UPDATE index_directories SET stamp=NULL,complete=0 WHERE path=?', (par,))
+                if 'index_state' in tables:
+                    nas_work_coordinator.bump_catalogue_revision(conn)
+                    conn.execute("UPDATE index_state SET ready=0,incomplete_reason='file_mutation_pending',scanned_at=0 WHERE id=1")
+                conn.commit()
+                # Catalogue da commit thanh cong -> xoa journal cac item da hoan tat (duoc sync durably).
+                try:
+                    directory = _duplicate_work_dir()
+                    for _, _, _, journal, _ in deleted_records:
+                        try:
+                            os.unlink(journal)
+                        except OSError:
+                            pass
+                    _duplicate_sync_directory(directory)
+                except OSError:
+                    pass
+            except sqlite3.Error as error:
+                metadata_pending = len(deleted_records)
+                log.warning('[Duplicates] Batch cleanup metadata refresh deferred: %s', error)
+            finally:
+                if conn is not None:
+                    conn.close()
+            _index_mutation_wake.set()
+    if deleted_paths:
+        try:
+            _prune_dup_scan_state_paths(deleted_paths)
+        except Exception as e_prune:
+            log.warning('[Duplicates] Batch prune scan state failed: %s', e_prune)
+    return {
+        'ok': True,
+        'deleted_paths': deleted_paths,
+        'metadata_pending': metadata_pending,
+        'deleted_count': len(deleted_paths),
+        'skipped': skipped,
+        'bytes_removed': bytes_removed,
+    }
+
+
+@app.route('/api/duplicates/cleanup_batch', methods=['POST'])
+@requires_admin
+def api_duplicate_cleanup_batch():
+    """Xoa hang loat tep trung lap da xac minh SHA-256 (Rust + F_SETLEASE) trong 1 transaction SQLite."""
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        items = body.get('items')
+        if not isinstance(items, list) or len(items) > 200:
+            raise ValueError('items must be a list <= 200')
+        res = _execute_duplicate_cleanup_batch_items(items)
+        return jsonify(res), (200 if res.get('ok') else 409)
+    except (OSError, ValueError) as error:
+        return jsonify({'ok': False, 'error': str(error)}), 409
+
+
+_DUP_AUTO_CLEAN_LOCK = threading.Lock()
+_DUP_AUTO_CLEAN_STATE = {
+    "status": "idle",
+    "total": 0,
+    "processed": 0,
+    "deleted": 0,
+    "skipped": 0,
+    "bytes_freed": 0,
+    "current_file": "",
+    "started_at": 0.0,
+    "finished_at": 0.0,
+    "elapsed_sec": 0.0,
+    "error": None,
+}
+
+
+_DUP_AUTO_WORKER_LOCK = threading.Lock()
+
+
+def _run_auto_duplicate_cleanup_worker(report=None, filter_type="all", min_cleanup_size=0, reserved=False):
+    if not reserved and not _DUP_AUTO_WORKER_LOCK.acquire(False):
+        if report is not None:
+            with _DUP_SCAN_LOCK:
+                if report.get("job_id") == _DUP_SCAN_STATE.get("job_id"):
+                    _DUP_SCAN_STATE["cleanup_blocked_job"] = report.get("job_id")
+        return
+    try:
+        _clean_duplicate_report(report, filter_type, min_cleanup_size)
+    except Exception as exc:
+        with _DUP_AUTO_CLEAN_LOCK:
+            _DUP_AUTO_CLEAN_STATE.update({"status": "error", "error": str(exc), "finished_at": time.time()})
+    finally:
+        _DUP_AUTO_WORKER_LOCK.release()
+
+
+def _clean_duplicate_report(report, filter_type, min_cleanup_size):
+    """Duyet toan bo cac nhom trung lap (hoac theo filter anh/video), giu 1 ban goc tot nhat moi nhom va don sach tat ca ban sao thua."""
+    global _DUP_AUTO_CLEAN_STATE
+    if report is None:
+        with _DUP_SCAN_LOCK:
+            report = _DUP_SCAN_STATE.get("result")
+    if not report or not isinstance(report, dict):
+        with _DUP_AUTO_CLEAN_LOCK:
+            _DUP_AUTO_CLEAN_STATE["status"] = "error"
+            _DUP_AUTO_CLEAN_STATE["error"] = "Chua co bao cao quet trung lap"
+        return
+    inventory = report.get("inventory")
+    if (not isinstance(inventory, dict) or inventory.get("protocol") != 1 or
+            inventory.get("source") != "file_index" or inventory.get("complete") is not True or
+            type(inventory.get("total")) is not int or inventory["total"] != report.get("total_files_scanned")):
+        raise ValueError("Báo cáo thiếu danh mục NAS đã xác nhận")
+    root = _get_webdav_public_dir()
+    if not root:
+        raise ValueError("Root catalogue không sẵn sàng")
+    _require_duplicate_catalogue_revision(os.path.realpath(root), inventory)
+    groups = report.get("groups")
+    if (type(report.get("read_errors")) is not int or report["read_errors"] != 0 or
+            not isinstance(groups, list) or report.get("total_groups") != len(groups)):
+        raise ValueError("Báo cáo quét chưa đầy đủ")
+    img_exts = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp")
+    vid_exts = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".3gp", ".m4v")
+    filter_norm = str(filter_type or "all").lower()
+
+    items_to_clean = []
+    retained_small = 0
+    for grp in groups:
+        files = grp.get("files") or []
+        if len(files) < 2:
+            raise ValueError("Nhóm trùng thiếu đường dẫn")
+        sha = str(grp.get("sha256") or "").lower()
+        if not re.match(r"^[0-9a-f]{64}$", sha):
+            raise ValueError("Nhóm trùng thiếu SHA-256 hợp lệ")
+        sample = str(files[0] or "").lower()
+        if filter_norm == "image" and not sample.endswith(img_exts):
+            continue
+        if filter_norm == "video" and not sample.endswith(vid_exts):
+            continue
+        # Sap xep chon keeper: duong dan ngan nhat, sau do theo chu cai
+        if int(grp.get("size", 0)) < min_cleanup_size:
+            retained_small += len(files) - 1
+            continue
+        sorted_files = sorted(files, key=lambda p: (len(p), p))
+        keeper = sorted_files[0]
+        for victim in sorted_files[1:]:
+            items_to_clean.append({"victim": victim, "keeper": keeper, "sha256": sha})
+
+    total_items = len(items_to_clean)
+    t0 = time.time()
+    with _DUP_AUTO_CLEAN_LOCK:
+        _DUP_AUTO_CLEAN_STATE.update({
+            "status": "running",
+            "job_id": report.get("job_id"),
+            "total": total_items + retained_small,
+            "retained_small": retained_small,
+            "processed": 0,
+            "metadata_pending": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "bytes_freed": 0,
+            "current_file": "",
+            "started_at": t0,
+            "finished_at": 0.0,
+            "elapsed_sec": 0.0,
+            "error": None,
+        })
+
+    if total_items == 0:
+        with _DUP_AUTO_CLEAN_LOCK:
+            _DUP_AUTO_CLEAN_STATE["status"] = "partial" if retained_small else "done"
+            if retained_small:
+                _DUP_AUTO_CLEAN_STATE["error"] = "Giữ lại %d tệp dưới ngưỡng tự dọn" % retained_small
+            _DUP_AUTO_CLEAN_STATE["finished_at"] = time.time()
+        return
+
+    total_deleted = 0
+    total_skipped = 0
+    total_freed = 0
+    total_pending = 0
+    chunk_size = 50
+    for idx in range(0, total_items, chunk_size):
+        with _DUP_AUTO_CLEAN_LOCK:
+            if _DUP_AUTO_CLEAN_STATE.get("status") == "cancelled":
+                break
+        chunk = items_to_clean[idx:idx + chunk_size]
+        cur_file = os.path.basename(chunk[0].get("victim") or "")
+        with _DUP_AUTO_CLEAN_LOCK:
+            _DUP_AUTO_CLEAN_STATE["current_file"] = cur_file
+            _DUP_AUTO_CLEAN_STATE["processed"] = idx
+        try:
+            for attempt in range(3):
+                try:
+                    res = _execute_duplicate_cleanup_batch_items(chunk)
+                    break
+                except BlockingIOError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.25 * (attempt + 1))
+            if res.get("ok"):
+                total_deleted += int(res.get("deleted_count", 0) or 0)
+                total_skipped += int(res.get("skipped", 0) or 0)
+                total_freed += int(res.get("bytes_removed", 0) or 0)
+                total_pending += int(res.get("metadata_pending", 0) or 0)
+            else:
+                total_skipped += len(chunk)
+        except Exception as e_chunk:
+            log.warning("[AutoClean] Chunk cleanup error: %s", e_chunk)
+            total_skipped += len(chunk)
+        with _DUP_AUTO_CLEAN_LOCK:
+            _DUP_AUTO_CLEAN_STATE["deleted"] = total_deleted
+            _DUP_AUTO_CLEAN_STATE["metadata_pending"] = total_pending
+            _DUP_AUTO_CLEAN_STATE["skipped"] = total_skipped
+            _DUP_AUTO_CLEAN_STATE["bytes_freed"] = total_freed
+            _DUP_AUTO_CLEAN_STATE["processed"] = min(total_items, idx + len(chunk))
+            _DUP_AUTO_CLEAN_STATE["elapsed_sec"] = round(time.time() - t0, 1)
+
+    with _DUP_AUTO_CLEAN_LOCK:
+        if _DUP_AUTO_CLEAN_STATE.get("status") != "cancelled":
+            if total_deleted != total_items or total_pending or retained_small:
+                _DUP_AUTO_CLEAN_STATE["status"] = "partial"
+                _DUP_AUTO_CLEAN_STATE["error"] = "Bỏ qua %d tệp, giữ %d tệp dưới ngưỡng, chờ đồng bộ %d tệp" % (total_skipped, retained_small, total_pending)
+            else:
+                _DUP_AUTO_CLEAN_STATE["status"] = "done"
+        clean_status = _DUP_AUTO_CLEAN_STATE["status"]
+        _DUP_AUTO_CLEAN_STATE["finished_at"] = time.time()
+        _DUP_AUTO_CLEAN_STATE["elapsed_sec"] = round(time.time() - t0, 1)
+        _DUP_AUTO_CLEAN_STATE["current_file"] = ""
+
+    if total_items:
+        try:
+            _push_alert(
+                "DUP_AUTO_CLEANED",
+                "Đã xóa %d/%d tệp trùng, bỏ qua %d, chờ đồng bộ %d, giải phóng %s." % (
+                    total_deleted, total_items + retained_small, total_skipped, total_pending, format_bytes(total_freed)
+                ),
+                "SUCCESS" if clean_status == "done" else "WARNING",
+            )
+        except Exception:
+            pass
+
+
+@app.route('/api/duplicates/auto_clean', methods=['POST'])
+@requires_admin
+def api_duplicates_auto_clean():
+    """Kich hoat tu dong don dep toan bo cac ban sao trung lap tren NAS (giu 1 ban goc tot nhat moi nhom)."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    filter_type = str(data.get("filter", "all") or "all")
+    with _DUP_SCAN_LOCK:
+        if _DUP_AUTO_WORKER_LOCK.locked():
+            with _DUP_AUTO_CLEAN_LOCK:
+                result = dict(_DUP_AUTO_CLEAN_STATE)
+            return jsonify(result), 202
+        if _DUP_SCAN_STATE.get("active_job") is not None or _duplicate_client_lease_active():
+            return jsonify({"error": "Một phiên quét hoặc tự dọn đang hoạt động"}), 409
+        if not _DUP_AUTO_WORKER_LOCK.acquire(False):
+            return jsonify({"error": "NAS đang dọn trùng"}), 409
+    try:
+        threading.Thread(target=_run_auto_duplicate_cleanup_worker,
+                         args=(None, filter_type, 0, True), daemon=True).start()
+    except Exception:
+        _DUP_AUTO_WORKER_LOCK.release()
+        return jsonify({"error": "Không khởi động được dọn trùng"}), 503
+    return jsonify({"ok": True, "status": "started", "filter": filter_type})
+
+
+@app.route('/api/duplicates/auto_clean/status', methods=['GET'])
+@requires_admin
+def api_duplicates_auto_clean_status():
+    """Lay trang thai tien trinh tu dong don dep trung lap tren NAS."""
+    with _DUP_AUTO_CLEAN_LOCK:
+        res = dict(_DUP_AUTO_CLEAN_STATE)
+    return jsonify(res)
+
+
+@app.route('/api/duplicates/auto_clean/cancel', methods=['POST'])
+@requires_admin
+def api_duplicates_auto_clean_cancel():
+    """Huy tien trinh tu dong don dep trung lap tren NAS."""
+    with _DUP_AUTO_CLEAN_LOCK:
+        if _DUP_AUTO_CLEAN_STATE.get("status") == "running":
+            _DUP_AUTO_CLEAN_STATE["status"] = "cancelled"
+            _DUP_AUTO_CLEAN_STATE["finished_at"] = time.time()
+        res = dict(_DUP_AUTO_CLEAN_STATE)
+    return jsonify(res)
 
 
 @app.route('/api/duplicates/content', methods=['POST'])
@@ -14592,21 +15235,582 @@ def api_hash_batch():
     return jsonify(result)
 
 
+_DUP_SCAN_LOCK = threading.Lock()
+_DUP_SCAN_STATE = {
+    "status": "idle",
+    "job_id": 0,
+    "engine": "rust_rayon",
+    "path": "",
+    "min_size": 1024,
+    "limit": 500,
+    "workers": 2,
+    "started_at": 0.0,
+    "finished_at": 0.0,
+    "elapsed_sec": 0.0,
+    "stage_num": 0,
+    "stage_name": "",
+    "scanned": 0,
+    "done": 0,
+    "total": 0,
+    "candidates": 0,
+    "percent": 0.0,
+    "current_file": "",
+    "error": None,
+    "result": None,
+}
+
+
+def _norm_rel_dup_path(path):
+    if not isinstance(path, str) or '\\' in path:
+        return ""
+    # Reports and mutation receipts carry literal filesystem paths.
+    if path.startswith("/webdav/"):
+        path = path[len("/webdav/"):]
+    path = path.strip("/")
+    return path if all(part not in ("", ".", "..") for part in path.split("/")) else ""
+
+
+def _prune_dup_scan_state_paths_locked(deleted_rel_paths):
+    """Loai bo cac duong dan tep/thu muc da bi xoa khoi _DUP_SCAN_STATE['result'] (in-memory).
+    Tu dong loai bo nhom con < 2 tep, cap nhat lai total_groups, total_wasted_bytes va lich trinh."""
+    if not deleted_rel_paths:
+        return False
+    res = _DUP_SCAN_STATE.get("result")
+    if not isinstance(res, dict):
+        return False
+    groups = res.get("groups")
+    if not isinstance(groups, list) or not groups:
+        return False
+
+    del_set = set()
+    for p in deleted_rel_paths:
+        norm = _norm_rel_dup_path(p)
+        if norm:
+            del_set.add(norm)
+    if not del_set:
+        return False
+
+    new_groups = []
+    total_wasted = 0
+    changed = False
+
+    for grp in groups:
+        if not isinstance(grp, dict):
+            continue
+        flist = grp.get("files") or []
+        cur_files = []
+        for f in flist:
+            norm_f = _norm_rel_dup_path(f)
+            ancestor = norm_f
+            while ancestor and ancestor not in del_set:
+                ancestor = ancestor.rpartition("/")[0]
+            is_del = bool(ancestor)
+            if not is_del:
+                cur_files.append(f)
+            else:
+                changed = True
+        if len(cur_files) >= 2:
+            sz = int(grp.get("size", 0) or 0)
+            wasted = sz * (len(cur_files) - 1)
+            grp = dict(grp)
+            grp["files"] = cur_files
+            grp["count"] = len(cur_files)
+            grp["wasted_bytes"] = wasted
+            new_groups.append(grp)
+            total_wasted += wasted
+        else:
+            changed = True
+
+    if changed:
+        res = dict(res)
+        res["groups"] = new_groups
+        res["total_groups"] = len(new_groups)
+        res["total_wasted_bytes"] = total_wasted
+        _DUP_SCAN_STATE["result"] = res
+    return changed
+
+
+def _prune_dup_scan_state_paths(deleted_rel_paths):
+    """Thread-safe wrapper de prune danh sach tep bi xoa khoi bo nho _DUP_SCAN_STATE."""
+    if not deleted_rel_paths:
+        return False
+    lock = globals().get("_DUP_SCAN_LOCK")
+    if not lock:
+        return False
+    with lock:
+        return _prune_dup_scan_state_paths_locked(deleted_rel_paths)
+
+
+def _verify_and_prune_dup_scan_result_locked():
+    """Kiem tra thuc te tren o dia cho toan bo tep trong _DUP_SCAN_STATE['result'].
+    Loc bo ngay tuc thi cac tep khong con ton tai tren dia ma khong can quet lai tu dau."""
+    res = _DUP_SCAN_STATE.get("result")
+    if not isinstance(res, dict):
+        return
+    groups = res.get("groups")
+    if not isinstance(groups, list) or not groups:
+        return
+    webdav_root = _get_webdav_public_dir()
+    if not webdav_root or not os.path.isdir(webdav_root):
+        return
+    norm_root = os.path.realpath(webdav_root)
+
+    missing = []
+    for grp in groups:
+        if not isinstance(grp, dict):
+            continue
+        for f in (grp.get("files") or []):
+            norm_f = _norm_rel_dup_path(f)
+            if not norm_f:
+                continue
+            phys = os.path.realpath(os.path.join(norm_root, norm_f))
+            if not phys.startswith(norm_root + os.sep):
+                continue
+            try:
+                os.stat(phys)
+            except (FileNotFoundError, NotADirectoryError):
+                missing.append(norm_f)
+            except OSError:
+                continue
+    if missing:
+        _prune_dup_scan_state_paths_locked(missing)
+
+
+def _persist_rust_duplicate_report(target_dir, report):
+    """Dong bo ket qua quet trung lap Rust vao bang cache file_hashes (KHONG ghi vao
+    verified_file_hashes tu stat muon — verified_file_hashes chi nhan bang chung co F_SETLEASE)."""
+    groups = report.get("groups") or []
+    if not groups:
+        return
+    webdav_root = _get_webdav_public_dir() or target_dir
+    norm_root = os.path.realpath(webdav_root)
+    norm_target = os.path.realpath(target_dir)
+    prefix = ""
+    if norm_target != norm_root and norm_target.startswith(norm_root + os.sep):
+        prefix = os.path.relpath(norm_target, norm_root).replace("\\", "/").strip("/")
+
+    now_int = int(time.time())
+    fh_rows = []
+    for grp in groups:
+        sha = str(grp.get("sha256") or "").strip().lower()
+        if len(sha) != 64:
+            continue
+        new_files = []
+        for rel in (grp.get("files") or []):
+            rel_clean = str(rel or "")
+            if not rel_clean:
+                continue
+            full_rel = (prefix + "/" + rel_clean) if prefix else rel_clean
+            new_files.append(full_rel)
+            phys = os.path.join(norm_root, full_rel)
+            try:
+                st = os.stat(phys)
+                sz = int(st.st_size)
+                mt = int(st.st_mtime)
+                fh_rows.append((full_rel, sz, mt, sha, "", now_int))
+            except Exception:
+                continue
+        grp["files"] = new_files
+
+    if not fh_rows:
+        return
+    conn = _hash_db()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO file_hashes "
+            "(path, size, mtime, sha256, partial, scanned_at) VALUES ("
+            "?, ?, ?, ?, "
+            "COALESCE((SELECT partial FROM file_hashes WHERE path = ? AND size = ? AND mtime = ?), ''), ?)",
+            [(p, sz, mt, sha, p, sz, mt, ts) for (p, sz, mt, sha, _part, ts) in fh_rows],
+        )
+        conn.commit()
+    except Exception as e:
+        log.warning("[DupScanRust] Persist file_hashes failed: %s", e)
+    finally:
+        conn.close()
+
+
+def _snapshot_dup_scan_state_locked():
+    report = _DUP_SCAN_STATE.get("result") or {}
+    now = time.monotonic()
+    if (_DUP_SCAN_STATE.get("status") == "done" and
+            (len(report.get("groups", [])) <= 500 or now >= report.get("next_verify", 0))):
+        try:
+            if len(report.get("groups", [])) > 500:
+                report["next_verify"] = now + 60
+            _verify_and_prune_dup_scan_result_locked()
+        except Exception as e_prune:
+            log.warning("[DupScan] Snapshot verify prune failed: %s", e_prune)
+    snap = dict(_DUP_SCAN_STATE)
+    snap.pop("cancel_token", None)
+    snap.pop("active_job", None)
+    if snap.get("result"):
+        result = dict(snap["result"])
+        result.pop("next_verify", None)
+        groups = result.get("groups", [])
+        limit = snap.get("limit", 500)
+        result["groups"] = groups[:limit] if limit else groups[:]
+        result["listed_groups"] = len(result["groups"])
+        snap["result"] = result
+    if snap.get("status") == "running" and snap.get("started_at", 0.0) > 0.0:
+        snap["elapsed_sec"] = round(max(0.0, time.time() - snap["started_at"]), 2)
+    return snap
+
+
+def _export_dup_hash_cache_tsv(target_dir, tsv_path):
+    """Xuat cache (path, size, mtime, partial, sha256) tu file_hashes ra TSV cho Rust tai su dung."""
+    webdav_root = _get_webdav_public_dir() or target_dir
+    norm_root = os.path.realpath(webdav_root)
+    norm_target = os.path.realpath(target_dir)
+    prefix = ""
+    if norm_target != norm_root and norm_target.startswith(norm_root + os.sep):
+        prefix = os.path.relpath(norm_target, norm_root).replace("\\", "/").strip("/") + "/"
+    conn = _hash_db()
+    try:
+        rows = conn.execute(
+            "SELECT path, size, mtime, partial, sha256 FROM file_hashes "
+            "WHERE partial != '' OR sha256 != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    count = 0
+    with open(tsv_path, "wb") as fp:
+        for p, sz, mt, part, sha in rows:
+            rel = str(p or "").replace("\\", "/").lstrip("/")
+            if rel.startswith("webdav/"):
+                rel = rel[7:]
+            if prefix:
+                if not rel.startswith(prefix):
+                    continue
+                rel = rel[len(prefix):]
+            if not rel or "\t" in rel or "\n" in rel:
+                continue
+            line = "%s\t%d\t%d\t%s\t%s\n" % (
+                rel, int(sz or 0), int(mt or 0), str(part or ""), str(sha or "")
+            )
+            fp.write(line.encode("utf-8", errors="ignore"))
+            count += 1
+    return count
+
+
+def _import_dup_hash_cache_tsv(target_dir, tsv_path):
+    """Nhap lai toan bo ma bam partial 64KB + sha256 moi tu Rust vao file_hashes (de lan quet sau 0-byte I/O)."""
+    if not tsv_path or not os.path.isfile(tsv_path):
+        return 0
+    webdav_root = _get_webdav_public_dir() or target_dir
+    norm_root = os.path.realpath(webdav_root)
+    norm_target = os.path.realpath(target_dir)
+    prefix = ""
+    if norm_target != norm_root and norm_target.startswith(norm_root + os.sep):
+        prefix = os.path.relpath(norm_target, norm_root).replace("\\", "/").strip("/") + "/"
+    now_int = int(time.time())
+    batch = []
+    with open(tsv_path, "rb") as fp:
+        for raw in fp:
+            line = raw.decode("utf-8", errors="ignore").rstrip("\r\n")
+            if not line:
+                continue
+            parts = line.split("\t", 4)
+            if len(parts) < 5:
+                continue
+            rel, sz_s, mt_s, part, sha = parts
+            full_rel = (prefix + rel) if prefix else rel
+            try:
+                sz = int(sz_s)
+                mt = int(mt_s)
+            except Exception:
+                continue
+            batch.append((full_rel, sz, mt, sha, part, now_int))
+    if not batch:
+        return 0
+    conn = _hash_db()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO file_hashes "
+            "(path, size, mtime, sha256, partial, scanned_at) VALUES ("
+            "?, ?, ?, "
+            "CASE WHEN ? != '' THEN ? ELSE COALESCE((SELECT sha256 FROM file_hashes WHERE path = ? AND size = ? AND mtime = ?), '') END, "
+            "CASE WHEN ? != '' THEN ? ELSE COALESCE((SELECT partial FROM file_hashes WHERE path = ? AND size = ? AND mtime = ?), '') END, "
+            "?)",
+            [(p, sz, mt, sha, sha, p, sz, mt, part, part, p, sz, mt, ts) for (p, sz, mt, sha, part, ts) in batch],
+        )
+        conn.commit()
+    except Exception as e:
+        log.warning("[DupScanRust] Import cache TSV failed: %s", e)
+        return 0
+    finally:
+        conn.close()
+    return len(batch)
+
+
+class DuplicateCataloguePending(ValueError):
+    pass
+
+
+def _duplicate_catalogue_state(conn, root, require_fresh=False):
+    state = conn.execute(
+        "SELECT root,generation,ready,scanned_at,catalogue_revision FROM index_state WHERE id=1"
+    ).fetchone()
+    if (not state or state[0] != root or not state[2] or _index_scan_lock.locked() or
+            (require_fresh and time.time() - float(state[3] or 0) > FILE_INDEX_FRESHNESS_SECONDS)):
+        raise DuplicateCataloguePending("Catalogue NAS đang chờ đồng bộ")
+    return state[1], state[4]
+
+
+def _write_duplicate_catalogue_manifest(root, scope, destination, job_id):
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        conn.execute("BEGIN")
+        generation, revision = _duplicate_catalogue_state(conn, root, require_fresh=True)
+        base_sql = "SELECT path FROM file_index WHERE is_dir=0"
+        if scope:
+            prefix = scope + "/"
+            rows = conn.execute(base_sql + " AND substr(path,1,?)=? ORDER BY path",
+                                (len(prefix), prefix))
+        else:
+            rows = conn.execute(base_sql + " ORDER BY path")
+        boundary = _index_storage_boundary(root)
+        previous_parent = None
+        resolved_parent = None
+        total = 0
+        while True:
+            batch = rows.fetchmany(512)
+            if not batch:
+                break
+            with _DUP_SCAN_LOCK:
+                if _DUP_SCAN_STATE.get("job_id") != job_id or _DUP_SCAN_STATE.get("status") == "cancelling":
+                    raise ValueError("Phiên quét đã bị hủy")
+            for (path,) in batch:
+                if (_norm_rel_dup_path(path) != path or not path or any(
+                        part.startswith(".") or part in ("@eaDir", "#recycle") for part in path.split("/"))):
+                    raise ValueError("Catalogue NAS chứa đường dẫn không hợp lệ")
+                parent = os.path.dirname(os.path.join(root, path))
+                if parent != previous_parent:
+                    resolved_parent = _index_resolve_directory(parent, root, boundary)
+                    previous_parent = parent
+                if resolved_parent is None:
+                    raise ValueError("Thư mục trong catalogue đã thay đổi")
+                destination.write(json.dumps((path, resolved_parent)) + "\n")
+                total += 1
+        return {"protocol": 1, "source": "file_index", "complete": True, "total": total,
+                "generation": generation, "catalogue_revision": revision}
+    finally:
+        conn.close()
+
+
+def _require_duplicate_catalogue_revision(root, inventory):
+    if os.path.realpath(_get_webdav_public_dir() or "") != root:
+        raise ValueError("Root catalogue đã thay đổi")
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        current = _duplicate_catalogue_state(conn, root)
+        if current != (inventory["generation"], inventory["catalogue_revision"]):
+            raise ValueError("Phiên bản catalogue đã thay đổi")
+    finally:
+        conn.close()
+
+
+def _run_rust_duplicate_scan_worker(job_id, target_dir, min_size, workers, limit, force=False,
+                                    client_cleanup=False, work_lease=None):
+    t0 = time.time()
+
+    def _on_progress(stage, done, total, extra, rel_path):
+        with _DUP_SCAN_LOCK:
+            if (_DUP_SCAN_STATE.get("job_id") != job_id or
+                    _DUP_SCAN_STATE.get("status") == "cancelling"):
+                return True
+            if stage == 1:
+                stage_name = "Tầng 1/3: Quét kích thước tệp (%d tệp)" % done
+                pct = min(24.0, 2.0 + (float(done) / 20000.0))
+                _DUP_SCAN_STATE["scanned"] = done
+                if extra > 0:
+                    _DUP_SCAN_STATE["candidates"] = extra
+            elif stage == 2:
+                stage_name = "Tầng 2/3: Băm nhanh 64KB đầu+cuối (%d/%d)" % (done, total)
+                pct = 25.0 + (40.0 * float(done) / float(max(1, total)))
+                if extra > 0:
+                    _DUP_SCAN_STATE["scanned"] = extra
+                _DUP_SCAN_STATE["candidates"] = total
+            else:
+                stage_name = "Tầng 3/3: Xác minh SHA-256 (%d/%d)" % (done, total)
+                pct = 65.0 + (33.0 * float(done) / float(max(1, total)))
+                if extra > 0:
+                    _DUP_SCAN_STATE["scanned"] = extra
+                _DUP_SCAN_STATE["candidates"] = total
+            _DUP_SCAN_STATE["stage_num"] = stage
+            _DUP_SCAN_STATE["stage_name"] = stage_name
+            _DUP_SCAN_STATE["done"] = done
+            _DUP_SCAN_STATE["total"] = total
+            _DUP_SCAN_STATE["percent"] = round(min(99.0, max(0.0, pct)), 1)
+            if rel_path:
+                _DUP_SCAN_STATE["current_file"] = rel_path
+            return False
+
+    manifest_path = None
+    cache_in = None
+    cache_out = None
+    cache_out_imported = False
+    try:
+        bridge = globals().get("rust_bridge")
+        if not bridge or not hasattr(bridge, "duplicate_scanner_available") or not bridge.duplicate_scanner_available():
+            raise RuntimeError("Rust duplicate_finder chưa sẵn sàng trên hệ thống")
+        configured_root = _get_webdav_public_dir()
+        if not configured_root:
+            raise ValueError("Root catalogue không sẵn sàng")
+        root = os.path.realpath(configured_root)
+        with _DUP_SCAN_LOCK:
+            scope = _DUP_SCAN_STATE.get("path", "").strip("/")
+        admitted_scope = _index_resolve_directory(os.path.join(root, scope), root, _index_storage_boundary(root))
+        if admitted_scope != os.path.realpath(target_dir):
+            raise ValueError("Thư mục quét đã thay đổi")
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as manifest:
+                manifest_path = manifest.name
+                inventory = _write_duplicate_catalogue_manifest(root, scope, manifest, job_id)
+        except DuplicateCataloguePending:
+            _refresh_file_index_for_search()
+            raise
+        tmp_dir = tempfile.gettempdir()
+        cache_out = os.path.join(tmp_dir, "nas_dup_cache_out_%d.tsv" % job_id)
+        if not force:
+            cache_in = os.path.join(tmp_dir, "nas_dup_cache_in_%d.tsv" % job_id)
+            try:
+                _export_dup_hash_cache_tsv(root, cache_in)
+            except Exception as ce:
+                log.warning("[DupScanRust] Export cache TSV skipped: %s", ce)
+                cache_in = None
+        report = bridge.find_duplicates(
+            root,
+            min_size=min_size,
+            workers=workers,
+            limit=0,
+            progress_cb=_on_progress,
+            cache_in=cache_in,
+            cache_out=cache_out,
+            catalogue_manifest=manifest_path,
+        )
+        if report is None:
+            with _DUP_SCAN_LOCK:
+                if _DUP_SCAN_STATE.get("job_id") != job_id:
+                    return
+            raise RuntimeError("Rust duplicate_finder trả về kết quả rỗng")
+        read_errors = report.get("read_errors")
+        if type(read_errors) is not int or read_errors != 0:
+            raise RuntimeError("Quét Rust chưa đầy đủ: read_errors=%s" % read_errors)
+        if report.get("total_files_scanned") != inventory["total"]:
+            raise RuntimeError("Rust chưa kiểm tra hết danh mục")
+        if client_cleanup and not _owns_duplicate_work_lease(work_lease):
+            raise ValueError("Máy tự dọn đã mất quyền tác vụ NAS")
+        _require_duplicate_catalogue_revision(root, inventory)
+        report["inventory"] = inventory
+        groups = report.get("groups")
+        if not isinstance(groups, list) or len(groups) != report.get("total_groups"):
+            raise RuntimeError("Danh sách nhóm trùng chưa đầy đủ")
+        with _DUP_SCAN_LOCK:
+            if _DUP_SCAN_STATE.get("job_id") != job_id or _DUP_SCAN_STATE.get("status") == "cancelling":
+                return
+        report["next_verify"] = time.monotonic() + 60
+        report["job_id"] = job_id
+        report["detected_groups"] = report["total_groups"]
+        report["detected_wasted_bytes"] = report["total_wasted_bytes"]
+        report["server_auto_clean"] = bool(_load_dup_schedule().get("auto_clean") and not client_cleanup)
+        report["engine"] = "rust_rayon"
+        _import_dup_hash_cache_tsv(root, cache_out)
+        cache_out_imported = True
+        _persist_rust_duplicate_report(root, report)
+        elapsed = round(max(0.0, time.time() - t0), 2)
+        with _DUP_SCAN_LOCK:
+            if _DUP_SCAN_STATE.get("job_id") != job_id or _DUP_SCAN_STATE.get("status") == "cancelling":
+                return
+            _DUP_SCAN_STATE["status"] = "done"
+            _DUP_SCAN_STATE["finished_at"] = time.time()
+            _DUP_SCAN_STATE["elapsed_sec"] = elapsed
+            _DUP_SCAN_STATE["stage_num"] = 3
+            _DUP_SCAN_STATE["stage_name"] = "Hoàn tất"
+            _DUP_SCAN_STATE["scanned"] = int(report.get("total_files_scanned", 0) or 0)
+            _DUP_SCAN_STATE["percent"] = 100.0
+            _DUP_SCAN_STATE["current_file"] = ""
+            _DUP_SCAN_STATE["error"] = None
+            _DUP_SCAN_STATE["result"] = report
+        try:
+            _save_dup_schedule({
+                "last_run_at": time.time(),
+                "last_status": "done",
+                "last_groups": int(report.get("total_groups", 0) or 0),
+                "last_wasted_bytes": int(report.get("total_wasted_bytes", 0) or 0),
+            })
+        except Exception:
+            pass
+        try:
+            if report["server_auto_clean"]:
+                log.info("[DupScanRust] Auto-clean duoc bat; khoi dong tien trinh tu dong don dep tren NAS...")
+                _run_auto_duplicate_cleanup_worker(report, "all")
+        except Exception as _ace:
+            log.warning("[DupScanRust] Khoi dong tu dong don dep that bai: %s", _ace)
+    except Exception as e:
+        elapsed = round(max(0.0, time.time() - t0), 2)
+        with _DUP_SCAN_LOCK:
+            if _DUP_SCAN_STATE.get("job_id") != job_id or _DUP_SCAN_STATE.get("status") == "cancelling":
+                return
+            log.error("[DupScanRust] Scan failed: %s", e)
+            _DUP_SCAN_STATE["status"] = "error"
+            _DUP_SCAN_STATE["finished_at"] = time.time()
+            _DUP_SCAN_STATE["elapsed_sec"] = elapsed
+            _DUP_SCAN_STATE["error"] = str(e)
+            _DUP_SCAN_STATE["result"] = None
+        if not isinstance(e, DuplicateCataloguePending):
+            _save_dup_schedule({"last_run_at": time.time(), "last_status": "error"})
+    finally:
+        # Luon luu lai cac ma bam da tinh trong phien (ke ca khi bam Huy hoac loi giua chung)
+        if cache_out and not cache_out_imported and os.path.isfile(cache_out):
+            try:
+                _import_dup_hash_cache_tsv(root, cache_out)
+            except Exception:
+                pass
+        for _tmp_f in (manifest_path, cache_in, cache_out):
+            if _tmp_f and os.path.isfile(_tmp_f):
+                try:
+                    os.remove(_tmp_f)
+                except Exception:
+                    pass
+        with _DUP_SCAN_LOCK:
+            if _DUP_SCAN_STATE.get("active_job") == job_id:
+                _DUP_SCAN_STATE.pop("active_job", None)
+                _DUP_SCAN_STATE.pop("cancel_token", None)
+                if _DUP_SCAN_STATE.get("status") == "cancelling":
+                    finished_at = time.time()
+                    _DUP_SCAN_STATE.update({
+                        "status": "cancelled", "finished_at": finished_at,
+                        "elapsed_sec": round(max(0.0, finished_at - t0), 2),
+                    })
+
+
 @app.route("/api/disk/scan_duplicates", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_disk_scan_duplicates():
-    """Quét tệp trùng lặp 3 tầng đa luồng bằng Rust rayon (Size -> MD5 1MB -> SHA256)."""
-    data = request.json or {}
-    rel_dir = str(data.get("path", "") or "").strip()
-    if rel_dir:
-        target_dir = _resolve_webdav_request_path(rel_dir)
-    else:
-        target_dir = _get_webdav_public_dir()
+    """Quét tệp trùng lặp 3 tầng đa luồng 100% bằng Rust rayon (Size -> MD5 1MB -> SHA256), không fallback Python."""
+    bridge = globals().get("rust_bridge")
+    if not bridge or not hasattr(bridge, "duplicate_scanner_available") or not bridge.duplicate_scanner_available():
+        return jsonify({"error": "Rust duplicate_finder chưa sẵn sàng trên hệ thống"}), 503
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    supplied_path = data.get("path") or ""
+    if not isinstance(supplied_path, str):
+        return jsonify({"error": "Thư mục mục tiêu không hợp lệ"}), 400
+    rel_dir = _norm_rel_dup_path(supplied_path) if supplied_path not in ("", "/", "/webdav", "/webdav/") else ""
+    root_dir = _get_webdav_public_dir()
+    if not root_dir or (not rel_dir and supplied_path not in ("", "/", "/webdav", "/webdav/")):
+        return jsonify({"error": "Thư mục mục tiêu không hợp lệ"}), 400
+    root_dir = os.path.realpath(root_dir)
+    target_dir = _index_resolve_directory(
+        os.path.join(root_dir, rel_dir), root_dir, _index_storage_boundary(root_dir))
     if not target_dir or not os.path.isdir(target_dir):
         return jsonify({"error": "Thư mục mục tiêu không hợp lệ hoặc không tồn tại"}), 400
     try:
-        min_size = max(0, int(data.get("min_size", 1024) or 1024))
-        limit = max(1, min(500, int(data.get("limit", 500) or 500)))
+        min_size = max(0, int(data.get("min_size", 0)))
+        limit = max(0, min(500, int(data.get("limit", 0))))
     except Exception:
         return jsonify({"error": "Tham số min_size/limit không hợp lệ"}), 400
     try:
@@ -14615,13 +15819,771 @@ def api_disk_scan_duplicates():
     except Exception:
         workers = 2
 
+    run_async = bool(data.get("async", True))
+    force = bool(data.get("force", False))
+    client_cleanup = data.get("client_cleanup") is True
+    options = (rel_dir, min_size, limit, force, client_cleanup)
+    work_lease = data.get("work_lease")
+    with _DUP_SCAN_LOCK:
+        status = _DUP_SCAN_STATE.get("status")
+        if status == "running":
+            active_options = tuple(_DUP_SCAN_STATE.get(key) for key in
+                                   ("path", "min_size", "limit", "force", "client_cleanup"))
+            if (run_async and options == active_options and
+                    (not client_cleanup or _owns_duplicate_work_lease(work_lease))):
+                return jsonify(_snapshot_dup_scan_state_locked()), 202
+            return jsonify({"error": "NAS đang quét với cấu hình khác"}), 409
+        if _DUP_SCAN_STATE.get("active_job") is not None or _DUP_AUTO_WORKER_LOCK.locked():
+            return jsonify({"error": "NAS đang kết thúc phiên trước"}), 409
+        if client_cleanup:
+            if not _owns_duplicate_work_lease(work_lease):
+                return jsonify({"error": "Máy tự dọn chưa có quyền tác vụ NAS"}), 409
+        elif _duplicate_client_lease_active():
+            return jsonify({"error": "Máy khác đang giữ quyền tự dọn trùng"}), 409
+        job_id = _reserve_duplicate_scan_locked(rel_dir, min_size, limit, workers, force, client_cleanup)
+        snap = _snapshot_dup_scan_state_locked()
+        if run_async:
+            cancel_token = uuid.uuid4().hex
+            _DUP_SCAN_STATE["cancel_token"] = cancel_token
+            snap["cancel_token"] = cancel_token
+    args = (job_id, target_dir, min_size, workers, limit, force, client_cleanup, work_lease if client_cleanup else None)
+    if run_async:
+        if not _start_duplicate_scan_thread(args):
+            return jsonify({"error": "Không khởi động được quét Rust"}), 503
+        return jsonify(snap), 202
+
+    _run_rust_duplicate_scan_worker(*args)
+    with _DUP_SCAN_LOCK:
+        snap = _snapshot_dup_scan_state_locked()
+    if snap.get("job_id") == job_id and snap.get("status") == "done" and snap.get("result") is not None:
+        return jsonify(snap["result"])
+    return jsonify({"error": snap.get("error") or "Rust duplicate_finder lỗi"}), 503
+
+
+def _duplicate_client_lease_active():
+    return any(job["owner"] for job in nas_work_coordinator.get_status(INDEX_DB_PATH, name="duplicates"))
+
+
+def _reserve_duplicate_scan_locked(path, min_size, limit, workers, force, client_cleanup):
+    job_id = int(_DUP_SCAN_STATE.get("job_id", 0)) + 1
+    _DUP_SCAN_STATE.clear()
+    _DUP_SCAN_STATE.update({
+        "status": "running", "job_id": job_id, "active_job": job_id, "engine": "rust_rayon",
+        "path": path, "min_size": min_size, "limit": limit, "workers": workers,
+        "force": force, "client_cleanup": client_cleanup, "started_at": time.time(),
+        "finished_at": 0.0, "elapsed_sec": 0.0, "stage_num": 1,
+        "stage_name": "Tầng 1/3: Quét kích thước tệp...", "scanned": 0,
+        "done": 0, "total": 0, "candidates": 0, "percent": 1.0, "current_file": "",
+        "error": None, "result": None,
+    })
+    return job_id
+
+
+def _start_duplicate_scan_thread(args):
+    try:
+        threading.Thread(target=_run_rust_duplicate_scan_worker, args=args, daemon=True).start()
+        return True
+    except Exception as error:
+        with _DUP_SCAN_LOCK:
+            if _DUP_SCAN_STATE.get("active_job") == args[0]:
+                _DUP_SCAN_STATE.pop("active_job", None)
+                _DUP_SCAN_STATE.pop("cancel_token", None)
+                _DUP_SCAN_STATE.update({"status": "error", "error": str(error), "finished_at": time.time()})
+        return False
+
+
+_DUP_SCHED_LOCK = threading.Lock()
+_DUP_SCHED_DEFAULT = {
+    "enabled": True,
+    "hour": 3,
+    "interval_days": 7,
+    "auto_clean": False,
+    "last_run_at": 0.0,
+    "last_status": "idle",
+    "last_groups": 0,
+    "last_wasted_bytes": 0,
+}
+
+
+def _dup_schedule_file_path():
+    state_dir = "/etc/nas/state"
+    if os.path.isdir(state_dir) and os.access(state_dir, os.W_OK):
+        return os.path.join(state_dir, "dup_schedule.json")
+    return os.path.join(tempfile.gettempdir(), "nas_dup_schedule.json")
+
+
+def _load_dup_schedule():
+    cfg = dict(_DUP_SCHED_DEFAULT)
+    path = _dup_schedule_file_path()
+    with _DUP_SCHED_LOCK:
+        if os.path.isfile(path):
+            try:
+                with open(path, "rb") as fp:
+                    raw = json.loads(fp.read().decode("utf-8", errors="ignore"))
+                if isinstance(raw, dict):
+                    cfg["enabled"] = bool(raw.get("enabled", True))
+                    cfg["hour"] = max(0, min(23, int(raw.get("hour", 3))))
+                    cfg["interval_days"] = max(1, min(30, int(raw.get("interval_days", 7))))
+                    cfg["auto_clean"] = bool(raw.get("auto_clean", False))
+                    cfg["last_run_at"] = float(raw.get("last_run_at", 0.0) or 0.0)
+                    cfg["last_status"] = str(raw.get("last_status", "idle") or "idle")
+                    cfg["last_groups"] = int(raw.get("last_groups", 0) or 0)
+                    cfg["last_wasted_bytes"] = int(raw.get("last_wasted_bytes", 0) or 0)
+            except Exception:
+                pass
+    return cfg
+
+
+def _save_dup_schedule(updates):
+    cfg = _load_dup_schedule()
+    if isinstance(updates, dict):
+        if "enabled" in updates:
+            cfg["enabled"] = bool(updates["enabled"])
+        if "hour" in updates:
+            cfg["hour"] = max(0, min(23, int(updates["hour"])))
+        if "interval_days" in updates:
+            cfg["interval_days"] = max(1, min(30, int(updates["interval_days"])))
+        if "auto_clean" in updates:
+            cfg["auto_clean"] = bool(updates["auto_clean"])
+        if "last_run_at" in updates:
+            cfg["last_run_at"] = float(updates["last_run_at"] or 0.0)
+        if "last_status" in updates:
+            cfg["last_status"] = str(updates["last_status"] or "idle")
+        if "last_groups" in updates:
+            cfg["last_groups"] = int(updates["last_groups"] or 0)
+        if "last_wasted_bytes" in updates:
+            cfg["last_wasted_bytes"] = int(updates["last_wasted_bytes"] or 0)
+    path = _dup_schedule_file_path()
+    tmp = path + ".tmp"
+    with _DUP_SCHED_LOCK:
+        try:
+            with open(tmp, "wb") as fp:
+                fp.write(json.dumps(cfg, ensure_ascii=False).encode("utf-8"))
+            os.replace(tmp, path)
+        except Exception as e:
+            log.warning("[DupSched] Save failed: %s", e)
+    return cfg
+
+
+def _maybe_trigger_scheduled_dup_scan(now_dt, now_ts):
+    """Tu dong kich hoat quet trung lap Rust tren NAS khi den lich va NAS dang ranh."""
+    cfg = _load_dup_schedule()
+    if not cfg.get("enabled"):
+        return False
+    if now_dt.hour != int(cfg.get("hour", 3)):
+        return False
+    interval_sec = max(1, int(cfg.get("interval_days", 7))) * 86400 - 3600
+    if (now_ts - float(cfg.get("last_run_at", 0.0))) < interval_sec:
+        return False
+    # Khong chay khi dang co AutoBackup hoac NAS dang ban (livestream/user active)
+    try:
+        with _BACKUP_SESSIONS_LOCK:
+            _prune_stale_backup_sessions_locked(now_ts)
+            if any(s.get("status") == "running" for s in _BACKUP_SESSIONS.values()):
+                return False
+    except Exception:
+        pass
+    if not _background_heavy_work_allowed():
+        return False
     bridge = globals().get("rust_bridge")
-    if bridge and hasattr(bridge, "find_duplicates"):
-        report = bridge.find_duplicates(target_dir, min_size=min_size, workers=workers, limit=limit)
-        if report is not None:
-            report["engine"] = "rust_rayon"
-            return jsonify(report)
-    return jsonify({"error": "Rust duplicate_finder chưa sẵn sàng trên hệ thống"}), 503
+    if not bridge or not hasattr(bridge, "duplicate_scanner_available") or not bridge.duplicate_scanner_available():
+        return False
+    target_dir = _get_webdav_public_dir()
+    if not target_dir or not os.path.isdir(target_dir):
+        return False
+    with _DUP_SCAN_LOCK:
+        if (_DUP_AUTO_WORKER_LOCK.locked() or _DUP_SCAN_STATE.get("active_job") is not None or
+                _DUP_SCAN_STATE.get("status") == "running" or _duplicate_client_lease_active()):
+            return False
+        job_id = _reserve_duplicate_scan_locked("", 0, 0, 2, False, False)
+        _DUP_SCAN_STATE["stage_name"] = "Tự động quét theo lịch: Tầng 1/3..."
+    return _start_duplicate_scan_thread((job_id, target_dir, 0, 2, 0, False, False))
+
+
+@app.route("/api/disk/scan_duplicates/status", methods=["GET"])
+@requires_admin
+def api_disk_scan_duplicates_status():
+    """Trả trạng thái & kết quả quét trùng lặp Rust hiện tại trên NAS."""
+    with _DUP_SCAN_LOCK:
+        snap = _snapshot_dup_scan_state_locked()
+    snap["schedule"] = _load_dup_schedule()
+    with _DUP_AUTO_CLEAN_LOCK:
+        if snap.get("job_id") == _DUP_AUTO_CLEAN_STATE.get("job_id"):
+            snap["cleanup"] = dict(_DUP_AUTO_CLEAN_STATE)
+        elif snap.get("cleanup_blocked_job") == snap.get("job_id"):
+            snap["cleanup"] = {"status": "partial", "error": "Một lượt dọn khác đang chạy"}
+        elif (snap.get("result") or {}).get("server_auto_clean"):
+            snap["cleanup"] = {"status": "pending"}
+    return jsonify(snap)
+
+
+_PENDING_MUTATIONS_LOCK = threading.Lock()
+
+
+def _pending_mutations_path():
+    return INDEX_DB_PATH + ".pending_mutations.jsonl"
+
+
+def _enqueue_mutation_reconcile(action, old_clean, new_clean=None, error_msg=""):
+    """Luu mutation bi loi SQLite/lock vao journal ben vung tren dia de tu replay sau restart."""
+    p = _pending_mutations_path()
+    rec = {
+        "action": str(action or ""),
+        "old_path": str(old_clean or ""),
+        "new_path": str(new_clean) if new_clean is not None else None,
+        "ts": time.time(),
+        "error": str(error_msg or "")[:200],
+    }
+    try:
+        parent = os.path.dirname(p)
+        if parent and not os.path.isdir(parent):
+            os.makedirs(parent, exist_ok=True)
+        with _PENDING_MUTATIONS_LOCK:
+            with open(p, "a", encoding="utf-8") as fp:
+                fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                fp.flush()
+                os.fsync(fp.fileno())
+            if parent:
+                try:
+                    _duplicate_sync_directory(parent)
+                except OSError:
+                    pass
+        return True
+    except Exception as ex:
+        log.warning("[FileSync] Cannot persist pending mutation: %s", ex)
+        return False
+
+
+def _drain_pending_file_mutations(max_items=200):
+    """Replay cac mutation da luu trong journal ben vung sau loi SQLite hoac restart."""
+    p = _pending_mutations_path()
+    if not os.path.isfile(p):
+        return {"replayed": 0, "remaining": 0}
+    with _PENDING_MUTATIONS_LOCK:
+        if not os.path.isfile(p):
+            return {"replayed": 0, "remaining": 0}
+        try:
+            with open(p, "r", encoding="utf-8", errors="ignore") as fp:
+                lines = [ln.strip() for ln in fp if ln.strip()]
+        except Exception:
+            return {"replayed": 0, "remaining": 0}
+        if not lines:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+            return {"replayed": 0, "remaining": 0}
+        to_run = lines[:max_items]
+        rest = lines[max_items:]
+        still_pending = []
+        replayed = 0
+        for ln in to_run:
+            try:
+                item = json.loads(ln)
+            except Exception:
+                continue
+            res = _sync_file_mutation(
+                item.get("action"),
+                item.get("old_path"),
+                item.get("new_path"),
+                _allow_enqueue=False,
+            )
+            if res.get("ok"):
+                replayed += 1
+            else:
+                still_pending.append(ln)
+        leftover = still_pending + rest
+        try:
+            parent = os.path.dirname(p)
+            if leftover:
+                tmp_p = p + ".tmp"
+                try:
+                    with open(tmp_p, "w", encoding="utf-8") as fp:
+                        fp.write("\n".join(leftover) + "\n")
+                        fp.flush()
+                        os.fsync(fp.fileno())
+                    os.replace(tmp_p, p)
+                    if parent:
+                        try:
+                            _duplicate_sync_directory(parent)
+                        except OSError:
+                            pass
+                except Exception as ex_tmp:
+                    log.warning("[FileSync] Failed to persist drained mutations to tmp, keeping original: %s", ex_tmp)
+                    if os.path.lexists(tmp_p):
+                        try:
+                            os.remove(tmp_p)
+                        except OSError:
+                            pass
+            else:
+                os.remove(p)
+                if parent:
+                    try:
+                        _duplicate_sync_directory(parent)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return {"replayed": replayed, "remaining": len(leftover)}
+
+
+def _sync_file_mutation(action, old_rel, new_rel=None, _allow_enqueue=True):
+    """Dong bo tuc thi create/upload/copy/rename/move/trash/restore/delete tren toan bo 5 bang DB
+    bang so khop phan biet hoa/thuong (substr(path,1,N)=prefix), ho tro thu muc co dau '/' cuoi,
+    tien to '/webdav/', doi ten/xoa .thumbs cho cay con thu muc, ghi de cung kich thuoc,
+    chong notification den muon, fallback norm_name tieng Viet, va luu journal retry khi loi SQLite."""
+    action = str(action or "").strip().lower()
+    if action not in ("create", "upload", "copy", "rename", "move", "trash", "restore", "delete"):
+        return {"ok": False, "error": "Invalid action"}
+
+    def _clean_rel(raw):
+        if raw is None:
+            return None
+        s = str(raw).replace("\\", "/").strip("/")
+        if s.startswith("webdav/"):
+            s = s[7:].strip("/")
+        if not s or ".." in s.split("/"):
+            return ""
+        return s
+
+    old_clean = _clean_rel(old_rel)
+    new_clean = _clean_rel(new_rel)
+    if action in ("create", "upload", "copy"):
+        target_clean = new_clean if new_clean else old_clean
+        if not target_clean:
+            return {"ok": False, "error": "Invalid target_path"}
+        old_clean = target_clean
+        new_clean = target_clean
+    elif action in ("rename", "move", "trash", "restore"):
+        if not old_clean:
+            return {"ok": False, "error": "Invalid old_path"}
+        if not new_clean:
+            return {"ok": False, "error": "Invalid new_path"}
+    else:
+        if not old_clean:
+            return {"ok": False, "error": "Invalid old_path"}
+
+    base = _get_webdav_public_dir()
+    base_real = os.path.realpath(base) if base else None
+    old_phys = os.path.join(base_real, old_clean) if base_real else None
+    new_phys = os.path.join(base_real, new_clean) if (base_real and new_clean) else None
+    old_pref = old_clean + "/"
+    old_pref_len = len(old_pref)
+    old_wd_pref = "/webdav/" + old_pref
+    old_wd_pref_len = len(old_wd_pref)
+
+    # Kiem tra trang thai dia cho notification den muon khi thu muc goc ton tai
+    stale_notification = False
+    base_exists = bool(base_real and os.path.isdir(base_real))
+    if base_exists and action in ("rename", "move", "trash", "restore"):
+        if old_phys and new_phys:
+            old_exists = os.path.lexists(old_phys)
+            new_exists = os.path.lexists(new_phys)
+            if old_exists or (not old_exists and not new_exists):
+                stale_notification = True
+    elif base_exists and action == "delete":
+        if old_phys and os.path.lexists(old_phys):
+            # Late delete sau khi tep da duoc tao lai -> khong xoa tep moi, chuyen sang refresh
+            action = "create"
+            new_clean = old_clean
+            new_phys = old_phys
+            stale_notification = True
+
+    updated_tables = 0
+    thumb_synced = False
+    conn = None
+    try:
+        conn = _hash_db()
+        tables = set(r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall())
+
+        def _mark_dirty_and_bump():
+            if "index_directories" in tables:
+                old_par = (old_clean.rsplit("/", 1)[0] + "/") if "/" in old_clean else ""
+                conn.execute("UPDATE index_directories SET stamp=NULL,complete=0 WHERE path=?", (old_par,))
+                if new_clean:
+                    new_par = (new_clean.rsplit("/", 1)[0] + "/") if "/" in new_clean else ""
+                    if new_par != old_par:
+                        conn.execute("UPDATE index_directories SET stamp=NULL,complete=0 WHERE path=?", (new_par,))
+            if "index_state" in tables:
+                is_cols = set(r[1] for r in conn.execute("PRAGMA table_info(index_state)"))
+                if "catalogue_revision" in is_cols:
+                    nas_work_coordinator.bump_catalogue_revision(conn)
+                if "ready" in is_cols and "incomplete_reason" in is_cols and "scanned_at" in is_cols:
+                    conn.execute("UPDATE index_state SET ready=0,incomplete_reason='file_mutation_pending',scanned_at=0 WHERE id=1")
+                elif "ready" in is_cols:
+                    conn.execute("UPDATE index_state SET ready=0 WHERE id=1")
+
+        if stale_notification and action in ("rename", "move", "trash", "restore"):
+            _mark_dirty_and_bump()
+            conn.commit()
+            _index_mutation_wake.set()
+            return {
+                "ok": True,
+                "action": action,
+                "tables_updated": 0,
+                "thumb_synced": False,
+                "stale_notification": True,
+                "reconcile_queued": True,
+            }
+
+        if action in ("create", "upload", "copy"):
+            target_clean = new_clean
+            target_phys = new_phys
+            # Vo hieu hoa hash/metadata/thumb cu (xu ly ghi de tep cung kich thuoc)
+            for tbl in ("file_hashes", "verified_file_hashes", "image_fingerprints", "ai_image_tags"):
+                if tbl in tables:
+                    conn.execute(
+                        "DELETE FROM %s WHERE path IN (?, ?)" % tbl,
+                        (target_clean, "/webdav/" + target_clean),
+                    )
+                    updated_tables += 1
+            if "thumb_neg_cache" in tables and target_phys:
+                conn.execute("DELETE FROM thumb_neg_cache WHERE path=?", (target_phys,))
+            if target_phys and _delete_thumb_for_file(target_phys):
+                thumb_synced = True
+            if "file_index" in tables and target_phys and os.path.lexists(target_phys):
+                st = os.lstat(target_phys)
+                is_d = 1 if os.path.isdir(target_phys) else 0
+                idx_path = (target_clean + "/") if is_d else target_clean
+                t_name = target_clean.rsplit("/", 1)[-1]
+                t_parent = (target_clean.rsplit("/", 1)[0] + "/") if "/" in target_clean else ""
+                t_norm = _remove_diacritics_py(t_name.lower())
+                t_size = 0 if is_d else int(st.st_size)
+                t_mtime = int(st.st_mtime * 1000)
+                t_mime = "folder" if is_d else (mimetypes.guess_type(t_name)[0] or "application/octet-stream")
+                fi_cols = set(r[1] for r in conn.execute("PRAGMA table_info(file_index)"))
+                col_vals = [("path", idx_path), ("name", t_name)]
+                if "norm_name" in fi_cols:
+                    col_vals.append(("norm_name", t_norm))
+                if "is_dir" in fi_cols:
+                    col_vals.append(("is_dir", is_d))
+                if "size" in fi_cols:
+                    col_vals.append(("size", t_size))
+                if "mtime" in fi_cols:
+                    col_vals.append(("mtime", t_mtime))
+                if "mime" in fi_cols:
+                    col_vals.append(("mime", t_mime))
+                if "parent" in fi_cols:
+                    col_vals.append(("parent", t_parent))
+                cols_sql = ",".join(k for k, _ in col_vals)
+                ph_sql = ",".join("?" for _ in col_vals)
+                conn.execute(
+                    "INSERT OR REPLACE INTO file_index (%s) VALUES (%s)" % (cols_sql, ph_sql),
+                    tuple(v for _, v in col_vals),
+                )
+                updated_tables += 1
+
+        elif action in ("rename", "move", "trash", "restore") and new_clean:
+            new_name = new_clean.rsplit("/", 1)[-1]
+            new_parent = (new_clean.rsplit("/", 1)[0] + "/") if "/" in new_clean else ""
+            new_pref = new_clean + "/"
+            new_wd_pref = "/webdav/" + new_pref
+            new_norm = _remove_diacritics_py(new_name.lower())
+
+            # Thu thap danh sach tep con trong thu muc truoc khi cap nhat de doi ten .thumbs
+            child_files = []
+            if "file_index" in tables:
+                child_rows = conn.execute(
+                    "SELECT path FROM file_index WHERE substr(path, 1, ?)=? AND path != ?",
+                    (old_pref_len, old_pref, old_pref),
+                ).fetchall()
+                child_files = [r[0] for r in child_rows if r[0] and not r[0].endswith("/")]
+
+            if "file_index" in tables:
+                fi_cols = set(r[1] for r in conn.execute("PRAGMA table_info(file_index)"))
+                # 1) Cap nhat ban than tep (khong co '/') va ban than thu muc (co '/' cuoi, giu nguyen parent cha)
+                if "norm_name" in fi_cols:
+                    conn.execute(
+                        "UPDATE file_index SET path=?, name=?, norm_name=?, parent=? WHERE path=?",
+                        (new_clean, new_name, new_norm, new_parent, old_clean),
+                    )
+                    conn.execute(
+                        "UPDATE file_index SET path=?, name=?, norm_name=?, parent=? WHERE path=?",
+                        (new_pref, new_name, new_norm, new_parent, old_pref),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE file_index SET path=?, name=?, parent=? WHERE path=?",
+                        (new_clean, new_name, new_parent, old_clean),
+                    )
+                    conn.execute(
+                        "UPDATE file_index SET path=?, name=?, parent=? WHERE path=?",
+                        (new_pref, new_name, new_parent, old_pref),
+                    )
+                # 2) Cap nhat cay con (phan biet hoa/thuong tuyet doi bang substr, bo qua chinh dong thu muc new_pref)
+                conn.execute(
+                    "UPDATE file_index SET path=? || substr(path, ?), "
+                    "parent=CASE WHEN substr(parent, 1, ?)=? THEN ? || substr(parent, ?) ELSE parent END "
+                    "WHERE substr(path, 1, ?)=? AND path != ?",
+                    (new_pref, old_pref_len + 1, old_pref_len, old_pref, new_pref, old_pref_len + 1, old_pref_len, old_pref, old_pref),
+                )
+                updated_tables += 1
+            for tbl in ("file_hashes", "verified_file_hashes", "image_fingerprints", "ai_image_tags"):
+                if tbl in tables:
+                    conn.execute(
+                        "UPDATE %s SET path=? WHERE path IN (?, ?)" % tbl,
+                        (new_clean, old_clean, "/webdav/" + old_clean),
+                    )
+                    # Cap nhat cay con dang tuong doi (Photos/...) va dang cu (/webdav/Photos/...) phan biet hoa/thuong
+                    conn.execute(
+                        "UPDATE %s SET path=? || substr(path, ?) WHERE substr(path, 1, ?)=?" % tbl,
+                        (new_pref, old_pref_len + 1, old_pref_len, old_pref),
+                    )
+                    conn.execute(
+                        "UPDATE %s SET path=? || substr(path, ?) WHERE substr(path, 1, ?)=?" % tbl,
+                        (new_wd_pref, old_wd_pref_len + 1, old_wd_pref_len, old_wd_pref),
+                    )
+                    updated_tables += 1
+            if base_real and old_phys and new_phys:
+                pairs = [(old_phys, new_phys)]
+                for rel_child in child_files:
+                    new_rel_child = new_pref + rel_child[old_pref_len:]
+                    pairs.append((os.path.join(base_real, rel_child), os.path.join(base_real, new_rel_child)))
+                for src_p, dst_p in pairs:
+                    if "thumb_neg_cache" in tables:
+                        conn.execute("UPDATE thumb_neg_cache SET path=? WHERE path=?", (dst_p, src_p))
+                    try:
+                        old_tp = _get_thumb_path(base_real, src_p)
+                        new_tp = _get_thumb_path(base_real, dst_p)
+                        if old_tp != new_tp and os.path.isfile(old_tp):
+                            os.replace(old_tp, new_tp)
+                            thumb_synced = True
+                    except Exception:
+                        pass
+
+        elif action == "delete":
+            child_files = []
+            if "file_index" in tables:
+                child_rows = conn.execute(
+                    "SELECT path FROM file_index WHERE substr(path, 1, ?)=? AND path != ?",
+                    (old_pref_len, old_pref, old_pref),
+                ).fetchall()
+                child_files = [r[0] for r in child_rows if r[0] and not r[0].endswith("/")]
+                conn.execute(
+                    "DELETE FROM file_index WHERE path IN (?, ?) OR substr(path, 1, ?)=?",
+                    (old_clean, old_pref, old_pref_len, old_pref),
+                )
+                updated_tables += 1
+            for tbl in ("file_hashes", "verified_file_hashes", "image_fingerprints", "ai_image_tags"):
+                if tbl in tables:
+                    conn.execute(
+                        "DELETE FROM %s WHERE path IN (?, ?, ?) OR substr(path, 1, ?)=? OR substr(path, 1, ?)=?" % tbl,
+                        (old_clean, old_pref, "/webdav/" + old_clean, old_pref_len, old_pref, old_wd_pref_len, old_wd_pref),
+                    )
+                    updated_tables += 1
+            phys_targets = []
+            if old_phys:
+                phys_targets.append(old_phys)
+            if base_real:
+                for rel_child in child_files:
+                    phys_targets.append(os.path.join(base_real, rel_child))
+            for tgt_p in phys_targets:
+                if "thumb_neg_cache" in tables:
+                    conn.execute("DELETE FROM thumb_neg_cache WHERE path=?", (tgt_p,))
+                if _delete_thumb_for_file(tgt_p):
+                    thumb_synced = True
+
+        if action in ("delete", "rename", "move", "trash"):
+            try:
+                del_muts = [old_clean]
+                if child_files:
+                    del_muts.extend(child_files)
+                _prune_dup_scan_state_paths(del_muts)
+            except Exception as ex_dup:
+                log.warning("[FileSync] Prune dup scan state failed: %s", ex_dup)
+
+        # Danh dau thu muc can dong bo + tang catalogue_revision (khong nuot loi neu index_state co san)
+        _mark_dirty_and_bump()
+        conn.commit()
+    except Exception as e:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        log.warning("[FileSync] Mutation sync failed (%s %s): %s", action, old_clean, e)
+        queued = False
+        if _allow_enqueue:
+            queued = _enqueue_mutation_reconcile(action, old_clean, new_clean, str(e))
+        return {"ok": False, "error": str(e), "reconcile_queued": queued}
+    finally:
+        if conn is not None:
+            conn.close()
+
+    try:
+        bridge = globals().get("rust_bridge")
+        if bridge and hasattr(bridge, "schedule_fts_rebuild"):
+            bridge.schedule_fts_rebuild(INDEX_DB_PATH)
+    except Exception:
+        pass
+    _index_mutation_wake.set()
+    return {
+        "ok": True,
+        "action": action,
+        "tables_updated": updated_tables,
+        "thumb_synced": thumb_synced,
+        "stale_notification": stale_notification,
+    }
+
+
+@app.route("/api/files/list", methods=["GET"])
+@requires_auth
+def api_files_list():
+    """Liet ke thu muc sieu toc bang Rust scan_directory_entries (thay WebDAV PROPFIND XML cham)."""
+    rel_dir = str(request.args.get("path", "") or "").strip()
+    if rel_dir.startswith("/webdav/"):
+        rel_dir = rel_dir[len("/webdav/"):]
+    rel_dir = rel_dir.strip("/")
+    show_hidden = str(request.args.get("show_hidden", "0") or "0") == "1"
+    if rel_dir:
+        target_dir = _resolve_webdav_request_path(rel_dir)
+    else:
+        target_dir = _get_webdav_public_dir()
+    if not target_dir or not os.path.isdir(target_dir):
+        return jsonify({"ok": False, "error": "Thư mục không tồn tại"}), 404
+
+    rel_prefix = (rel_dir + "/") if rel_dir else ""
+    items = []
+    engine = "rust_dir_scanner"
+
+    bridge = globals().get("rust_bridge")
+    rust_res = None
+    if not show_hidden and bridge and hasattr(bridge, "scan_directory_entries"):
+        rust_res = bridge.scan_directory_entries(target_dir, rel_prefix)
+
+    if rust_res is not None:
+        for ent in (rust_res.get("entries") or []):
+            # (child, name, norm_name, is_dir, size, mtime_ms, mime, parent)
+            child, name, _norm, _isdir, sz, mtime_ms, mime, _par = ent
+            items.append({
+                "name": name,
+                "path": "/webdav/" + str(child).lstrip("/"),
+                "is_dir": False,
+                "size": int(sz or 0),
+                "mtime": int(mtime_ms or 0),
+                "mime": mime or "",
+            })
+        for sp_name in (rust_res.get("special") or []):
+            if not sp_name or (not show_hidden and sp_name.startswith(".")):
+                continue
+            full_sp = os.path.join(target_dir, sp_name)
+            try:
+                st = os.stat(full_sp)
+                is_d = os.path.isdir(full_sp)
+                child = rel_prefix + sp_name + ("/" if is_d else "")
+                items.append({
+                    "name": sp_name,
+                    "path": "/webdav/" + child.lstrip("/"),
+                    "is_dir": is_d,
+                    "size": 0 if is_d else int(st.st_size),
+                    "mtime": int(st.st_mtime * 1000),
+                    "mime": "" if is_d else "application/octet-stream",
+                })
+            except OSError:
+                continue
+    else:
+        engine = "os_listdir"
+        try:
+            for name in os.listdir(target_dir):
+                if not show_hidden and (name.startswith(".") or name in ("@eaDir", "#recycle")):
+                    continue
+                full_p = os.path.join(target_dir, name)
+                try:
+                    st = os.stat(full_p)
+                    is_d = os.path.isdir(full_p)
+                    child = rel_prefix + name + ("/" if is_d else "")
+                    items.append({
+                        "name": name,
+                        "path": "/webdav/" + child.lstrip("/"),
+                        "is_dir": is_d,
+                        "size": 0 if is_d else int(st.st_size),
+                        "mtime": int(st.st_mtime * 1000),
+                        "mime": "",
+                    })
+                except OSError:
+                    continue
+        except OSError as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    items.sort(key=lambda x: (0 if x["is_dir"] else 1, x["name"].lower()))
+    return jsonify({
+        "ok": True,
+        "engine": engine,
+        "path": rel_dir,
+        "total": len(items),
+        "items": items,
+    })
+
+
+@app.route("/api/files/sync_mutation", methods=["POST"])
+@requires_admin
+def api_files_sync_mutation():
+    """Dong bo ngay lap tuc DB + thumbnail sau create/upload/copy/rename/move/trash/restore/delete (don le & batch)."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    mutations = body.get("mutations")
+    if mutations is not None:
+        if not isinstance(mutations, list) or len(mutations) > 500:
+            return jsonify({"ok": False, "error": "mutations must be a list <= 500"}), 400
+        results = []
+        synced = 0
+        failed = 0
+        for item in mutations:
+            if not isinstance(item, dict):
+                results.append({"ok": False, "error": "Invalid mutation item"})
+                failed += 1
+                continue
+            r = _sync_file_mutation(item.get("action"), item.get("old_path"), item.get("new_path"))
+            results.append(r)
+            if r.get("ok"):
+                synced += 1
+            else:
+                failed += 1
+        all_ok = (failed == 0)
+        return jsonify({"ok": all_ok, "synced": synced, "failed": failed, "results": results}), (200 if all_ok else 207)
+    action = str(body.get("action") or "").strip().lower()
+    if action not in ("create", "upload", "copy", "rename", "move", "trash", "restore", "delete"):
+        return jsonify({"ok": False, "error": "Invalid action"}), 400
+    res = _sync_file_mutation(action, body.get("old_path"), body.get("new_path"))
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@app.route("/api/disk/scan_duplicates/schedule", methods=["GET", "POST"])
+@requires_admin
+def api_disk_scan_duplicates_schedule():
+    """Xem hoac cau hinh lich tu dong quet trung lap Rust tren NAS."""
+    if request.method == "GET":
+        return jsonify(_load_dup_schedule())
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    try:
+        cfg = _save_dup_schedule(data)
+        return jsonify(cfg)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/disk/scan_duplicates/cancel", methods=["POST"])
+@requires_admin
+def api_disk_scan_duplicates_cancel():
+    """Hủy tiến trình quét trùng lặp Rust đang chạy."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or type(body.get("job_id")) is not int:
+        return jsonify({"error": "job_id và cancel_token là bắt buộc"}), 400
+    with _DUP_SCAN_LOCK:
+        token = _DUP_SCAN_STATE.get("cancel_token")
+        if body["job_id"] != _DUP_SCAN_STATE.get("active_job"):
+            return jsonify({"error": "Phiên quét đã kết thúc hoặc thay đổi"}), 409
+        if not token or body.get("cancel_token") != token:
+            return jsonify({"error": "Chỉ máy khởi động phiên quét có quyền hủy"}), 403
+        if _DUP_SCAN_STATE.get("status") == "running":
+            _DUP_SCAN_STATE["status"] = "cancelling"
+        elif _DUP_SCAN_STATE.get("status") != "cancelling":
+            return jsonify({"error": "Phiên quét đã kết thúc"}), 409
+        return jsonify(_snapshot_dup_scan_state_locked()), 202
+
 
 # ============ FILE HASH STORE — cùng DB với file_index và work queue =========
 def _hash_db():
@@ -14711,16 +16673,10 @@ def api_hash_save():
                         "VALUES (?, ?, ?, ?, ?, ?)",
                         (p, sz, mt, s, part, now))
                     saved += 1
-                    # Dong bo sang bang verified_file_hashes (DB duy nhat) neu co source_version
+                    # Dong bo sang bang verified_file_hashes (provenance='client', khong ghi de server_lease)
                     if source_version:
                         try:
-                            info = _duplicate_file_info(p)
-                            if info['version'] == source_version:
-                                conn.execute(
-                                    "INSERT OR REPLACE INTO verified_file_hashes"
-                                    "(file_id,version,size,sha256,verified_at,path)"
-                                    " VALUES(?,?,?,?,?,?)",
-                                    (info['file_id'], source_version, sz, s, now, p))
+                            _duplicate_save_hash(p, source_version, s, provenance='client')
                         except (OSError, ValueError):
                             # File chua index hoac khong xac nhan duoc thong tin — chi luu file_hashes
                             pass
@@ -14773,6 +16729,7 @@ def api_hash_duplicates():
             conn.close()
         groups = []
         stale_paths = []
+        missing_paths = []
         for sha, paths_blob, _total, _count in rows:
             paths = (paths_blob or "").split(chr(31))
             verified = []
@@ -14782,6 +16739,7 @@ def api_hash_duplicates():
                 except Exception:
                     continue
                 if info is None:
+                    missing_paths.append(p)
                     continue  # file mat hoac doc loi — bo qua lan nay
                 if info.get("stale"):
                     stale_paths.append(p)
@@ -14789,10 +16747,32 @@ def api_hash_duplicates():
                 verified.append(info)
             if len(verified) < 2:
                 continue
-            total = sum(v["size"] for v in verified)
-            groups.append({"sha256": sha, "files": [v["path"] for v in verified],
+            per_size = verified[0]["size"]
+            wasted = sum(v["size"] for v in verified) - per_size
+            groups.append({"sha256": sha, "size": per_size,
+                           "files": [v["path"] for v in verified],
                            "etags": {v["path"]: v["etag"] for v in verified},
-                           "count": len(verified), "wasted_bytes": total})
+                           "count": len(verified), "wasted_bytes": wasted})
+        # Don cac row tep khong con ton tai tren disk khoi file_hashes va memory scan state
+        if missing_paths:
+            try:
+                conn_del = _hash_db()
+                try:
+                    del_tuples = []
+                    for mp in missing_paths:
+                        c_mp = str(mp).replace("\\", "/").strip("/")
+                        del_tuples.append((c_mp,))
+                        del_tuples.append(("/webdav/" + c_mp,))
+                    conn_del.executemany("DELETE FROM file_hashes WHERE path = ?", del_tuples)
+                    conn_del.commit()
+                finally:
+                    conn_del.close()
+            except Exception as e_del:
+                log.warning("[Hash] Xoa missing file_hashes loi: %s", e_del)
+            try:
+                _prune_dup_scan_state_paths(missing_paths)
+            except Exception:
+                pass
         # Refresh async cac row stale (khong chan response).
         if stale_paths:
             try:
@@ -14976,6 +16956,110 @@ def _get_thumb_path(base_dir, file_path):
         hash_str = file_path_real
     safe_hash = hashlib.md5(hash_str.encode('utf-8')).hexdigest()
     return os.path.join(base_dir_real, THUMB_DIR_NAME, safe_hash + ".jpg")
+
+
+def _delete_thumb_for_file(physical_path):
+    """Xoa file thumbnail tuong ung trong .thumbs/ khi file goc bi xoa (bo qua loi neu khong ton tai)."""
+    if not physical_path:
+        return False
+    try:
+        base = _get_webdav_public_dir()
+        if not base:
+            return False
+        tp = _get_thumb_path(base, physical_path)
+        if tp and os.path.isfile(tp):
+            os.unlink(tp)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _prune_orphaned_hashes_and_thumbs():
+    """Don cac dong mo coi trong file_hashes/verified_file_hashes va file .thumbs mo coi khi file goc da bi xoa."""
+    pruned_hashes = 0
+    pruned_thumbs = 0
+    base = _get_webdav_public_dir()
+    if not base or not os.path.isdir(base):
+        return (0, 0)
+    base_real = os.path.realpath(base)
+    conn = _hash_db()
+    try:
+        # 1. Don orphan trong file_hashes (theo trang 500 dong, khong ngam RAM)
+        orphan_fh = []
+        cursor = conn.execute("SELECT path FROM file_hashes")
+        while True:
+            rows = cursor.fetchmany(500)
+            if not rows:
+                break
+            for (p,) in rows:
+                real = _resolve_webdav_request_path(p)
+                if not real or not os.path.isfile(real):
+                    orphan_fh.append((p, real))
+        if orphan_fh:
+            conn.executemany("DELETE FROM file_hashes WHERE path = ?", [(p,) for p, _ in orphan_fh])
+            pruned_hashes += len(orphan_fh)
+            for _p, real in orphan_fh:
+                if real and _delete_thumb_for_file(real):
+                    pruned_thumbs += 1
+
+        # 2. Don orphan trong verified_file_hashes
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verified_file_hashes'").fetchone():
+            orphan_vh = []
+            cursor2 = conn.execute("SELECT file_id, path FROM verified_file_hashes WHERE path != ''")
+            while True:
+                rows = cursor2.fetchmany(500)
+                if not rows:
+                    break
+                for fid, p in rows:
+                    real = _resolve_webdav_request_path(p)
+                    if not real or not os.path.isfile(real):
+                        orphan_vh.append((fid, real))
+            if orphan_vh:
+                conn.executemany("DELETE FROM verified_file_hashes WHERE file_id = ?", [(fid,) for fid, _ in orphan_vh])
+                pruned_hashes += len(orphan_vh)
+                for _fid, real in orphan_vh:
+                    if real and _delete_thumb_for_file(real):
+                        pruned_thumbs += 1
+
+        if pruned_hashes > 0:
+            conn.commit()
+
+        # 3. Don file .thumbs/*.jpg mo coi (chi chay khi file_index da ready=1 de dam bao an toan tuyet doi)
+        thumb_dir = os.path.join(base_real, THUMB_DIR_NAME)
+        if os.path.isdir(thumb_dir) and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='index_state'").fetchone():
+            st_row = conn.execute("SELECT ready FROM index_state WHERE id=1").fetchone()
+            if st_row and int(st_row[0] or 0) == 1:
+                has_nf = "New folder" in base_real
+                valid_thumbs = set()
+                cur_idx = conn.execute("SELECT path FROM file_index WHERE is_dir=0")
+                while True:
+                    rows = cur_idx.fetchmany(2000)
+                    if not rows:
+                        break
+                    for (rel_p,) in rows:
+                        rel_clean = str(rel_p or "").lstrip("/")
+                        if not rel_clean:
+                            continue
+                        h_str = ("New folder/" + rel_clean) if has_nf else rel_clean
+                        valid_thumbs.add(hashlib.md5(h_str.encode("utf-8")).hexdigest() + ".jpg")
+                if valid_thumbs:
+                    cutoff = time.time() - 3600.0
+                    for fname in os.listdir(thumb_dir):
+                        if not fname.endswith(".jpg") or fname in valid_thumbs:
+                            continue
+                        full_tp = os.path.join(thumb_dir, fname)
+                        try:
+                            if os.path.isfile(full_tp) and os.path.getmtime(full_tp) < cutoff:
+                                os.unlink(full_tp)
+                                pruned_thumbs += 1
+                        except OSError:
+                            continue
+    except Exception as e:
+        log.warning("[OrphanPrune] Loi don orphan hash/thumb: %s", e)
+    finally:
+        conn.close()
+    return (pruned_hashes, pruned_thumbs)
 
 def _thumb_current(source, target, minimum_size=0):
     try:
@@ -16211,9 +18295,18 @@ def api_nas_work_claim():
         _refresh_file_index_for_search()
         reason = "catalogue_stale" if stale else "catalogue_not_ready"
         return jsonify({"claimed": False, "retry_after": 30, "reason": reason}), 423
-    lease = nas_work_coordinator.claim_next(
-        INDEX_DB_PATH, "client:" + owner, _background_heavy_work_allowed(),
-        lease_seconds=300, job_name=name)
+    allowed = _background_heavy_work_allowed()
+    if name == "duplicates":
+        with _DUP_SCAN_LOCK:
+            if _DUP_SCAN_STATE.get("active_job") is not None or _DUP_AUTO_WORKER_LOCK.locked():
+                return jsonify({"claimed": False, "retry_after": 30, "reason": "duplicate_scan_active"}), 423
+            lease = nas_work_coordinator.claim_next(
+                INDEX_DB_PATH, "client:" + owner, allowed,
+                lease_seconds=300, job_name=name)
+    else:
+        lease = nas_work_coordinator.claim_next(
+            INDEX_DB_PATH, "client:" + owner, allowed,
+            lease_seconds=300, job_name=name)
     if not lease:
         return jsonify({"claimed": False, "retry_after": 30, "reason": "nas_busy_or_job_unavailable"}), 423
     return jsonify({key: lease[key] for key in ("name", "cursor", "completed", "total", "revision", "catalogue_revision", "attempt", "owner", "token", "expires_at")})

@@ -73,8 +73,12 @@ def main():
     if companion:
         run(["scp", companion, "%s@%s:/opt/nas_work_coordinator.py.next" % (NAS_USER, NAS_HOST)])
 
+    force = "--force" in sys.argv or "--ignore-ffmpeg" in sys.argv
     # Publish the dependency before its importer; running processes keep their loaded module.
-    publish = "set -eu; test \"$(pgrep -c ffmpeg || true)\" = 0; python3 -m py_compile /opt/nas_api_server.py.next; "
+    publish = "set -eu; "
+    if not force:
+        publish += 'test "$(pgrep -c ffmpeg || true)" = 0; '
+    publish += "python3 -m py_compile /opt/nas_api_server.py.next; "
     if companion:
         publish += "python3 -m py_compile /opt/nas_work_coordinator.py.next; chmod 644 /opt/nas_work_coordinator.py.next; mv /opt/nas_work_coordinator.py.next /opt/nas_work_coordinator.py; "
     publish += "chmod 644 /opt/nas_api_server.py.next; mv /opt/nas_api_server.py.next /opt/nas_api_server.py"

@@ -145,7 +145,7 @@ pub fn read_batch_exif(paths: &[String], workers: usize) -> Vec<(String, Option<
             .collect()
     };
 
-    if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(n_threads).build() {
+    if let Some(pool) = crate::shared_rayon_pool(n_threads) {
         pool.install(runner)
     } else {
         runner()

@@ -228,48 +228,43 @@ class BatchOperationWorker(
                             val encodedName = encodeWebDavSegment(fileName)
                             var targetUrl = safeDestUrl + encodedName
                             if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                            // P1-4: COPY khong ghi de (Overwrite: F). Dich ton tai
-                            // (412) -> doi ten duy nhat + timestamp, giu ca hai.
+                            // P1-4: COPY khong ghi de (Overwrite: F). Dich ton tai (412) -> Bo qua (skip), giu nguyen ten goc
                             try {
                                 webDavManager.copyFile(sourceUrl, targetUrl)
+                                FileMutationSync.notifyOrEnqueue(applicationContext, activeBaseUrl, WebDavManager.currentAuthHeader(), "copy", targetUrl, targetUrl)
+                                successCount++
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (e: Exception) {
                                 if ((e.message ?: "").contains("412")) {
-                                    targetUrl = uniqueBatchTargetUrl(safeDestUrl, fileName, isDirectory)
-                                    webDavManager.copyFile(sourceUrl, targetUrl)
-                                    android.util.Log.w(TAG, "COPY dich ton tai, doi ten: $fileName -> $targetUrl")
+                                    android.util.Log.w(TAG, "COPY dich ton tai ($targetUrl) — bo qua khong sao chep (skip), khong doi ten")
                                 } else throw e
                             }
-                            successCount++
                         }
                         "MOVE" -> {
                             val safeDestUrl = if (normalizedDestUrl.endsWith("/")) normalizedDestUrl else "${normalizedDestUrl}/"
                             val encodedName = encodeWebDavSegment(fileName)
                             var targetUrl = safeDestUrl + encodedName
                             if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                            // P1-4: MOVE khong ghi de. Dich ton tai (412) -> doi
-                            // ten duy nhat, giu ca hai (tru khi MOVE vao trash —
-                            // trash da co co che ten duy nhat rieng).
+                            // P1-4: MOVE khong ghi de. Dich ton tai (412) -> bo qua (skip) tru khi MOVE vao trash
                             try {
                                 webDavManager.renameFile(sourceUrl, targetUrl)
+                                FileMutationSync.notifyOrEnqueue(applicationContext, activeBaseUrl, WebDavManager.currentAuthHeader(), "move", sourceUrl, targetUrl)
+                                try {
+                                    if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
+                                        trashMetaDao.deleteByTrashPath(sourceUrl)
+                                    } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
+                                        trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                                    }
+                                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                                    android.util.Log.w(TAG, "DB sync failed after MOVE $fileName (NAS OK)", dbEx)
+                                }
+                                successCount++
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (e: Exception) {
                                 if ((e.message ?: "").contains("412") && !targetUrl.contains(trashFolderName)) {
-                                    targetUrl = uniqueBatchTargetUrl(safeDestUrl, fileName, isDirectory)
-                                    webDavManager.renameFile(sourceUrl, targetUrl)
-                                    android.util.Log.w(TAG, "MOVE dich ton tai, doi ten: $fileName -> $targetUrl")
+                                    android.util.Log.w(TAG, "MOVE dich ton tai ($targetUrl) — bo qua khong di chuyen (skip), khong doi ten")
                                 } else throw e
                             }
-                            try {
-                                if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
-                                    trashMetaDao.deleteByTrashPath(sourceUrl)
-                                } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
-                                    trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
-                                }
-                            } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
-                                android.util.Log.w(TAG, "DB sync failed after MOVE $fileName (NAS OK)", dbEx)
-                            }
-                            successCount++
                         }
                         "DELETE" -> {
                             if (!isInTrash) {
@@ -278,6 +273,7 @@ class BatchOperationWorker(
                                 try { webDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                                 try {
                                     webDavManager.renameFile(sourceUrl, targetUrl)
+                                    FileMutationSync.notifyOrEnqueue(applicationContext, activeBaseUrl, WebDavManager.currentAuthHeader(), "trash", sourceUrl, targetUrl)
                                     try {
                                         trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
                                     } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
@@ -295,6 +291,7 @@ class BatchOperationWorker(
                                                 if (it.endsWith("/")) it else "$it/"
                                             }, fileName, isDirectory)
                                         webDavManager.renameFile(sourceUrl, uniqueTarget)
+                                        FileMutationSync.notifyOrEnqueue(applicationContext, activeBaseUrl, WebDavManager.currentAuthHeader(), "trash", sourceUrl, uniqueTarget)
                                         android.util.Log.w(TAG, "Trash dich ton tai, doi ten: $fileName -> $uniqueTarget")
                                         try {
                                             trashMetaDao.insert(TrashMeta(trashPath = uniqueTarget, originalPath = sourceUrl))
@@ -312,6 +309,7 @@ class BatchOperationWorker(
                                 }
                             } else {
                                 webDavManager.deleteFile(sourceUrl, isDirectory)
+                                FileMutationSync.notifyOrEnqueue(applicationContext, activeBaseUrl, WebDavManager.currentAuthHeader(), "delete", sourceUrl)
                                 try {
                                     trashMetaDao.deleteByTrashPath(sourceUrl)
                                 } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
@@ -327,6 +325,7 @@ class BatchOperationWorker(
                                 null
                             } ?: buildWebDavRestoreTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
                             webDavManager.renameFile(sourceUrl, targetUrl)
+                            FileMutationSync.notifyOrEnqueue(applicationContext, activeBaseUrl, WebDavManager.currentAuthHeader(), "restore", sourceUrl, targetUrl)
                             try {
                                 trashMetaDao.deleteByTrashPath(sourceUrl)
                             } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {

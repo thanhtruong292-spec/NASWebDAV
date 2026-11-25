@@ -23,7 +23,7 @@ class FastIndexCatalogueTests(unittest.TestCase):
     def setUp(self):
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
-        self.root = self.work.name
+        self.root = os.path.realpath(self.work.name)
         self.db = os.path.join(self.root, 'index.sqlite')
         self.app = Flask(__name__)
         source = Path(os.environ.get('NAS_BACKEND_SOURCE', str(Path(__file__).resolve().parents[1] / 'backend/nas_api_server.py')))
