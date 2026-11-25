@@ -998,7 +998,8 @@ object WebDavManager {
 
         contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
 
-        currentETag: String? = null
+        currentETag: String? = null,
+        createOnly: Boolean = false
 
     ) = withContext(Dispatchers.IO) {
 
@@ -1059,6 +1060,7 @@ object WebDavManager {
 
         val requestBuilder = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
         currentETag?.let { requestBuilder.header("If-Match", it) }
+        if (createOnly) requestBuilder.header("If-None-Match", "*")
         requestBuilder.withCallGroup(CALL_GROUP_TRANSFER)
         val request = requestBuilder.build()
 
@@ -1067,6 +1069,7 @@ object WebDavManager {
         // writeTimeout = 30 phút (FIX C2) — nếu NAS ngừng ACK, upload timeout thay vì treo vĩnh viễn.
         optimizedClient.newCall(request).execute().use { response ->
 
+            if (createOnly && response.code == 412) throw java.nio.file.FileAlreadyExistsException(fileUrl)
             if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
 
         }

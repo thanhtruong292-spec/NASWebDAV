@@ -46,6 +46,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 fun NasHtmlDashboardScreen(
     viewName: String,
     onAction: (String, String?) -> Unit,
+    onAccountAction: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -78,66 +79,89 @@ fun NasHtmlDashboardScreen(
         }
     }
 
+    data class UploadSelection(val id: String, val uri: android.net.Uri, val folder: String, val auth: WebDavManager.AuthState)
+    val failedSelections = remember { mutableMapOf<String, UploadSelection>() }
+    var uploadBusy by remember { mutableStateOf(false) }
+
+    fun publishUpload(id: String, status: String, progress: Int = 0, name: String? = null) {
+        val payload = JSONObject().put("id", id).put("status", status).put("progress", progress)
+        if (name != null) payload.put("name", name)
+        webViewRef?.evaluateJavascript("window.NasUpload032 && window.NasUpload032.update($payload);", null)
+    }
+
+    fun uploadSelections(selections: List<UploadSelection>) {
+        if (uploadBusy || selections.isEmpty()) return
+        uploadBusy = true
+        uiScope.launch {
+            var changed = false
+            try {
+                selections.forEach { publishUpload(it.id, "waiting") }
+                for (selection in selections) {
+                    val (id, uri, folder, auth) = selection
+                    failedSelections.remove(id)
+                    val view = webViewRef
+                    val outcome = withContext(Dispatchers.IO) {
+                        if (WebDavManager.currentAuthState() != auth) return@withContext "unavailable"
+                        WebDavManager.threadLocalAuth.set(auth)
+                        var tempFile: java.io.File? = null
+                        try {
+                            val rawName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                                if (cursor.moveToFirst()) cursor.getString(0) else null
+                            } ?: throw java.io.IOException("Missing filename")
+                            view?.post { publishUpload(id, "uploading", name = rawName) }
+                            val safeName = rawName.replace('/', '_').replace('\\', '_').replace("..", "_").take(180)
+                            val encoded = java.net.URLEncoder.encode(safeName, "UTF-8").replace("+", "%20")
+                            val destUrl = "$folder/$encoded"
+                            if (WebDavManager.fileExists(destUrl)) return@withContext "skipped"
+                            val temp = java.io.File.createTempFile("webdav-upload-", ".part", context.cacheDir)
+                            tempFile = temp
+                            val input = context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Cannot open source")
+                            input.use { source -> temp.outputStream().use { source.copyTo(it) } }
+                            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                            var lastPercent = 0
+                            temp.inputStream().use { source ->
+                                WebDavManager.uploadStreamWithProgress(destUrl, source, temp.length(), mime, { written, total ->
+                                    val percent = if (total > 0) (written.toDouble() / total * 100).toInt().coerceIn(0, 99) else 0
+                                    if (percent > lastPercent) {
+                                        lastPercent = percent
+                                        view?.post { publishUpload(id, "uploading", percent) }
+                                    }
+                                }, createOnly = true)
+                            }
+                            FileMutationSync.notifyOrEnqueue(context.applicationContext, auth.baseUrl, auth.authHeader, "upload", destUrl, destUrl)
+                            "done"
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (_: java.nio.file.FileAlreadyExistsException) {
+                            "skipped"
+                        } catch (_: Exception) {
+                            "failed"
+                        } finally {
+                            tempFile?.delete()
+                            WebDavManager.threadLocalAuth.remove()
+                        }
+                    }
+                    if (outcome == "failed") failedSelections[id] = selection
+                    if (outcome == "done") changed = true
+                    publishUpload(id, outcome, if (outcome == "done") 100 else 0)
+                }
+            } finally {
+                uploadBusy = false
+                webViewRef?.evaluateJavascript("window.NasUpload032 && window.NasUpload032.finish();", null)
+                if (changed) fileBrowserVM.refresh()
+            }
+        }
+    }
+
     val uploadPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        val targetFolder = fileBrowserVM.currentUrl.ifBlank { WebDavManager.currentBaseUrl }.trimEnd('/')
-        uiScope.launch(Dispatchers.IO) {
-            var okCount = 0
-            var skippedCount = 0
-            WebDavManager.threadLocalAuth.set(
-                WebDavManager.AuthState(
-                    WebDavManager.currentBaseUrl,
-                    SecurePrefsHelper.getUser(context),
-                    SecurePrefsHelper.getPass(context)
-                )
-            )
-            try {
-                uris.forEachIndexed { idx, uri ->
-                    var tempFile: java.io.File? = null
-                    try {
-                        val rawName = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                            val col = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                            if (c.moveToFirst() && col >= 0) c.getString(col) else null
-                        } ?: "upload_${System.currentTimeMillis()}_$idx"
-                        val safeName = rawName.replace('/', '_').replace('\\', '_').replace("..", "_").take(180)
-                        val encoded = java.net.URLEncoder.encode(safeName, "UTF-8").replace("+", "%20")
-                        val destUrl = "$targetFolder/$encoded"
-                        // Yêu cầu: Cấm tuyệt đối đổi tên file khi upload lên NAS, tất cả phải giữ nguyên tên gốc, trùng tên không tải lên
-                        if (WebDavManager.fileExists(destUrl)) {
-                            android.util.Log.i("UploadPicker", "Tệp đã tồn tại cùng tên trên NAS ($safeName) — bỏ qua không tải lên (skip)")
-                            skippedCount++
-                            return@forEachIndexed
-                        }
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            val temp = java.io.File(context.cacheDir, safeName)
-                            tempFile = temp
-                            temp.outputStream().use { input.copyTo(it) }
-                            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-                            WebDavManager.uploadFile(destUrl, temp, mime)
-                            com.nas.naswebdav.FileMutationSync.notifyOrEnqueue(context.applicationContext, WebDavManager.currentBaseUrl, WebDavManager.currentAuthHeader(), "upload", destUrl, destUrl)
-                            okCount++
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                    } finally {
-                        tempFile?.delete()
-                    }
-                }
-            } finally {
-                WebDavManager.threadLocalAuth.remove()
-            }
-            withContext(Dispatchers.Main) {
-                val msg = if (skippedCount > 0) {
-                    "Đã tải lên $okCount tệp (bỏ qua $skippedCount tệp trùng tên)"
-                } else {
-                    "Đã tải lên $okCount/${uris.size} tệp"
-                }
-                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                fileBrowserVM.refresh()
-            }
+        val auth = WebDavManager.currentAuthState()
+        val targetFolder = fileBrowserVM.currentUrl.ifBlank { auth.baseUrl }.trimEnd('/')
+        if (uris.isEmpty()) {
+            webViewRef?.evaluateJavascript("window.NasUpload032 && window.NasUpload032.finish();", null)
+        } else {
+            uploadSelections(uris.map { UploadSelection(java.util.UUID.randomUUID().toString(), it, targetFolder, auth) })
         }
     }
 
@@ -336,7 +360,12 @@ fun NasHtmlDashboardScreen(
 
                     @JavascriptInterface
                     fun action(name: String) {
-                        post { onAction(name, null) }
+                        post {
+                            when (name) {
+                                "appSettings", "logout" -> onAccountAction(name)
+                                else -> onAction(name, null)
+                            }
+                        }
                     }
 
                     @JavascriptInterface
@@ -480,7 +509,12 @@ fun NasHtmlDashboardScreen(
 
                     @JavascriptInterface
                     fun pickUploadFiles() {
-                        post { uploadPickerLauncher.launch(arrayOf("*/*")) }
+                        post { if (!uploadBusy) uploadPickerLauncher.launch(arrayOf("*/*")) }
+                    }
+
+                    @JavascriptInterface
+                    fun retryUploadFile(id: String) {
+                        post { failedSelections[id]?.let { uploadSelections(listOf(it)) } }
                     }
 
                     @JavascriptInterface

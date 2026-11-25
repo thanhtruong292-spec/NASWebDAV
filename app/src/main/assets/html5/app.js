@@ -286,13 +286,65 @@
   }
 
   var toastTimer = null;
-  function showToast(msg) {
+  var feedbackTimer = null;
+  var toastStyles = {
+    info: ["Thông tin", "M12 11v5 M12 8h.01 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"],
+    success: ["Thành công", "m5 12 4 4L19 6"],
+    warning: ["Cảnh báo", "M12 9v4 M12 17h.01 M10.3 4.8 3 18a1 1 0 0 0 .9 1.5h16.2A1 1 0 0 0 21 18L13.7 4.8a2 2 0 0 0-3.4 0Z"],
+    error: ["Lỗi", "m9 9 6 6m0-6-6 6 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"]
+  };
+  function showToast(msg, kind) {
+    if (kind && kind !== "info") {
+      showFeedback(msg, kind);
+      return;
+    }
     var el = document.getElementById("uxToast");
     if (!el) return;
-    el.textContent = msg;
+    kind = kind || "info";
+    var style = toastStyles[kind];
+    el.dataset.kind = kind;
+    el.querySelector("path").setAttribute("d", style[1]);
+    document.getElementById("uxToastTitle").textContent = style[0];
+    document.getElementById("uxToastMessage").textContent = msg;
     el.classList.add("show");
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.classList.remove("show"); }, 1800);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      el.classList.remove("show");
+      document.getElementById("uxToastTitle").textContent = "";
+      document.getElementById("uxToastMessage").textContent = "";
+    }, 4500);
+  }
+
+  function showFeedback(message, kind) {
+    var dialog = document.getElementById("feedbackDialog");
+    var style = toastStyles[kind];
+    dialog.dataset.kind = kind;
+    dialog.querySelector("path").setAttribute("d", style[1]);
+    document.getElementById("feedbackTitle").textContent = style[0];
+    document.getElementById("feedbackMessage").textContent = message;
+    clearTimeout(feedbackTimer);
+    dialog.classList.remove("is-gone");
+    if (dialog.classList.contains("hidden")) {
+      dialog.classList.add("is-pre");
+      dialog.classList.remove("hidden");
+      dialog.querySelector(".u436-d").getBoundingClientRect();
+      dialog.classList.remove("is-pre");
+    }
+    syncDialogs();
+  }
+
+  function closeFeedback(immediate) {
+    var dialog = document.getElementById("feedbackDialog");
+    if (!immediate && dialog.classList.contains("is-gone")) return;
+    clearTimeout(feedbackTimer);
+    if (!immediate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      dialog.classList.add("is-gone");
+      feedbackTimer = setTimeout(function () { closeFeedback(true); }, 320);
+      return;
+    }
+    dialog.classList.add("hidden");
+    dialog.classList.remove("is-gone");
+    syncDialogs();
   }
 
   function fmtBytes(bytes) {
@@ -347,13 +399,14 @@
   }
 
   var modalCloseButtons = {
-    fileActionModal: "modalCancelBtn", processModal: "procCloseBtn",
+    fileActionModal: "modalCancelBtn", fileDeleteDialog: "fileDeleteCancel", processModal: "procCloseBtn",
     smartModal: "smartCloseBtn", toolboxModal: "toolboxCloseBtn",
     autoBackupModal: "abCloseBtn", smbModal: "smbCloseBtn",
     dockerModal: "dockerCloseBtn", logsModal: "logsCloseBtn",
     livestreamModal: "liveCloseBtn", subUiModal: "subUiCloseBtn",
     dupPreviewModal: "dupPrevCloseBtn", dupConfirmModal: "dupConfirmCloseBtn",
-    dupAutoCleanModal: "dupAutoCleanCloseBtn"
+    dupAutoCleanModal: "dupAutoCleanCloseBtn", feedbackDialog: "feedbackCloseBtn",
+    fileUploadDialog: "fileUploadCloseBtn"
   };
   var activeDialog = null;
   var dialogOpeners = new WeakMap();
@@ -391,10 +444,19 @@
     callBridge("onModalVisibilityChanged", !!next);
   }
 
-  function closeTopModal() {
+  function closeTopModal(immediate) {
     var dialogs = openDialogs();
     var next = dialogs[dialogs.length - 1];
-    if (!next) return false;
+    if (!next) return !!(window.NasAccountMenu && window.NasAccountMenu.close(true));
+    if (next.id === "feedbackDialog") {
+      closeFeedback(immediate === true);
+      return true;
+    }
+    if (next.id === "fileDeleteDialog") {
+      if (immediate === true) closeFileDeleteConfirmation();
+      else cancelFileDeleteConfirmation();
+      return true;
+    }
     var close = document.getElementById(modalCloseButtons[next.id]);
     if (close) close.click();
     else next.classList.add("hidden");
@@ -402,11 +464,72 @@
     return true;
   }
 
+  var fileDeleteAction = null;
+  var fileDeleteConfirmed = false;
+  var fileDeleteTimer = null;
+
+  function openFileDeleteConfirmation(title, subject, containsFolder, opener, action) {
+    var dialog = document.getElementById("fileDeleteDialog");
+    if (!dialog.classList.contains("hidden")) return;
+    var warning = containsFolder ? "Thao tác bao gồm nội dung trong thư mục. " : "";
+    warning += "Mục sẽ được chuyển vào Thùng rác nếu vị trí hỗ trợ. Ở vị trí khác, mục có thể bị xóa vĩnh viễn.";
+    document.getElementById("fileDeleteTitle").textContent = title;
+    document.getElementById("fileDeleteSubject").textContent = subject;
+    document.getElementById("fileDeleteWarning").textContent = warning;
+    fileDeleteAction = action;
+    dialogOpeners.set(dialog, opener);
+    dialog.classList.add("is-pre");
+    dialog.classList.remove("hidden");
+    void dialog.offsetWidth;
+    dialog.classList.remove("is-pre");
+    syncDialogs();
+  }
+
+  function lockFileDeleteButtons(locked) {
+    ["fileDeleteCancel", "fileDeleteConfirm"].forEach(function (id) {
+      var button = document.getElementById(id);
+      if (locked) button.setAttribute("aria-disabled", "true");
+      else button.removeAttribute("aria-disabled");
+    });
+  }
+
+  function exitFileDeleteConfirmation() {
+    var dialog = document.getElementById("fileDeleteDialog");
+    dialog.classList.add("is-gone");
+    var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    fileDeleteTimer = setTimeout(closeFileDeleteConfirmation, reducedMotion ? 300 : 900);
+  }
+
+  function cancelFileDeleteConfirmation() {
+    if (!fileDeleteAction) return;
+    fileDeleteAction = null;
+    lockFileDeleteButtons(true);
+    exitFileDeleteConfirmation();
+  }
+
+  function closeFileDeleteConfirmation() {
+    var dialog = document.getElementById("fileDeleteDialog");
+    clearTimeout(fileDeleteTimer);
+    var actionModal = document.getElementById("fileActionModal");
+    var returnTarget = fileDeleteConfirmed && dialogOpeners.get(actionModal);
+    if (fileDeleteConfirmed) actionModal.classList.add("hidden");
+    fileDeleteConfirmed = false;
+    fileDeleteAction = null;
+    dialog.classList.add("hidden");
+    dialog.classList.remove("is-del", "is-gone", "is-pre");
+    lockFileDeleteButtons(false);
+    document.getElementById("fileDeleteStatus").textContent = "";
+    syncDialogs();
+    if (returnTarget && returnTarget.isConnected && !returnTarget.closest(".hidden, [inert]")) {
+      returnTarget.focus({ preventScroll: true });
+    }
+  }
+
   function bindDialogNavigation() {
     var observer = new MutationObserver(syncDialogs);
     document.querySelectorAll(".ux-modal-backdrop").forEach(function (backdrop) {
       var dialog = backdrop.querySelector(".ux-modal");
-      dialog.setAttribute("role", "dialog");
+      if (!dialog.hasAttribute("role")) dialog.setAttribute("role", "dialog");
       dialog.tabIndex = -1;
       var title = dialog.querySelector(".card-title, #modalFileName");
       if (title) {
@@ -414,7 +537,7 @@
         dialog.setAttribute("aria-labelledby", title.id);
       }
       var close = document.getElementById(modalCloseButtons[backdrop.id]);
-      if (close) close.setAttribute("aria-label", "Đóng hộp thoại");
+      if (close && !close.hasAttribute("aria-label")) close.setAttribute("aria-label", "Đóng hộp thoại");
       observer.observe(backdrop, {attributes: true, attributeFilter: ["class"]});
     });
     document.addEventListener("keydown", function (event) {
@@ -480,6 +603,7 @@
     var connDot = document.getElementById("connDot");
     connText.textContent = state.connLabel || "NAS";
     connDot.className = "dot" + (state.connOk ? "" : " err");
+    if (window.NasAccountMenu) window.NasAccountMenu.update(state);
     if (currentView === "files" && !document.querySelector(".ux-modal-backdrop:not(.hidden)")) return;
 
     // Storage
@@ -504,14 +628,18 @@
         var bytes = Number((categories[def[0]] || {}).bytes);
         return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
       });
-      var categorizedBytes = categoryBytes.reduce(function (sum, bytes) { return sum + bytes; }, 0);
+      var categoryCounts = catDefs.map(function (def) {
+        var count = Number((categories[def[0]] || {}).files);
+        return Number.isFinite(count) && count > 0 ? count : 0;
+      });
+      var categorizedFiles = categoryCounts.reduce(function (sum, count) { return sum + count; }, 0);
       window.NasStorageMeter.render(catDefs.map(function (def, index) {
         return {
-          label: def[1], color: def[2], files: fmtCount((categories[def[0]] || {}).files),
+          label: def[1], color: def[2], files: categoryCounts[index].toLocaleString("vi-VN"),
           size: fmtBytes(categoryBytes[index]),
-          percent: categorizedBytes ? Number((categoryBytes[index] / categorizedBytes * 100).toFixed(2)) : 0
+          percent: categorizedFiles ? categoryCounts[index] / categorizedFiles * 100 : 0
         };
-      }), fmtBytes(st.totalBytes) + " trong catalogue");
+      }), Number(st.totalFiles || 0).toLocaleString("vi-VN") + " tệp trong catalogue");
 
       var largestHtml = "";
       (st.largest || []).slice(0, 5).forEach(function (f) {
@@ -2795,7 +2923,7 @@
           if (chk.getAttribute("data-isvid") === "1") vidCount++;
           else if (chk.getAttribute("data-isimg") === "1") imgCount++;
         });
-        if (!paths.length) { showToast("Chưa chọn tệp trùng nào để xóa"); return; }
+        if (!paths.length) { showToast("Chưa chọn tệp trùng nào để xóa", "warning"); return; }
         openDupConfirmModal(paths, imgCount, vidCount, totalBytes);
       });
 
@@ -2930,8 +3058,6 @@
     if (rBox) rBox.classList.add("hidden");
     var dBox = document.getElementById("modalDetailsContainer");
     if (dBox) dBox.classList.add("hidden");
-    var cBox = document.getElementById("modalDeleteConfirmBox");
-    if (cBox) cBox.classList.add("hidden");
 
     // Populate details
     var dfName = document.getElementById("detFileName");
@@ -3207,6 +3333,7 @@
 
   // Event wiring
   document.addEventListener("DOMContentLoaded", function () {
+    document.getElementById("feedbackCloseBtn").addEventListener("click", function () { closeFeedback(false); });
     bindDialogNavigation();
     startSmoothClockLoop();
     document.getElementById("searchBtn").addEventListener("click", function () {
@@ -3608,7 +3735,14 @@
     });
 
     // File Manager controls
-    document.getElementById("fileUploadBtn").addEventListener("click", function () { callBridge("pickUploadFiles"); });
+    document.getElementById("fileUploadBtn").addEventListener("click", function () {
+      document.getElementById("fileUploadDialog").classList.remove("hidden");
+      syncDialogs();
+    });
+    document.getElementById("fileUploadCloseBtn").addEventListener("click", function () {
+      document.getElementById("fileUploadDialog").classList.add("hidden");
+      syncDialogs();
+    });
     document.getElementById("fileSelectBtn").addEventListener("click", function () {
       selectMode = !selectMode;
       selectedPaths = {};
@@ -3622,11 +3756,16 @@
     document.getElementById("batchDeleteBtn").addEventListener("click", function () {
       var paths = Object.keys(selectedPaths);
       if (!paths.length) return;
-      callBridge("fileDeleteBatch", JSON.stringify(paths));
-      showToast("Đang xóa " + paths.length + " mục...");
-      selectMode = false;
-      selectedPaths = {};
-      renderFiles();
+      var selection = new Set(paths);
+      var containsFolder = currentRenderedFiles.some(function (item) {
+        return item.isDir && selection.has(item.path);
+      });
+      openFileDeleteConfirmation("Xóa các mục đã chọn?", paths.length + " mục", containsFolder, this, function () {
+        callBridge("fileDeleteBatch", JSON.stringify(paths));
+        selectMode = false;
+        selectedPaths = {};
+        renderFiles();
+      });
     });
     document.getElementById("batchDownloadBtn").addEventListener("click", function () {
       var paths = Object.keys(selectedPaths);
@@ -3740,31 +3879,28 @@
       });
     }
 
-    var mDelete = document.getElementById("modalDeleteBtn");
-    if (mDelete) {
-      mDelete.addEventListener("click", function () {
-        var cBox = document.getElementById("modalDeleteConfirmBox");
-        if (cBox) cBox.classList.toggle("hidden");
+    document.getElementById("modalDeleteBtn").addEventListener("click", function () {
+      var item = activeModalFile;
+      if (!item) return;
+      openFileDeleteConfirmation(item.isDir ? "Xóa thư mục?" : "Xóa tệp?", item.name, item.isDir, this, function () {
+        callBridge("fileDelete", item.path);
       });
-    }
+    });
 
-    var mDelCancel = document.getElementById("modalDeleteCancelBtn");
-    if (mDelCancel) {
-      mDelCancel.addEventListener("click", function () {
-        var cBox = document.getElementById("modalDeleteConfirmBox");
-        if (cBox) cBox.classList.add("hidden");
-      });
-    }
-
-    var mDelConfirm = document.getElementById("modalDeleteConfirmBtn");
-    if (mDelConfirm) {
-      mDelConfirm.addEventListener("click", function () {
-        if (!activeModalFile) return;
-        callBridge("fileDelete", activeModalFile.path);
-        showToast("Đang chuyển vào Thùng rác...");
-        document.getElementById("fileActionModal").classList.add("hidden");
-      });
-    }
+    document.getElementById("fileDeleteCancel").addEventListener("click", cancelFileDeleteConfirmation);
+    document.getElementById("fileDeleteConfirm").addEventListener("click", function () {
+      var action = fileDeleteAction;
+      if (!action) return;
+      fileDeleteAction = null;
+      fileDeleteConfirmed = true;
+      var dialog = document.getElementById("fileDeleteDialog");
+      var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      dialog.classList.add("is-del");
+      lockFileDeleteButtons(true);
+      document.getElementById("fileDeleteStatus").textContent = "Đang gửi yêu cầu xóa";
+      action();
+      fileDeleteTimer = setTimeout(exitFileDeleteConfirmation, reducedMotion ? 200 : 1350);
+    });
 
     var rToggle = document.getElementById("fActRenameToggle");
     if (rToggle) {
@@ -3815,21 +3951,31 @@
 
     var cRow = document.getElementById("fActCopyLinkRow");
     if (cRow) {
-      cRow.addEventListener("click", function () {
+      cRow.addEventListener("click", async function () {
         if (!activeModalFile) return;
         var p = activeModalFile.path || activeModalFile.relPath || "";
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(p);
-        } else {
-          var ta = document.createElement("textarea");
-          ta.value = p;
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
+        if (!p) { showToast("Tệp này chưa có đường dẫn để sao chép", "warning"); return; }
+        closeTopModal();
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(p);
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = p;
+            document.body.appendChild(ta);
+            var opener = document.activeElement;
+            try {
+              ta.select();
+              if (!document.execCommand("copy")) throw new Error("Clipboard unavailable");
+            } finally {
+              ta.remove();
+              if (opener) opener.focus({ preventScroll: true });
+            }
+          }
+          showToast("Đã sao chép liên kết", "success");
+        } catch (_) {
+          showToast("Không thể sao chép liên kết", "error");
         }
-        showToast("Đã sao chép liên kết");
-        document.getElementById("fileActionModal").classList.add("hidden");
       });
     }
 
@@ -3930,7 +4076,7 @@
     setView: function (view) {
       var requested = view || "dashboard";
       if (requested !== currentView) {
-        while (closeTopModal()) {}
+        while (closeTopModal(true)) {}
       }
       currentView = requested;
       renderView();

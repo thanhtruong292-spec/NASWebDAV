@@ -31,7 +31,7 @@
 .u472 .u472-lg button { cursor:pointer; min-height:32px; }
 .u472 .u472-lg button span { white-space:nowrap; }
 .u472 .u472-s { width:0; }
-.u472 .u472-bar:empty { background:var(--ux-surface-elevated); border-radius:6px; height:12px; }
+.u472 .u472-bar:empty, .u472 .u472-bar.is-empty { background:var(--ux-surface-elevated); border-radius:6px; height:12px; }
 @media (prefers-reduced-motion:reduce) {
   .u472 *, .u472 *::before { animation:none!important;transition:none!important; }
 }

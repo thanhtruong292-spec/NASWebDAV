@@ -1,0 +1,66 @@
+.ux-toast.nas-notification {
+  --notification-accent: #80c6ff;
+  --notification-surface: #131b2c;
+  --notification-ink: #f1f5f9;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  width: min(360px, calc(100% - 24px));
+  max-width: none;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--notification-accent) 30%, transparent);
+  border-radius: 16px;
+  background: var(--notification-surface);
+  color: var(--notification-ink);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  z-index: 250;
+}
+
+.nas-feedback[data-kind="success"] { --notification-accent: #7ee8c0; }
+.nas-feedback[data-kind="warning"] { --notification-accent: #ffbd75; }
+.nas-feedback[data-kind="error"] { --notification-accent: #ff8e9d; }
+
+:root[data-theme="light"] .nas-notification {
+  --notification-accent: #145891;
+  --notification-surface: #fff;
+  --notification-ink: #16151b;
+}
+.nas-feedback { z-index: 260; }
+.nas-feedback .u436-ic {
+  color: var(--notification-accent);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.nas-feedback .u436-ic svg { width: 32px; height: 32px; }
+.nas-feedback #feedbackMessage { text-align: center; overflow-wrap: anywhere; }
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .nas-feedback[data-kind="success"] { --notification-accent: #107452; }
+  :root:not([data-theme="dark"]) .nas-feedback[data-kind="warning"] { --notification-accent: #8f4a08; }
+  :root:not([data-theme="dark"]) .nas-feedback[data-kind="error"] { --notification-accent: #ad2945; }
+}
+
+:root[data-theme="light"] .nas-feedback[data-kind="success"] { --notification-accent: #107452; }
+:root[data-theme="light"] .nas-feedback[data-kind="warning"] { --notification-accent: #8f4a08; }
+:root[data-theme="light"] .nas-feedback[data-kind="error"] { --notification-accent: #ad2945; }
+
+.nas-notification strong { color: var(--notification-accent); }
+.nas-notification-icon {
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border-radius: 10px;
+  color: var(--notification-accent);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-toast.nas-notification { transition: none; }
+}

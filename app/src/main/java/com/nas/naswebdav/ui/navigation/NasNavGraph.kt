@@ -92,6 +92,28 @@ fun NasNavHost(
     val currentRoute = navBackStackEntry?.destination?.route
 
     val showBottomBar = currentRoute in BOTTOM_NAV_ROUTES
+    val accountContext = androidx.compose.ui.platform.LocalContext.current
+    val onAccountAction: (String) -> Unit = { action ->
+        when (action) {
+            "appSettings" -> runCatching {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = android.net.Uri.fromParts("package", accountContext.packageName, null)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                accountContext.startActivity(intent)
+            }
+            "logout" -> {
+                domainProvider.livestream.viewModelScope.launch {
+                    domainProvider.repository.addSystemLog(
+                        "INFO", "Network", "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất."
+                    )
+                }
+                performLogout(domainProvider)
+                navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
+            }
+        }
+        Unit
+    }
 
     Scaffold(
         containerColor = DarkSurface,
@@ -241,6 +263,7 @@ fun NasNavHost(
                 }
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "dashboard",
+                    onAccountAction = onAccountAction,
                     onAction = htmlActionHandler,
                 )
             }
@@ -249,6 +272,7 @@ fun NasNavHost(
             composable(NasRoutes.APPS) {
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "apps",
+                    onAccountAction = onAccountAction,
                     onAction = { act, _ ->
                         if (!toolboxHost.dispatch(act)) {
                             when (act) {
@@ -279,6 +303,7 @@ fun NasNavHost(
                 }
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "files",
+                    onAccountAction = onAccountAction,
                     onAction = { act, arg ->
                         when (act) {
                             "openVideo" -> if (!arg.isNullOrBlank()) {
@@ -316,6 +341,7 @@ fun NasNavHost(
             composable(NasRoutes.SYSTEM) {
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "system",
+                    onAccountAction = onAccountAction,
                     onAction = { act, _ ->
                         if (!toolboxHost.dispatch(act)) {
                             when (act) {
@@ -328,31 +354,14 @@ fun NasNavHost(
 
             // ── MORE (Thêm) ────────────────────────────────────────────
             composable(NasRoutes.MORE) {
-                val moreContext = androidx.compose.ui.platform.LocalContext.current
                 var showAboutDialog by remember { mutableStateOf(false) }
                 com.nas.naswebdav.ui.html5.NasHtmlDashboardScreen(
                     viewName = "more",
+                    onAccountAction = onAccountAction,
                     onAction = { act, _ ->
                         when (act) {
                             "performance" -> navController.navigate(NasRoutes.PERFORMANCE)
-                            "appSettings" -> runCatching {
-                                val intent = android.content.Intent(
-                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-                                ).apply {
-                                    data = android.net.Uri.fromParts("package", moreContext.packageName, null)
-                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                moreContext.startActivity(intent)
-                            }
                             "about" -> showAboutDialog = true
-                            "logout" -> {
-                                domainProvider.livestream.viewModelScope.launch {
-                                    domainProvider.repository.addSystemLog("INFO", "Network",
-                                        "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
-                                }
-                                performLogout(domainProvider)
-                                navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
-                            }
                         }
                     }
                 )
@@ -364,8 +373,8 @@ fun NasNavHost(
                             androidx.compose.material3.Text(
                                 "Ứng dụng quản lý NAS qua WebDAV.\n" +
                                 "Phiên bản: " + runCatching {
-                                    moreContext.packageManager
-                                        .getPackageInfo(moreContext.packageName, 0).versionName
+                                    accountContext.packageManager
+                                        .getPackageInfo(accountContext.packageName, 0).versionName
                                 }.getOrDefault("?")
                             )
                         },

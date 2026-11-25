@@ -1,0 +1,33 @@
+/* Lucian UX/UI Prompt #408 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#408 */
+.u408{position:relative;width:42px;height:42px;flex:none}
+.u408-w{position:relative;width:100%;height:100%}
+.u408-av{position:absolute;inset:0;display:grid;place-items:center;width:100%;height:100%;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ux-cyan);font:inherit;cursor:pointer}
+.u408-av > span{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--ux-border);border-radius:50%;background:var(--ux-surface-elevated);font-size:13px;font-weight:800;transition:border-color .3s,transform .45s cubic-bezier(.34,1.45,.64,1)}
+.u408-av:hover > span{transform:scale(1.03)}
+.u408-av:active > span{transform:scale(.94);transition-duration:.3s,.1s}
+.u408-av[aria-expanded="true"] > span{border-color:var(--ux-cyan)}
+.u408 .u408-av:focus-visible{outline:2px solid var(--ux-cyan);outline-offset:0}
+.u408-dot{position:absolute;right:4px;top:29px;width:8px;height:8px;border-radius:50%;background:var(--ux-green);box-shadow:0 0 0 2px var(--ux-bg);pointer-events:none}
+.u408-m{position:absolute;right:0;top:48px;width:min(250px,calc(100vw - 26px));z-index:40;padding:6px;border-radius:16px;background:#172235;box-shadow:inset 0 0 0 1px var(--ux-border),0 22px 44px -18px rgba(0,0,0,.65),0 4px 12px -6px rgba(0,0,0,.42);transform-origin:calc(100% - 21px) -25px;transform:scale(.16);opacity:0;visibility:hidden;transition:transform .28s var(--ux-ease),opacity .2s,visibility 0s .28s}
+.u408-m::before{content:"";position:absolute;right:16px;top:-5px;width:10px;height:10px;border-radius:2px;background:#172235;box-shadow:-1px -1px 0 0 var(--ux-border);transform:rotate(45deg)}
+.u408.is-open .u408-m{transform:none;opacity:1;visibility:visible;transition:transform .55s cubic-bezier(.34,1.45,.64,1),opacity .15s,visibility 0s}
+.u408-m>*{position:relative;opacity:0;transform:translateY(-6px);transition:opacity .15s,transform .35s cubic-bezier(.34,1.45,.64,1)}
+.u408.is-open .u408-m>*{opacity:1;transform:none;transition-delay:calc(70ms + var(--i) * 35ms)}
+.u408-hd{display:flex;flex-direction:column;gap:2px;padding:8px 10px 10px}
+.u408-hd b{font-size:14px;font-weight:650;letter-spacing:-.01em;color:var(--ux-text)}
+.u408-hd span{font-size:12px;color:var(--ux-text-2)}
+.u408-it{display:flex;align-items:center;gap:10px;width:100%;height:36px;padding:0 10px;border:0;border-radius:10px;background:none;font-size:13.5px;font-weight:500;color:var(--ux-text);text-align:left}
+.u408-it:hover,.u408-it:focus-visible{background:var(--ux-surface-elevated);outline:none}
+.u408-it svg{width:18px;height:18px;flex:none;fill:none;stroke:var(--ux-text-2);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.u408-it.is-out{color:var(--ux-red)}
+.u408-it.is-out svg{stroke:var(--ux-red)}
+.u408-it.is-out:hover,.u408-it.is-out:focus-visible{background:color-mix(in srgb,var(--ux-red) 10%,transparent)}
+.u408-hr{height:1px;margin:5px 4px;background:var(--ux-border)}
+.u408-m[inert]{pointer-events:none}
+.u408-hd b,.u408-hd span{overflow-wrap:anywhere}
+.u408-it{cursor:pointer}
+.u408-dot.is-offline{background:var(--ux-red)}
+.u408-dot.is-unknown{background:var(--ux-text-3)}
+.u408-connection{display:flex;align-items:center;gap:10px;flex:none}
+@media (max-width:360px){.u408-connection{gap:5px}}
+@media (prefers-reduced-motion:reduce){.u408,.u408 *{transition:none!important;animation:none!important}}

@@ -5,11 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>NAS WebDAV HTML5</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="account-408.css" />
+  <link rel="stylesheet" href="delete-436.css" />
+  <link rel="stylesheet" href="notifications.css" />
   <link rel="stylesheet" href="stats-426.css" />
   <link rel="stylesheet" href="tiles-420.css" />
   <link rel="stylesheet" href="buttons-438.css" />
   <link rel="stylesheet" href="breadcrumb-415.css" />
   <link rel="stylesheet" href="storage-472.css" />
+  <link rel="stylesheet" href="upload-032.css" />
   <link rel="stylesheet" href="sync-080.css" />
   <link rel="stylesheet" href="performance-277.css" />
 </head>
@@ -23,9 +27,36 @@
         <div class="brand-sub" id="topSub">Giám sát &amp; Thống kê WebDAV</div>
       </div>
     </div>
-    <div class="badge" id="connBadge">
-      <span class="dot" id="connDot"></span>
-      <span id="connText">LAN</span>
+    <div class="u408-connection">
+      <div class="badge" id="connBadge">
+        <span class="dot" id="connDot"></span>
+        <span id="connText">LAN</span>
+      </div>
+      <!-- Lucian UX/UI Prompt #408 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#408 -->
+      <div class="u408" id="accountControl">
+        <div class="u408-w">
+          <button type="button" class="u408-av" id="accountTrigger" aria-label="Menu tài khoản" aria-haspopup="menu" aria-controls="accountMenu" aria-expanded="false">
+            <span id="accountInitial" aria-hidden="true">?</span>
+          </button>
+          <span class="u408-dot is-unknown" id="accountDot" aria-hidden="true"></span>
+          <div class="u408-m" id="accountMenu" role="menu" aria-label="Tài khoản NAS" inert>
+            <div class="u408-hd" role="presentation" style="--i:0"><b id="accountUser">Tài khoản NAS</b><span id="accountServer"></span></div>
+            <button type="button" class="u408-it" role="menuitem" tabindex="-1" aria-describedby="accountUser accountServer" data-action="performance" style="--i:1">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M2 13a7 7 0 1 1 14 0H2zM9 11l3-4"/></svg><span>Hiệu năng &amp; Mạng</span>
+            </button>
+            <button type="button" class="u408-it" role="menuitem" tabindex="-1" data-action="appSettings" style="--i:2">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.4"/><path d="M9 1.8v2M9 14.2v2M1.8 9h2M14.2 9h2M3.9 3.9l1.4 1.4M12.7 12.7l1.4 1.4M3.9 14.1l1.4-1.4M12.7 5.3l1.4-1.4"/></svg><span>Cài đặt Android</span>
+            </button>
+            <button type="button" class="u408-it" role="menuitem" tabindex="-1" data-action="about" style="--i:3">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7"/><path d="M9 8v4M9 5.5v.1"/></svg><span>Giới thiệu phiên bản</span>
+            </button>
+            <div class="u408-hr" role="separator" style="--i:4"></div>
+            <button type="button" class="u408-it is-out" role="menuitem" tabindex="-1" data-action="logout" style="--i:5">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M7 3H4.5A1.5 1.5 0 0 0 3 4.5v9A1.5 1.5 0 0 0 4.5 15H7M11.5 12.5 15 9l-3.5-3.5M15 9H7.5"/></svg><span>Đăng xuất</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -183,11 +214,11 @@
       </div>
       <div class="u426 storage-head" id="storageSummaryLine">Đang đọc dữ liệu catalogue...</div>
       <div class="u472-sw">
-        <p class="u472-us" id="storageTotalBytes">--</p>
+        <p class="u472-us" id="storageMeterSummary">--</p>
         <p class="u472-si" aria-hidden="true"><i></i><span></span><b></b><em></em></p>
       </div>
       <div class="u472-bar" id="storageMeter" aria-hidden="true"></div>
-      <ul class="u472-lg" id="storageCategories" aria-label="Nhóm dung lượng"></ul>
+      <ul class="u472-lg" id="storageCategories" aria-label="Thống kê theo loại tệp"></ul>
       <div style="font-size:10.5px;font-weight:800;color:var(--ux-text-3);margin:9px 0 4px;letter-spacing:0.9px;">FILE LỚN NHẤT</div>
       <div id="storageLargest"></div>
     </div>
@@ -516,16 +547,6 @@
           </div>
           <span class="f-act-lbl">Xóa</span>
         </button>
-      </div>
-
-      <!-- Delete Confirmation Box (Hidden by default) -->
-      <div id="modalDeleteConfirmBox" class="hidden" style="background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.35);border-radius:12px;padding:12px;margin-bottom:10px;">
-        <div style="font-size:13px;font-weight:700;color:var(--ux-rose);margin-bottom:4px;">Xác nhận xóa tệp?</div>
-        <div style="font-size:11.5px;color:var(--ux-text);margin-bottom:10px;">Tệp sẽ được chuyển vào Thùng rác trên NAS hoặc bị xóa khỏi máy chủ.</div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <button class="btn-pill" id="modalDeleteCancelBtn" style="font-size:11.5px;padding:5px 12px;">Hủy</button>
-          <button class="btn-pill danger" id="modalDeleteConfirmBtn" style="font-size:11.5px;padding:5px 14px;">Xóa ngay</button>
-        </div>
       </div>
 
       <!-- Detail Actions List -->
@@ -1119,12 +1140,66 @@
     </div>
   </div>
 
-  <div class="ux-toast" id="uxToast" role="status" aria-atomic="true"></div>
+  <!-- Lucian UX/UI Prompt #436 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#436 -->
+  <div class="ux-modal-backdrop u436 hidden" id="fileDeleteDialog">
+    <div class="ux-modal u436-d" role="alertdialog" aria-labelledby="fileDeleteTitle" aria-describedby="fileDeleteDescription" tabindex="-1">
+      <div class="u436-ic" aria-hidden="true">
+        <svg viewBox="0 0 32 32">
+          <defs><clipPath id="u436PaperClip"><rect x="-10" y="-30" width="52" height="40.5"/></clipPath></defs>
+          <g clip-path="url(#u436PaperClip)"><g class="doc"><path d="M12.5 -1.5h5l3 3v8h-8z"/><path d="M14.5 3.5h3.5M14.5 6h3.5" stroke-width="1.2"/></g></g>
+          <g class="lid"><path d="M5.5 9.5h21"/><path d="M12.5 9V7a1.5 1.5 0 0 1 1.5-1.5h4A1.5 1.5 0 0 1 19.5 7v2"/></g>
+          <g class="bd"><path d="M8 10.5l1.3 14.6a2.4 2.4 0 0 0 2.4 2.2h8.6a2.4 2.4 0 0 0 2.4-2.2L24 10.5"/><path d="M13.5 15v7.5M18.5 15v7.5"/></g>
+        </svg>
+      </div>
+      <h3 id="fileDeleteTitle">Xóa tệp?</h3>
+      <p id="fileDeleteDescription"><strong class="u436-subject" id="fileDeleteSubject"></strong><br><span id="fileDeleteWarning"></span></p>
+      <div class="u436-bs">
+        <button type="button" class="u436-no" id="fileDeleteCancel" aria-label="Hủy xóa">Hủy</button>
+        <button type="button" class="u436-ok" id="fileDeleteConfirm">Xác nhận xóa</button>
+      </div>
+      <p class="u436-live" role="status" id="fileDeleteStatus"></p>
+    </div>
+  </div>
+
+  <div class="ux-modal-backdrop u032 hidden" id="fileUploadDialog">
+    <div class="ux-modal u032-panel" role="dialog" aria-modal="false" aria-labelledby="fileUploadTitle" tabindex="-1">
+      <div class="u032-heading">
+        <h3 id="fileUploadTitle">Tải tệp lên</h3>
+        <button type="button" id="fileUploadCloseBtn" class="btn-icon" aria-label="Đóng hộp tải lên">
+          <svg class="svg-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <button class="u032-zone" type="button">
+        <svg class="u032-dash" aria-hidden="true"><rect width="100%" height="100%" rx="25"/></svg>
+        <span class="u032-orb"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M8.5 20.5H7a5 5 0 0 1-.6-10 7 7 0 0 1 13.4-1.6A5.5 5.5 0 0 1 21 20.5h-1.5M14 13v10M10.5 16.5L14 13l3.5 3.5"/></svg></span>
+        <b><em>Chọn tệp</em> để tải lên</b>
+        <small>Có thể chọn nhiều tệp</small>
+      </button>
+      <ul class="u032-list" aria-label="Tiến độ tải tệp"></ul>
+      <p class="u032-live" role="status"></p>
+    </div>
+  </div>
+
+  <div class="ux-modal-backdrop u436 nas-feedback hidden" id="feedbackDialog">
+    <div class="ux-modal u436-d" role="dialog" aria-modal="false" aria-labelledby="feedbackTitle" aria-describedby="feedbackMessage" tabindex="-1">
+      <div class="u436-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path /></svg></div>
+      <h3 id="feedbackTitle"></h3>
+      <p id="feedbackMessage"></p>
+      <div class="u436-bs"><button type="button" class="u436-no" id="feedbackCloseBtn">Đóng</button></div>
+    </div>
+  </div>
+
+  <div class="ux-toast nas-notification" id="uxToast" role="status" aria-atomic="true">
+    <svg class="nas-notification-icon" viewBox="0 0 24 24" aria-hidden="true"><path /></svg>
+    <div><strong id="uxToastTitle"></strong><div id="uxToastMessage"></div></div>
+  </div>
   <script src="buttons-438.js"></script>
   <script src="breadcrumb-415.js"></script>
   <script src="storage-472.js"></script>
+  <script src="upload-032.js"></script>
   <script src="sync-080.js"></script>
   <script src="performance-277.js"></script>
+  <script src="account-408.js"></script>
   <script src="app.js"></script>
   <script src="stats-426.js"></script>
 </body>

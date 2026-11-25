@@ -3,7 +3,7 @@
   var root = document.getElementById("storageCard");
   var bar = document.getElementById("storageMeter");
   var legend = document.getElementById("storageCategories");
-  var summary = document.getElementById("storageTotalBytes");
+  var summary = document.getElementById("storageMeterSummary");
   var details = root.querySelector(".u472-si");
   var current = -1;
   var pinned = -1;
@@ -11,6 +11,11 @@
   var segments = [];
   var buttons = [];
   var signature = "";
+
+  function fileShare(percent) {
+    if (percent > 0 && percent < 0.01) return "< 0,01% số tệp";
+    return percent.toLocaleString("vi-VN", { maximumFractionDigits: 2 }) + "% số tệp";
+  }
 
   function select(index) {
     if (current === index) return;
@@ -23,7 +28,7 @@
     details.children[0].style.backgroundColor = entry.color;
     details.children[1].textContent = entry.label;
     details.children[2].textContent = entry.size;
-    details.children[3].textContent = "· " + entry.percent + "% · " + entry.files + " tệp";
+    details.children[3].textContent = "· " + entry.files + " tệp · " + fileShare(entry.percent);
     details.classList.remove("is-tick");
     void details.offsetWidth;
     details.classList.add("is-tick");
@@ -61,6 +66,7 @@
       segments = [];
       buttons = [];
       bar.textContent = "";
+      bar.classList.toggle("is-empty", !entries.some(function (entry) { return entry.percent > 0; }));
       legend.textContent = "";
       entries.forEach(function (entry, index) {
         var segment = document.createElement("span");
@@ -82,7 +88,7 @@
         button.type = "button";
         button.style.setProperty("--u472-c", entry.color);
         caption.textContent = entry.label + " · " + entry.size;
-        button.setAttribute("aria-label", caption.textContent + " · " + entry.files + " tệp · " + entry.percent + "%");
+        button.setAttribute("aria-label", caption.textContent + " · " + entry.files + " tệp · " + fileShare(entry.percent));
         button.setAttribute("aria-pressed", String(index === pinned));
         dot.setAttribute("aria-hidden", "true");
         button.appendChild(dot);
