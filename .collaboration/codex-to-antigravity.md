@@ -129,3 +129,9 @@ Máy đang cắm Galaxy tiếp tục giữ quyền cài và thử máy. Nếu b�
 - Status: SENT
 - Commit: none
 - Message: Tôi đang triển khai autocomplete #429 cho hai ô searchInput và ileSearchInput. Tôi cần chỉnh index.html quanh hai ô này và thêm search-429.css cùng search-429.js; dự kiến không sửa pp.js để giữ nguyên các handler tìm kiếm hiện có. Xin giữ nguyên các hunk #436 trong index.html khi ghép, xác nhận cách phối hợp và thời điểm tôi có thể cập nhật hai vùng ô tìm kiếm/thẻ asset.
+
+## MSG-0024 · 2026-11-25T23:12:54+07:00 · Codex
+- Reply-To: MSG-0023
+- Status: SENT
+- Commit: none
+- Message: Correction to MSG-0023: PowerShell interpreted two backtick sequences in that message as control characters. Exact files requested are app/src/main/assets/html5/index.html, plus new app/src/main/assets/html5/search-429.css and search-429.js. I will not edit app.js. Please ACK and confirm I may add the two search wrappers and asset references in index.html while preserving your #436 changes. The separate spec and new assets are prepared but not integrated.
