@@ -10,6 +10,8 @@
   var panFraction = 1.0;
   var touchedIdx = -1;
   var fileFilter = "all";
+  var filePageRequestId = 0;
+  var pendingFilePage = 0;
   var fileViewMode = "grid3"; // grid3 | grid6 | list
   var activeModalFile = null;
   var procSortBy = "cpu"; // cpu | mem
@@ -464,6 +466,12 @@
     document.getElementById("topSub").textContent = pair[1];
   }
 
+  function updateStatText(cell, value) {
+    if (!cell) return;
+    if (window.NasStatsMotion) window.NasStatsMotion.setText(cell, value);
+    else cell.textContent = value;
+  }
+
   function renderState() {
     if (!state) return;
 
@@ -478,10 +486,9 @@
     var st = state.storage || {};
     var freshEl = document.getElementById("storageFreshBadge");
     freshEl.textContent = (st.partial ? "Đang cập nhật • " : "") + freshnessText(st.updatedAtMs);
-    document.getElementById("storageSummaryLine").textContent =
-      "Đã quét " + fmtCount(st.totalFiles) + " tệp • " + (st.totalDirs || 0) + " thư mục • " + fmtBytes(st.totalBytes);
+    updateStatText(document.getElementById("storageSummaryLine"), "Đã quét " + fmtCount(st.totalFiles) + " tệp • " + (st.totalDirs || 0) + " thư mục • " + fmtBytes(st.totalBytes));
 
-    var stSig = [st.updatedAtMs, st.totalFiles, st.totalDirs, st.totalBytes].join("|");
+    var stSig = JSON.stringify([st.updatedAtMs, st.totalFiles, st.totalDirs, st.totalBytes, st.byType, st.largest]);
     if (stSig !== lastStorageSignature) {
       lastStorageSignature = stSig;
       var catDefs = [
@@ -492,31 +499,24 @@
         ["archive", "Nén", COLOR_YELLOW],
         ["other", "Khác", "#94a3b8"]
       ];
-      var totalF = Math.max(1, Number(st.totalFiles || 0));
-      if (totalF <= 1 && st.byType) {
-        var sumF = 0;
-        Object.keys(st.byType).forEach(function (k) { sumF += Number((st.byType[k] && st.byType[k].files) || 0); });
-        if (sumF > 0) totalF = sumF;
-      }
-      var catsHtml = "";
-      catDefs.forEach(function (def) {
-        var item = (st.byType && st.byType[def[0]]) || { files: 0, bytes: 0 };
-        var numFiles = Number(item.files || 0);
-        // Progress bar thể hiện theo SỐ LƯỢNG FILE (không theo dung lượng)
-        var wPct = numFiles > 0 ? Math.max(2, Math.min(100, (numFiles / totalF) * 100)) : 0;
-        catsHtml +=
-          '<div class="cat-row">' +
-            '<div class="cat-name">' + def[1] + '</div>' +
-            '<div class="bar-track"><div class="bar-fill" style="width:' + wPct.toFixed(1) + '%;background:' + def[2] + '"></div></div>' +
-            '<div class="cat-meta">' + fmtCount(numFiles) + ' • ' + fmtBytes(item.bytes) + '</div>' +
-          '</div>';
+      var categories = st.byType || {};
+      var categoryBytes = catDefs.map(function (def) {
+        var bytes = Number((categories[def[0]] || {}).bytes);
+        return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
       });
-      document.getElementById("storageCategories").innerHTML = catsHtml;
+      var categorizedBytes = categoryBytes.reduce(function (sum, bytes) { return sum + bytes; }, 0);
+      window.NasStorageMeter.render(catDefs.map(function (def, index) {
+        return {
+          label: def[1], color: def[2], files: fmtCount((categories[def[0]] || {}).files),
+          size: fmtBytes(categoryBytes[index]),
+          percent: categorizedBytes ? Number((categoryBytes[index] / categorizedBytes * 100).toFixed(2)) : 0
+        };
+      }), fmtBytes(st.totalBytes) + " trong catalogue");
 
       var largestHtml = "";
       (st.largest || []).slice(0, 5).forEach(function (f) {
         var name = String(f.path || "").split("/").pop();
-        largestHtml += '<div class="file-row"><span class="file-name">' + name + '</span><span class="file-size">' + fmtBytes(f.bytes) + '</span></div>';
+        largestHtml += '<div class="file-row"><span class="file-name">' + name.replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</span><span class="file-size">' + fmtBytes(f.bytes) + '</span></div>';
       });
       document.getElementById("storageLargest").innerHTML = largestHtml || '<div class="list-sub">Chưa có dữ liệu</div>';
     }
@@ -525,22 +525,22 @@
     var sys = state.system || {};
     var cpuPct = Number(sys.cpuPercent || 0);
     var cpuTemp = Number(sys.cpuTemp || 0);
-    document.getElementById("cpuVal").textContent = cpuPct.toFixed(1) + "%";
-    document.getElementById("cpuSub").textContent = (cpuTemp > 0 ? cpuTemp.toFixed(0) + "°C" : "--");
+    updateStatText(document.getElementById("cpuVal"), cpuPct.toFixed(1) + "%");
+    updateStatText(document.getElementById("cpuSub"), (cpuTemp > 0 ? cpuTemp.toFixed(0) + "°C" : "--"));
     var cpuBar = document.getElementById("cpuBar");
     cpuBar.style.width = Math.min(100, Math.max(2, cpuPct)) + "%";
     cpuBar.style.background = cpuTemp > 0 ? cpuTempColor(cpuTemp) : pctColor(cpuPct);
 
     var ramPct = Number(sys.ramPercent || 0);
-    document.getElementById("ramVal").textContent = sys.ram || "--";
-    document.getElementById("ramSub").textContent = ramPct.toFixed(1) + "%";
+    updateStatText(document.getElementById("ramVal"), sys.ram || "--");
+    updateStatText(document.getElementById("ramSub"), ramPct.toFixed(1) + "%");
     var ramBar = document.getElementById("ramBar");
     ramBar.style.width = Math.min(100, Math.max(2, ramPct)) + "%";
     ramBar.style.background = pctColor(ramPct);
 
     var diskPct = Number(sys.diskPercent || 0);
-    document.getElementById("diskVal").textContent = sys.diskCap || "--";
-    document.getElementById("diskSub").textContent = "Đã dùng " + diskPct.toFixed(1) + "%";
+    updateStatText(document.getElementById("diskVal"), sys.diskCap || "--");
+    updateStatText(document.getElementById("diskSub"), "Đã dùng " + diskPct.toFixed(1) + "%");
     var diskBar = document.getElementById("diskBar");
     diskBar.style.width = Math.min(100, Math.max(2, diskPct)) + "%";
     diskBar.style.background = pctColor(diskPct);
@@ -551,14 +551,14 @@
     if (smartStatus.indexOf("FAILED") >= 0) smartColor = COLOR_RED;
     else if (smartStatus.indexOf("EMMC") >= 0) smartColor = COLOR_BLUE;
     else if (smartStatus.indexOf("PASSED") < 0 && smartStatus !== "OK") { smartColor = "#64748b"; smartW = 0; }
-    document.getElementById("smartVal").textContent = smartStatus;
-    document.getElementById("smartSub").textContent = sys.hddTemp || "--";
+    updateStatText(document.getElementById("smartVal"), smartStatus);
+    updateStatText(document.getElementById("smartSub"), sys.hddTemp || "--");
     var smartBar = document.getElementById("smartBar");
     smartBar.style.width = smartW + "%";
     smartBar.style.background = smartColor;
 
     // Fan
-    document.getElementById("fanStatusText").textContent = sys.fanStatus || "--";
+    updateStatText(document.getElementById("fanStatusText"), sys.fanStatus || "--");
     var fanSvg = document.getElementById("fanSvgIco");
     if (fanSvg) {
       var fanRunning = sys.fanStatus && sys.fanStatus !== "Dừng" && sys.fanStatus.toLowerCase().indexOf("dừng") === -1 && sys.fanStatus !== "--" && sys.fanStatus !== "0%";
@@ -605,15 +605,14 @@
 
     // System tab
     var th = state.thumb || {};
-    document.getElementById("thumbStatusBadge").textContent = thumbnailStatus(th);
+    updateStatText(document.getElementById("thumbStatusBadge"), thumbnailStatus(th));
     var scanP = Number(th.scanProgress || 0);
     var scanT = Math.max(1, Number(th.scanTotal || 1));
     var thPct = Math.min(100, (scanP / scanT) * 100);
-    document.getElementById("thumbDetailText").textContent =
-      "Đã rà soát " + scanP.toLocaleString() + " / " + Number(th.scanTotal || 0).toLocaleString() + " tệp";
+    updateStatText(document.getElementById("thumbDetailText"), "Đã rà soát " + scanP.toLocaleString() + " / " + Number(th.scanTotal || 0).toLocaleString() + " tệp");
     document.getElementById("thumbBar").style.width = thPct.toFixed(1) + "%";
     document.getElementById("backupStatusSub").textContent = state.backupSub || "Chạy nền qua WorkManager Native";
-    document.getElementById("sysSmartLine").textContent = smartStatus + " • " + (sys.hddTemp || "--");
+    updateStatText(document.getElementById("sysSmartLine"), smartStatus + " • " + (sys.hddTemp || "--"));
     document.getElementById("sysOmvLine").textContent = sys.omvInfo || "OpenMediaVault";
     var al = state.alerts || {};
     var alBox = document.getElementById("alertCard");
@@ -699,7 +698,7 @@
     if (selBtn) selBtn.classList.toggle("active", selectMode);
     if (!bar) return;
     bar.classList.toggle("hidden", !selectMode || keys.length === 0);
-    document.getElementById("batchCountText").textContent = keys.length + " mục";
+    updateStatText(document.getElementById("batchCountText"), keys.length + " mục");
     var shareBtn = document.getElementById("batchShareBtn");
     if (shareBtn) {
       var singleItem = keys.length === 1 ? itemsMap[keys[0]] : null;
@@ -708,15 +707,15 @@
   }
 
   function renderTimeline(container, apiBase) {
-    document.getElementById("filesPathTitle").textContent = "Dòng thời gian Ảnh";
+    window.NasBreadcrumb.render("Dòng thời gian Ảnh", [], "");
     if (timelineLoading) {
-      document.getElementById("filesCountBadge").textContent = "...";
+      updateStatText(document.getElementById("filesCountBadge"), "...");
       container.className = "files-center-state";
       container.innerHTML = '<div class="ux-spinner"></div><div style="font-size:13px;color:var(--ux-text-2);font-weight:600;">Đang tải dòng thời gian ảnh...</div>';
       return;
     }
     var items = (timelineData && timelineData.items) || [];
-    document.getElementById("filesCountBadge").textContent = String((timelineData && timelineData.total) || items.length);
+    updateStatText(document.getElementById("filesCountBadge"), String((timelineData && timelineData.total) || items.length));
     if (items.length === 0) {
       container.className = "files-center-state";
       container.innerHTML = '<div style="font-size:13px;color:var(--ux-text-2);">Chưa có ảnh nào trong chỉ mục NAS.</div>';
@@ -775,39 +774,69 @@
     }
   }
 
+  function requestFilePage(page) {
+    var b = bridge();
+    if (!b || typeof b.filePage !== "function") {
+      renderFiles();
+      return;
+    }
+    pendingFilePage = ++filePageRequestId;
+    selectedPaths = {};
+    syncBatchBar({});
+    var query = document.getElementById("fileSearchInput").value.trim();
+    b.filePage(page, query, fileFilter, pendingFilePage);
+    renderFiles();
+  }
+
   function renderFiles() {
     updateViewToggleUI();
     var fState = activeFileSnapshot() || { loading: true };
     var container = document.getElementById("filesContainer");
     if (!container) return;
     var apiBase = (state && state.apiBase) || "";
+    var pager = document.getElementById("filesPager");
+    pager.classList.add("hidden");
     if (fileFilter === "timeline") {
       lastFilesRenderSig = "";
       renderTimeline(container, apiBase);
       syncBatchBar({});
       return;
     }
-    document.getElementById("filesPathTitle").textContent = fState.title || "/webdav/";
+    window.NasBreadcrumb.render(fState.title || "/webdav/", fState.breadcrumbs || [], fState.folder, function (index, folder) {
+      callBridge("openFileAncestor", index, folder);
+    });
     var list = fState.items || [];
     var q = (document.getElementById("fileSearchInput").value || "").trim().toLowerCase();
-    var filtered = list.filter(function (f) {
+    var hasFullCount = Number.isInteger(fState.totalMatches);
+    var filtered = hasFullCount ? list : list.filter(function (f) {
       if (q && String(f.name || "").toLowerCase().indexOf(q) < 0) return false;
       if (fileFilter === "dir") return !!f.isDir;
       if (fileFilter === "image") return !f.isDir && isImgFile(f.name);
       if (fileFilter === "video") return !f.isDir && isVidFile(f.name);
       return true;
     });
-    document.getElementById("filesCountBadge").textContent = fState.loading ? "..." : String(filtered.length);
-    if (fState.loading && filtered.length === 0) {
+    var waitingForPage = pendingFilePage !== 0 && fState.requestId !== pendingFilePage;
+    var total = hasFullCount ? fState.totalMatches : filtered.length;
+    updateStatText(document.getElementById("filesCountBadge"), fState.loading || waitingForPage ? "..." : String(total));
+    if (waitingForPage || (fState.loading && filtered.length === 0)) {
       lastFilesRenderSig = "";
       container.className = "files-center-state";
-      container.innerHTML = '<div class="ux-spinner"></div><div style="font-size:13px;color:var(--ux-text-2);font-weight:600;">Đang tải danh sách tệp từ NAS...</div>';
+      container.innerHTML = '<div class="ux-spinner"></div><div>Đang tải danh sách tệp...</div>';
       return;
+    }
+    if (!fState.loading && hasFullCount && total > filtered.length && filtered.length) {
+      var end = fState.offset + filtered.length;
+      document.getElementById("filesPrevPageBtn").disabled = fState.page === 0;
+      document.getElementById("filesNextPageBtn").disabled = end >= total;
+      updateStatText(document.getElementById("filesPageRange"), (fState.offset + 1) + "–" + end + " / " + total);
+      pager.classList.remove("hidden");
     }
     if (filtered.length === 0) {
       lastFilesRenderSig = "";
       container.className = "files-center-state";
-      container.innerHTML = '<div style="font-size:13px;color:var(--ux-text-2);">Không có tệp nào phù hợp.</div>';
+      container.innerHTML = '<div class="files-empty-title">' +
+        (q || fileFilter !== "all" ? "Không có tệp phù hợp" : "Chưa có tệp để hiển thị") +
+        '</div>' + (q || fileFilter !== "all" ? '<p>Thử đổi từ khóa hoặc bộ lọc.</p>' : '');
       return;
     }
 
@@ -1311,8 +1340,8 @@
       stgBar.style.width = usedPct.toFixed(1) + "%";
       stgBar.style.background = usedPct >= 90 ? "var(--ux-red)" : (usedPct >= 75 ? "var(--ux-yellow)" : "var(--ux-cyan)");
     }
-    if (frTotEl) frTotEl.textContent = fmtBytes(freedTot);
-    if (frSessEl) frSessEl.textContent = "Phiên này: " + fmtBytes(freedSess);
+    if (frTotEl) updateStatText(frTotEl, fmtBytes(freedTot));
+    if (frSessEl) updateStatText(frSessEl, "Phiên này: " + fmtBytes(freedSess));
     if (frBar) {
       var frPct = freedTot > 0 ? Math.min(100, Math.max(8, (freedSess > 0 ? ((freedSess * 100) / freedTot) : 100))) : 0;
       frBar.style.width = frPct.toFixed(1) + "%";
@@ -1321,6 +1350,15 @@
     var stDot = document.getElementById("abStatusDot");
     var stTxt = document.getElementById("abStatusText");
     var qPos = bak.queuePosition || 0;
+    var outcome = bak.outcome || "";
+    var stage = running ? (bak.isPaused || qPos > 0 ? "waiting" : "running") : outcome || "idle";
+    var orbitTitles = {
+      idle: "Sẵn sàng đồng bộ", running: "Đang đồng bộ lên NAS", waiting: bak.isPaused ? "Đã tạm dừng đồng bộ" : "Đang chờ lượt đồng bộ",
+      done: "Đã hoàn tất đồng bộ", issues: "Đồng bộ còn tệp lỗi", failed: "Đồng bộ thất bại", cancelled: "Đã hủy đồng bộ"
+    };
+    var counts = running && bak.total > 0 ? fmtCount(bak.processed) + " / " + fmtCount(bak.total) + " tệp" : "";
+    if (running && qPos > 0) counts = "Vị trí hàng chờ: " + qPos;
+    window.NasBackupOrbit.render(stage, orbitTitles[stage] || "", counts);
     if (stDot) {
       stDot.classList.toggle("warn", !!(running && (bak.isPaused || qPos > 0)));
     }
@@ -1375,7 +1413,7 @@
           var tUp = bak.bytesWritten || 0;
           var tTot = bak.bytesTotal || 0;
           var tRem = bak.bytesRemaining != null ? bak.bytesRemaining : Math.max(0, tTot - tUp);
-          totBytesEl.textContent = "Đã tải: " + fmtBytes(tUp) + " • Còn lại: " + fmtBytes(tRem) + " / Tổng: " + fmtBytes(tTot);
+          updateStatText(totBytesEl, "Đã tải: " + fmtBytes(tUp) + " • Còn lại: " + fmtBytes(tRem) + " / Tổng: " + fmtBytes(tTot));
         }
 
         // Cập nhật Pipeline Ảnh (Photo Stream)
@@ -1391,15 +1429,15 @@
           var imgProc = Math.min(img.processed || 0, img.total || 0);
           var imgPct = img.total > 0 ? Math.min(100, (imgProc * 100) / img.total) : Math.min(100, Math.max(0, (img.progress || 0) * 100));
           if (imgFileEl) imgFileEl.textContent = "Ảnh: " + (img.currentFile || "Đang đợi...");
-          if (imgSpdEl) imgSpdEl.textContent = img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--";
+          if (imgSpdEl) updateStatText(imgSpdEl, img.speedBps > 0 ? (fmtBytes(img.speedBps) + "/s") : "--");
           if (imgFillEl) imgFillEl.style.width = imgPct.toFixed(1) + "%";
-          if (imgCntEl) imgCntEl.textContent = imgProc + " / " + (img.total || 0) + " ảnh • Còn " + fmtEtaSec(img.etaSeconds);
-          if (imgPctEl) imgPctEl.textContent = imgPct.toFixed(1) + "%";
+          if (imgCntEl) updateStatText(imgCntEl, imgProc + " / " + (img.total || 0) + " ảnh • Còn " + fmtEtaSec(img.etaSeconds));
+          if (imgPctEl) updateStatText(imgPctEl, imgPct.toFixed(1) + "%");
           if (imgBytesEl) {
             var iUp = img.bytesUploaded || 0;
             var iTot = img.bytesTotal || 0;
             var iRem = img.bytesRemaining != null ? img.bytesRemaining : Math.max(0, iTot - iUp);
-            imgBytesEl.textContent = "Đã tải: " + fmtBytes(iUp) + " • Còn lại: " + fmtBytes(iRem) + " / Tổng: " + fmtBytes(iTot);
+            updateStatText(imgBytesEl, "Đã tải: " + fmtBytes(iUp) + " • Còn lại: " + fmtBytes(iRem) + " / Tổng: " + fmtBytes(iTot));
           }
         }
 
@@ -1424,28 +1462,28 @@
             ? Math.min(100, Math.max(0, (vUp * 100) / vTot))
             : (vid.total > 0 ? Math.min(100, (vidProc * 100) / vid.total) : Math.min(100, Math.max(0, (vid.progress || 0) * 100)));
           if (vidFileEl) vidFileEl.textContent = "Video: " + (vid.currentFile || "Đang đợi...");
-          if (vidSpdEl) vidSpdEl.textContent = vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--";
+          if (vidSpdEl) updateStatText(vidSpdEl, vid.speedBps > 0 ? (fmtBytes(vid.speedBps) + "/s") : "--");
 
           // Tiến trình file video đang tải
           var bTotal = vid.bytesTotal || 0;
           var bWritten = vid.bytesWritten || 0;
           if (bTotal > 0) {
             var fPct = Math.min(100, Math.max(0, (vid.fileProgress != null && vid.fileProgress > 0) ? (vid.fileProgress * 100) : ((bWritten * 100) / bTotal)));
-            if (vidSizeEl) vidSizeEl.textContent = fmtBytes(bWritten) + " / " + fmtBytes(bTotal);
-            if (vidFilePctEl) vidFilePctEl.textContent = fPct.toFixed(1) + "%";
+            if (vidSizeEl) updateStatText(vidSizeEl, fmtBytes(bWritten) + " / " + fmtBytes(bTotal));
+            if (vidFilePctEl) updateStatText(vidFilePctEl, fPct.toFixed(1) + "%");
             if (vidFileFillEl) vidFileFillEl.style.width = fPct.toFixed(1) + "%";
           } else {
-            if (vidSizeEl) vidSizeEl.textContent = "-- / --";
-            if (vidFilePctEl) vidFilePctEl.textContent = "--";
+            if (vidSizeEl) updateStatText(vidSizeEl, "-- / --");
+            if (vidFilePctEl) updateStatText(vidFilePctEl, "--");
             if (vidFileFillEl) vidFileFillEl.style.width = "0%";
           }
 
           if (vidFillEl) vidFillEl.style.width = vidPct.toFixed(1) + "%";
-          if (vidCntEl) vidCntEl.textContent = "Tổng tiến trình: " + vidProc + " / " + (vid.total || 0) + " video • Còn " + fmtEtaSec(vid.etaSeconds);
-          if (vidPctEl) vidPctEl.textContent = vidPct.toFixed(1) + "%";
+          if (vidCntEl) updateStatText(vidCntEl, "Tổng tiến trình: " + vidProc + " / " + (vid.total || 0) + " video • Còn " + fmtEtaSec(vid.etaSeconds));
+          if (vidPctEl) updateStatText(vidPctEl, vidPct.toFixed(1) + "%");
           if (vidBytesEl) {
             var vRem = vid.bytesRemaining != null ? vid.bytesRemaining : Math.max(0, vTot - vUp);
-            vidBytesEl.textContent = "Đã tải: " + fmtBytes(vUp) + " • Còn lại: " + fmtBytes(vRem) + " / Tổng: " + fmtBytes(vTot);
+            updateStatText(vidBytesEl, "Đã tải: " + fmtBytes(vUp) + " • Còn lại: " + fmtBytes(vRem) + " / Tổng: " + fmtBytes(vTot));
           }
         }
       }
@@ -1510,13 +1548,26 @@
     refreshDockerModal();
     document.getElementById("dockerModal").classList.remove("hidden");
   }
+  var dockerRefreshSeenLoading = false;
   function refreshDockerModal() {
-    renderDockerModal(!!(bridge() && typeof bridge().fetchDocker === "function"));
+    var fetching = !!(bridge() && typeof bridge().fetchDocker === "function");
+    var feedback = window.NasButtonFeedback;
+    if (fetching && feedback) feedback.start("dockerRefreshBtn");
+    dockerRefreshSeenLoading = false;
+    renderDockerModal(fetching);
     callBridge("fetchDocker");
   }
   function renderDockerModal(fetching) {
     var c = document.getElementById("dockerListContainer");
     if (!c) return;
+    var feedback = window.NasButtonFeedback;
+    if (state && !fetching) {
+      if (state.dockerLoading) dockerRefreshSeenLoading = true;
+      else if (dockerRefreshSeenLoading) {
+        dockerRefreshSeenLoading = false;
+        if (feedback) feedback.finish("dockerRefreshBtn", !state.dockerLoadError);
+      }
+    }
     var list = (state && state.docker) || [];
     if (fetching || !state || state.dockerLoading || state.dockerLoadError || !list.length) {
       c.textContent = fetching || !state || state.dockerLoading ? "Đang tải danh sách container…" :
@@ -1720,7 +1771,7 @@
       return;
     }
     card.classList.remove("hidden");
-    if (cntEl) cntEl.textContent = count + " đang thực thi";
+    if (cntEl) updateStatText(cntEl, count + " đang thực thi");
     if (chev) chev.textContent = bgTasksExpanded ? "▴" : "▾";
     body.classList.toggle("hidden", !bgTasksExpanded);
     if (!bgTasksExpanded) return;
@@ -2064,14 +2115,12 @@
       });
     } else if (activeSubUi === "performance") {
       titleEl.textContent = "HIỆU NĂNG & MẠNG";
-      var pf = s.perf || {};
-      html += '<div class="list-item"><div class="list-title">Kết nối hiện tại</div><span class="badge">' + (s.connLabel || "NAS") + '</span></div>' +
-        '<div class="list-item"><div class="list-title">Độ trễ API</div><span class="badge">' + (pf.latencyMs || 0) + ' ms</span></div>' +
-        '<div class="list-item"><div class="list-title">Tốc độ Tải xuống</div><span class="badge" style="color:var(--ux-cyan);">' + (pf.dl || "--") + '</span></div>' +
-        '<div class="list-item"><div class="list-title">Tốc độ Tải lên</div><span class="badge" style="color:var(--ux-green);">' + (pf.ul || "--") + '</span></div>' +
-        '<button class="btn-pill primary" id="perfRunBtn" style="width:100%;margin-top:12px;">' + (pf.testing ? "Đang đo tốc độ..." : "Đo tốc độ LAN / Tailscale") + '</button>';
-      bodyEl.innerHTML = html;
-      document.getElementById("perfRunBtn").addEventListener("click", function () { callBridge("runSpeedTest"); showToast("Đang đo tốc độ mạng..."); });
+      if (!bodyEl.querySelector(".u277")) window.NasPerformanceGauge.mount(bodyEl, function () {
+        if (!bridge() || typeof bridge().runSpeedTest !== "function") return false;
+        callBridge("runSpeedTest");
+        return true;
+      });
+      window.NasPerformanceGauge.render(bodyEl, s.perf || {}, s.connLabel);
     } else if (activeSubUi === "lanWhitelist") {
       titleEl.textContent = "LAN WHITELIST";
       var wl = s.whitelist || {};
@@ -3293,7 +3342,10 @@
       callBridge("toggleSmb", !tb.smbEnabled);
       showToast("Đang chuyển trạng thái Samba...");
     });
-    document.getElementById("dockerCloseBtn").addEventListener("click", function () { document.getElementById("dockerModal").classList.add("hidden"); });
+    document.getElementById("dockerCloseBtn").addEventListener("click", function () {
+      document.getElementById("dockerModal").classList.add("hidden");
+      if (window.NasButtonFeedback) window.NasButtonFeedback.reset("dockerRefreshBtn");
+    });
     document.getElementById("dockerRefreshBtn").addEventListener("click", refreshDockerModal);
     document.getElementById("logsCloseBtn").addEventListener("click", function () { document.getElementById("logsModal").classList.add("hidden"); });
     document.getElementById("logsRefreshBtn").addEventListener("click", function () { callBridge("fetchLogs"); showToast("Đang tải nhật ký..."); });
@@ -3556,7 +3608,6 @@
     });
 
     // File Manager controls
-    document.getElementById("fileBackBtn").addEventListener("click", function () { callBridge("fileBack"); });
     document.getElementById("fileUploadBtn").addEventListener("click", function () { callBridge("pickUploadFiles"); });
     document.getElementById("fileSelectBtn").addEventListener("click", function () {
       selectMode = !selectMode;
@@ -3609,7 +3660,24 @@
       showToast("Chế độ xem: " + label);
       renderFiles();
     });
-    document.getElementById("fileSearchInput").addEventListener("input", function () { renderFiles(); });
+    document.getElementById("fileSearchInput").addEventListener("input", function () {
+      if (fileFilter === "timeline") renderFiles();
+      else requestFilePage(0);
+    });
+    document.getElementById("filesPrevPageBtn").addEventListener("click", function () {
+      var snapshot = activeFileSnapshot();
+      if (snapshot && snapshot.page > 0) {
+        requestFilePage(snapshot.page - 1);
+        window.scrollTo(0, 0);
+      }
+    });
+    document.getElementById("filesNextPageBtn").addEventListener("click", function () {
+      var snapshot = activeFileSnapshot();
+      if (snapshot && snapshot.offset + snapshot.items.length < snapshot.totalMatches) {
+        requestFilePage(snapshot.page + 1);
+        window.scrollTo(0, 0);
+      }
+    });
     document.getElementById("fileSearchInput").addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
         var kw = e.target.value.trim();
@@ -3623,8 +3691,10 @@
         if (fileFilter === "timeline") {
           timelineLoading = true;
           callBridge("fetchTimeline", 0);
+          renderFiles();
+        } else {
+          requestFilePage(0);
         }
-        renderFiles();
       });
     });
     document.querySelectorAll("[data-fsort]").forEach(function (btn) {
@@ -3875,7 +3945,8 @@
     },
     updateFiles: function (files) {
       fileSnapshot = files;
-      var sig = JSON.stringify([files.baseUrl, files.user, files.title, files.items]);
+      if (files.requestId === pendingFilePage) pendingFilePage = 0;
+      var sig = JSON.stringify([files.baseUrl, files.user, files.title, files.page, files.items]);
       if (sig !== fileRowsSignature) {
         fileRowsSignature = sig;
         fileRowsRevision++;

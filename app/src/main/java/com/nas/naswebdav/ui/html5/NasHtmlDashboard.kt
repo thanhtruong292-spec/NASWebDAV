@@ -63,6 +63,7 @@ fun NasHtmlDashboardScreen(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pageLoaded by remember { mutableStateOf(false) }
     var htmlModalOpen by remember { mutableStateOf(false) }
+    var filePageRequest by remember { mutableStateOf(Html5FilePageRequest()) }
     BackHandler(enabled = htmlModalOpen && pageLoaded && webViewRef != null) {
         webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.closeTopModal();", null)
     }
@@ -235,6 +236,9 @@ fun NasHtmlDashboardScreen(
         liveVM.isStartingLivestream,
         liveVM.tiktokLiveWatchUsers,
         autoBackupVM.isAutoBackupRunning,
+        autoBackupVM.autoBackupOutcome,
+        deviceVM.isTestingSpeed,
+        deviceVM.speedTestResult,
         autoBackupVM.autoBackupProcessedCount,
         autoBackupVM.autoBackupCurrentFile,
         autoBackupVM.autoBackupProgress,
@@ -288,12 +292,15 @@ fun NasHtmlDashboardScreen(
         val title = fileBrowserVM.specialTitle.takeIf { fileBrowserVM.isSpecialMode }.orEmpty()
         val loading = fileBrowserVM.isLoading
         val sort = fileBrowserVM.fileSort.collectAsState().value
-        LaunchedEffect(webViewRef, session, files, folder, title, loading, sort) {
+        val request = filePageRequest
+        val page = request.page.takeIf { request.folder == folder && request.baseUrl == session.baseUrl &&
+            request.user == session.user } ?: 0
+        LaunchedEffect(webViewRef, session, files, folder, title, loading, sort, request) {
             val payload = withContext(Dispatchers.Default) {
-                buildHtml5FilesJson(files, sort, folder, title, loading, session)
+                buildHtml5FilesJson(files, sort, folder, title, loading, session, request, page)
             }
             if (session == WebDavManager.currentAuthState() && folder == fileBrowserVM.currentUrl &&
-                files === fileBrowserVM.fileList) {
+                files === fileBrowserVM.fileList && request == filePageRequest) {
                 webViewRef?.evaluateJavascript("window.NasUI && window.NasUI.updateFiles($payload);", null)
             }
         }
@@ -405,6 +412,29 @@ fun NasHtmlDashboardScreen(
                             if (!fileBrowserVM.goBack()) {
                                 onAction("backToMenu", null)
                             }
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun openFileAncestor(index: Int, expectedFolder: String) {
+                        post {
+                            if (fileBrowserVM.isSpecialMode || expectedFolder != fileBrowserVM.currentUrl) return@post
+                            val crumbs = html5FileBreadcrumbs(WebDavManager.currentAuthState().baseUrl, expectedFolder)
+                            if (index !in 0 until crumbs.lastIndex) return@post
+                            fileBrowserVM.urlStack.clear()
+                            fileBrowserVM.urlStack.addAll(crumbs.take(index).map { it.second })
+                            fileBrowserVM.navigateToUrl(crumbs[index].second)
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun filePage(page: Int, query: String, filter: String, requestId: Int) {
+                        post {
+                            val currentSession = WebDavManager.currentAuthState()
+                            filePageRequest = Html5FilePageRequest(
+                                page.coerceAtLeast(0), query.take(512), filter, requestId,
+                                fileBrowserVM.currentUrl, currentSession.baseUrl, currentSession.user
+                            )
                         }
                     }
 
@@ -1132,13 +1162,46 @@ fun NasHtmlDashboardScreen(
     )
 }
 
+private fun html5FileBreadcrumbs(baseUrl: String, folderUrl: String): List<Pair<String, String>> = runCatching {
+    val base = java.net.URI(baseUrl)
+    val folder = java.net.URI(folderUrl.ifBlank { baseUrl })
+    if (!base.isAbsolute || base.host == null || !base.scheme.equals(folder.scheme, true) ||
+        !base.rawAuthority.equals(folder.rawAuthority, true) || folder.rawQuery != null || folder.rawFragment != null
+    ) return@runCatching emptyList()
+    val root = base.rawPath.trimEnd('/') + "/"
+    val path = folder.rawPath.trimEnd('/') + "/"
+    if (!path.startsWith(root)) return@runCatching emptyList()
+    val rootUrl = baseUrl.trimEnd('/') + "/"
+    var currentUrl = rootUrl
+    val result = mutableListOf("WebDAV" to rootUrl)
+    for (segment in path.removePrefix(root).split('/').filter { it.isNotEmpty() }) {
+        val name = java.net.URI("/$segment").path.substring(1)
+        if (name == "." || name == ".." || '/' in name || '\\' in name) return@runCatching emptyList()
+        currentUrl += "$segment/"
+        result.add(name to currentUrl)
+    }
+    result
+}.getOrDefault(emptyList())
+
+private data class Html5FilePageRequest(
+    val page: Int = 0,
+    val query: String = "",
+    val filter: String = "all",
+    val id: Int = 0,
+    val folder: String = "",
+    val baseUrl: String = "",
+    val user: String = ""
+)
+
 private fun buildHtml5FilesJson(
     files: List<NasFile>,
     sort: String,
     folder: String,
     specialTitle: String,
     loading: Boolean,
-    session: WebDavManager.AuthState
+    session: WebDavManager.AuthState,
+    request: Html5FilePageRequest,
+    requestedPage: Int
 ): String {
     val directoriesFirst = compareByDescending<NasFile> { it.isDirectory }
     val order = when (sort) {
@@ -1146,8 +1209,19 @@ private fun buildHtml5FilesJson(
         "size" -> directoriesFirst.thenByDescending { it.contentLength }
         else -> directoriesFirst.thenBy { it.name.lowercase() }
     }
+    val matches = files.filter { file ->
+        file.name.contains(request.query, ignoreCase = true) && when (request.filter) {
+            "dir" -> file.isDirectory
+            "image" -> !file.isDirectory &&
+                (com.nas.naswebdav.utils.MediaUtils.isImage(file.name) || file.name.endsWith(".heif", ignoreCase = true))
+            "video" -> !file.isDirectory && com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
+            else -> true
+        }
+    }
+    val pageSize = com.nas.naswebdav.browser.DIRECTORY_PREVIEW_SIZE
+    val page = requestedPage.coerceIn(0, (matches.size - 1).coerceAtLeast(0) / pageSize)
     val items = JSONArray()
-    for (file in files.sortedWith(order).take(com.nas.naswebdav.browser.DIRECTORY_PREVIEW_SIZE)) {
+    for (file in matches.sortedWith(order).drop(page * pageSize).take(pageSize)) {
         val relPath = runCatching {
             val path = java.net.URI(file.path).path ?: file.path
             val index = path.indexOf("/webdav/")
@@ -1165,8 +1239,12 @@ private fun buildHtml5FilesJson(
     val title = specialTitle.ifBlank {
         runCatching { java.net.URI(folder).path ?: "/webdav/" }.getOrDefault("/webdav/")
     }
+    val crumbs = if (specialTitle.isBlank()) html5FileBreadcrumbs(session.baseUrl, folder) else emptyList()
     return JSONObject().put("baseUrl", session.baseUrl).put("user", session.user)
-        .put("title", title).put("loading", loading).put("items", items).toString()
+        .put("breadcrumbs", JSONArray(crumbs.map { it.first })).put("folder", folder)
+        .put("title", title).put("loading", loading).put("items", items)
+        .put("totalMatches", matches.size).put("offset", page * pageSize)
+        .put("page", page).put("requestId", request.id).toString()
 }
 
 private fun buildHtml5StateJson(
@@ -1681,6 +1759,7 @@ private fun buildHtml5StateJson(
         })
         put("backup", JSONObject().apply {
             put("active", autoBackupVM.isAutoBackupRunning)
+            put("outcome", autoBackupVM.autoBackupOutcome)
             put("currentFile", autoBackupVM.autoBackupCurrentFile)
             put("sourcePath", autoBackupVM.autoBackupSourcePath)
             put("destPath", autoBackupVM.autoBackupDestPath)

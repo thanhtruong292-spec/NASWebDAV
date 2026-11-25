@@ -5,8 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>NAS WebDAV HTML5</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="stats-426.css" />
+  <link rel="stylesheet" href="tiles-420.css" />
+  <link rel="stylesheet" href="buttons-438.css" />
+  <link rel="stylesheet" href="breadcrumb-415.css" />
+  <link rel="stylesheet" href="storage-472.css" />
+  <link rel="stylesheet" href="sync-080.css" />
+  <link rel="stylesheet" href="performance-277.css" />
 </head>
-<body>
+<body class="u438">
   <!-- TOPBAR -->
   <div class="topbar">
     <div class="brand">
@@ -26,7 +33,7 @@
   <section id="view-dashboard">
     <div class="search-wrap">
       <svg class="svg-ico" style="color:var(--ux-text-3);" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="searchInput" type="search" placeholder="Tìm kiếm tệp trên NAS..." />
+      <input id="searchInput" type="search" aria-label="Tìm kiếm tệp trên NAS" placeholder="Tìm kiếm tệp trên NAS..." />
       <button class="btn-pill primary" id="searchBtn">Tìm</button>
     </div>
 
@@ -37,28 +44,28 @@
         <span class="badge"><span class="dot" id="sysDot"></span><span id="sysUpdated">Vừa cập nhật</span></span>
       </div>
       <div class="gauge-grid">
-        <div class="gauge" data-action="procCpu" role="button" tabindex="0">
+        <div class="u420 gauge" data-action="procCpu" role="button" tabindex="0">
           <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-green);" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/></svg>CPU</div>
-          <div class="gauge-val" id="cpuVal">--</div>
-          <div class="gauge-sub" id="cpuSub">--</div>
+          <div class="u426 gauge-val" id="cpuVal">--</div>
+          <div class="u426 gauge-sub" id="cpuSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="cpuBar" style="width:0%"></div></div>
         </div>
-        <div class="gauge" data-action="procMem" role="button" tabindex="0">
+        <div class="u420 gauge" data-action="procMem" role="button" tabindex="0">
           <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-blue);" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>RAM</div>
-          <div class="gauge-val" id="ramVal">--</div>
-          <div class="gauge-sub" id="ramSub">--</div>
+          <div class="u426 gauge-val" id="ramVal">--</div>
+          <div class="u426 gauge-sub" id="ramSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="ramBar" style="width:0%"></div></div>
         </div>
-        <div class="gauge" data-action="diskProfile" role="button" tabindex="0">
+        <div class="u420 gauge" data-action="diskProfile" role="button" tabindex="0">
           <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-orange);" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Ổ CỨNG</div>
-          <div class="gauge-val" id="diskVal">--</div>
-          <div class="gauge-sub" id="diskSub">--</div>
+          <div class="u426 gauge-val" id="diskVal">--</div>
+          <div class="u426 gauge-sub" id="diskSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="diskBar" style="width:0%"></div></div>
         </div>
-        <div class="gauge" data-action="smartDetails" role="button" tabindex="0">
+        <div class="u420 gauge" data-action="smartDetails" role="button" tabindex="0">
           <div class="gauge-top"><svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-green);" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>S.M.A.R.T</div>
-          <div class="gauge-val" id="smartVal">--</div>
-          <div class="gauge-sub" id="smartSub">--</div>
+          <div class="u426 gauge-val" id="smartVal">--</div>
+          <div class="u426 gauge-sub" id="smartSub">--</div>
           <div class="bar-track"><div class="bar-fill" id="smartBar" style="width:0%"></div></div>
         </div>
       </div>
@@ -69,7 +76,7 @@
             <svg class="svg-ico" id="fanSvgIco" style="width:14px;height:14px;color:var(--ux-cyan);" viewBox="0 0 24 24"><path d="M12 12c0-3 2.5-5 5-5 2 0 3.5 1.5 3.5 3.5 0 2.5-2.5 3.5-5 3.5"/><path d="M12 12c3 0 5 2.5 5 5 0 2-1.5 3.5-3.5 3.5-2.5 0-3.5-2.5-3.5-5"/><path d="M12 12c0 3-2.5 5-5 5-2 0-3.5-1.5-3.5-3.5 0-2.5 2.5-3.5 5-3.5"/><path d="M12 12c-3 0-5-2.5-5-5 0-2 1.5-3.5 3.5-3.5 2.5 0 3.5 2.5 3.5 5"/></svg>
             Quạt tản nhiệt
           </div>
-          <div style="font-size:11px;color:var(--ux-text-2);" id="fanStatusText">--</div>
+          <div style="font-size:11px;color:var(--ux-text-2);" class="u426" id="fanStatusText">--</div>
         </div>
         <div class="fan-modes">
           <button class="btn-pill" data-fan="off">Dừng</button>
@@ -81,12 +88,12 @@
       <div id="fanCustomBox" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,0.12);display:flex;flex-direction:column;gap:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">
           <span style="color:var(--ux-text-2);">Ngưỡng BẬT quạt (theo HDD)</span>
-          <b id="fanOnVal" style="color:var(--ux-cyan);font-variant-numeric:tabular-nums;">42°C</b>
+          <b class="u426" id="fanOnVal" style="color:var(--ux-cyan);font-variant-numeric:tabular-nums;">42°C</b>
         </div>
         <input id="fanOnSlider" type="range" min="32" max="58" step="1" value="42" style="width:100%;accent-color:var(--ux-cyan);" />
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">
           <span style="color:var(--ux-text-2);">Ngưỡng TẮT quạt (khi nguội)</span>
-          <b id="fanOffVal" style="color:var(--ux-green);font-variant-numeric:tabular-nums;">40°C</b>
+          <b class="u426" id="fanOffVal" style="color:var(--ux-green);font-variant-numeric:tabular-nums;">40°C</b>
         </div>
         <input id="fanOffSlider" type="range" min="28" max="55" step="1" value="40" style="width:100%;accent-color:var(--ux-green);" />
         <div style="display:flex;gap:6px;margin-top:2px;">
@@ -101,7 +108,7 @@
       <div class="card-header" id="bgTasksHeader" style="cursor:pointer;">
         <span class="card-title">TÁC VỤ NỀN</span>
         <div style="display:flex;align-items:center;gap:6px;">
-          <span class="badge" id="bgTasksCount" style="color:var(--ux-green);">0 đang chạy</span>
+          <span class="u426 badge" id="bgTasksCount" style="color:var(--ux-green);">0 đang chạy</span>
           <span id="bgTasksChevron" style="color:var(--ux-text-2);font-size:12px;">▾</span>
         </div>
       </div>
@@ -140,31 +147,31 @@
 
     <!-- Quick Access Grid & Toolbox Button (CHUYỂN XUỐNG DƯỚI HỆ THỐNG & GIÁM SÁT) -->
     <div class="qa-grid">
-      <div class="qa-item" data-action="files" role="button" tabindex="0">
+      <div class="u420 qa-item" data-action="files" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-orange);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
         <div class="qa-lbl">Tệp</div>
       </div>
-      <div class="qa-item" data-action="photos" role="button" tabindex="0">
+      <div class="u420 qa-item" data-action="photos" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-blue);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
         <div class="qa-lbl">Ảnh mới</div>
       </div>
-      <div class="qa-item" data-action="videos" role="button" tabindex="0">
+      <div class="u420 qa-item" data-action="videos" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-purple);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg></div>
         <div class="qa-lbl">Video mới</div>
       </div>
-      <div class="qa-item" data-action="trash" role="button" tabindex="0">
+      <div class="u420 qa-item" data-action="trash" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></div>
         <div class="qa-lbl">Thùng rác</div>
       </div>
     </div>
 
-    <button class="wide-btn" data-action="toolbox">
+    <button class="u420 wide-btn" data-action="toolbox">
       <svg class="svg-ico" style="color:var(--ux-cyan);" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       <span>Công cụ &amp; Cài đặt</span>
     </button>
 
     <!-- Storage Card -->
-    <div class="card" id="storageCard">
+    <div class="card u472" id="storageCard">
       <div class="card-header">
         <span class="card-title">LƯU TRỮ • WebDAV đã quét</span>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -174,8 +181,13 @@
           </button>
         </div>
       </div>
-      <div class="storage-head" id="storageSummaryLine">Đang đọc dữ liệu catalogue...</div>
-      <div id="storageCategories"></div>
+      <div class="u426 storage-head" id="storageSummaryLine">Đang đọc dữ liệu catalogue...</div>
+      <div class="u472-sw">
+        <p class="u472-us" id="storageTotalBytes">--</p>
+        <p class="u472-si" aria-hidden="true"><i></i><span></span><b></b><em></em></p>
+      </div>
+      <div class="u472-bar" id="storageMeter" aria-hidden="true"></div>
+      <ul class="u472-lg" id="storageCategories" aria-label="Nhóm dung lượng"></ul>
       <div style="font-size:10.5px;font-weight:800;color:var(--ux-text-3);margin:9px 0 4px;letter-spacing:0.9px;">FILE LỚN NHẤT</div>
       <div id="storageLargest"></div>
     </div>
@@ -188,7 +200,7 @@
           <span class="card-title">NHẬT KÝ HỆ THỐNG</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
-          <span class="badge" id="dashLogsBadge">0 log</span>
+          <span class="u426 badge" id="dashLogsBadge">0 log</span>
           <button class="zoom-btn" id="dashLogsRefreshBtn" title="Làm mới">↻</button>
           <button class="zoom-btn" id="dashLogsClearBtn" title="Xóa nhật ký">🗑</button>
           <span id="dashLogsChevron" style="color:var(--ux-text-2);font-size:12px;padding:0 2px;">▾</span>
@@ -213,52 +225,52 @@
   <!-- VIEW: APPS -->
   <section id="view-apps" class="hidden">
     <div class="app-grid">
-      <div class="app-tile" data-action="organizer" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="organizer" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg></div>
         <div class="app-tile-title">Phân loại Tệp AI</div>
         <div class="app-tile-sub">Sắp xếp ảnh/video thông minh</div>
       </div>
-      <div class="app-tile" data-action="social" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="social" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-pink);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
         <div class="app-tile-title">Tải Video MXH</div>
         <div class="app-tile-sub">TikTok, Douyin, YouTube, FB</div>
       </div>
-      <div class="app-tile" data-action="livestream" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="livestream" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg></div>
         <div class="app-tile-title">Ghi Live TikTok</div>
         <div class="app-tile-sub">Ghi hình trực tuyến</div>
       </div>
-      <div class="app-tile" data-action="backup" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="backup" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg></div>
         <div class="app-tile-title">Đồng bộ File</div>
         <div class="app-tile-sub">Auto Backup lên NAS</div>
       </div>
-      <div class="app-tile" data-action="duplicate" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="duplicate" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-purple);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></div>
         <div class="app-tile-title">Quét Trùng Lặp</div>
         <div class="app-tile-sub">Tìm &amp; dọn ảnh/video trùng</div>
       </div>
-      <div class="app-tile" data-action="usbImport" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="usbImport" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2v14"/><polyline points="8 6 12 2 16 6"/><rect x="6" y="16" width="12" height="5" rx="2"/></svg></div>
         <div class="app-tile-title">Nhập từ USB</div>
         <div class="app-tile-sub">Chép dữ liệu USB vào NAS</div>
       </div>
-      <div class="app-tile" data-action="guest" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="guest" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-yellow);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></div>
         <div class="app-tile-title">Khách WebDAV</div>
         <div class="app-tile-sub">Cấp quyền truy cập tạm thời</div>
       </div>
-      <div class="app-tile" data-action="screenRecord" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="screenRecord" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></div>
         <div class="app-tile-title">Quay màn hình</div>
         <div class="app-tile-sub">Lưu trực tiếp lên NAS</div>
       </div>
-      <div class="app-tile" data-action="files" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="files" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-orange);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
         <div class="app-tile-title">Quản lý Tệp</div>
         <div class="app-tile-sub">Duyệt, phát video &amp; ảnh Native</div>
       </div>
-      <div class="app-tile" data-action="toolbox" role="button" tabindex="0">
+      <div class="u420 app-tile" data-action="toolbox" role="button" tabindex="0">
         <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
         <div class="app-tile-title">Hộp công cụ NAS</div>
         <div class="app-tile-sub">Samba, Docker, Lịch ngủ, Log</div>
@@ -271,9 +283,9 @@
     <div class="card">
       <div class="card-header">
         <span class="card-title">THUMBNAIL DAEMON</span>
-        <span class="badge" id="thumbStatusBadge">--</span>
+        <span class="u426 badge" id="thumbStatusBadge">--</span>
       </div>
-      <div style="font-size:13px;font-weight:700;margin-bottom:6px;" id="thumbDetailText">Đang tải trạng thái...</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px;" class="u426" id="thumbDetailText">Đang tải trạng thái...</div>
       <div class="bar-track" style="margin-bottom:10px;"><div class="bar-fill" id="thumbBar" style="width:0%;background:var(--ux-cyan);"></div></div>
       <div style="display:flex;gap:8px;">
         <button class="btn-pill primary" data-thumb="scan">Quét ngay</button>
@@ -296,7 +308,7 @@
       <div class="list-item" data-action="diskProfile" role="button" tabindex="0">
         <div>
           <div class="list-title">Hồ sơ Ổ đĩa &amp; S.M.A.R.T</div>
-          <div class="list-sub" id="sysSmartLine">--</div>
+          <div class="u426 list-sub" id="sysSmartLine">--</div>
         </div>
         <span class="badge">Chi tiết ▸</span>
       </div>
@@ -402,14 +414,13 @@
     <div class="files-bar">
       <!-- Hàng 1: Điều hướng & Đường dẫn thư mục -->
       <div class="files-path-bar">
-        <button class="btn-icon files-nav-back" id="fileBackBtn" title="Quay lại thư mục cha" aria-label="Quay lại">
-          <svg class="svg-ico" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <div class="files-path-box">
-          <svg class="svg-ico path-ico" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-          <div class="files-path-text" id="filesPathTitle">/webdav/</div>
+        <div class="u415">
+          <nav class="u415-bc" aria-label="Đường dẫn thư mục">
+            <ol class="u415-ol" id="filesBreadcrumbs"></ol>
+            <span class="u415-cur" id="filesPathTitle" tabindex="0" aria-current="location">/webdav/</span>
+          </nav>
         </div>
-        <span class="files-count-badge" id="filesCountBadge">0</span>
+        <span class="u426 files-count-badge" id="filesCountBadge">0</span>
       </div>
 
       <!-- Hàng 2: Thanh công cụ thao tác tệp tinh tế Clean Slate Glass -->
@@ -447,8 +458,13 @@
       </div>
     </div>
     <div id="filesContainer"></div>
+    <nav class="hidden files-pager" id="filesPager" aria-label="Trang danh sách tệp">
+      <button type="button" class="btn-pill" id="filesPrevPageBtn">Trang trước</button>
+      <span class="u426" id="filesPageRange" role="status"></span>
+      <button type="button" class="btn-pill" id="filesNextPageBtn">Trang sau</button>
+    </nav>
     <div id="batchActionBar" class="batch-bar hidden">
-      <span id="batchCountText" style="font-size:12px;font-weight:800;color:var(--ux-cyan);">0 mục</span>
+      <span class="u426" id="batchCountText" style="font-size:12px;font-weight:800;color:var(--ux-cyan);">0 mục</span>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button class="btn-pill" id="batchShareBtn">Chia sẻ</button>
         <button class="btn-pill primary" id="batchDownloadBtn">Tải về</button>
@@ -574,7 +590,7 @@
         <div id="modalDetailsContainer" class="hidden" style="background:rgba(15,23,42,0.6);border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:10px 12px;margin-bottom:4px;font-size:12px;line-height:1.6;color:var(--ux-text-2);">
           <div><strong style="color:var(--ux-text);">Tên:</strong> <span id="detFileName" style="word-break:break-all;"></span></div>
           <div><strong style="color:var(--ux-text);">Đường dẫn:</strong> <span id="detFilePath" style="word-break:break-all;color:var(--ux-cyan);"></span></div>
-          <div><strong style="color:var(--ux-text);">Dung lượng:</strong> <span id="detFileSize"></span></div>
+          <div><strong style="color:var(--ux-text);">Dung lượng:</strong> <span class="u426" id="detFileSize"></span></div>
           <div><strong style="color:var(--ux-text);">Thời gian sửa:</strong> <span id="detFileDate"></span></div>
         </div>
       </div>
@@ -643,97 +659,97 @@
 
       <!-- Grid các thẻ công cụ 2 cột -->
       <div class="app-grid" style="gap:8px;">
-        <div class="app-tile" data-tbact="backup" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="backup" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Auto Backup</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Sao lưu ảnh/video lên NAS</div>
         </div>
 
-        <div class="app-tile" data-tbact="duplicate" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="duplicate" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-purple);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Dọn Trùng Lặp</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Động cơ Rust 3 tầng</div>
         </div>
 
-        <div class="app-tile" data-tbact="livestream" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="livestream" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Ghi Livestream</div>
           <div class="app-tile-sub" style="font-size:10.5px;">TikTok, FB, YouTube</div>
         </div>
 
-        <div class="app-tile" data-tbact="usbImport" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="usbImport" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 2v14"/><polyline points="8 6 12 2 16 6"/><rect x="6" y="16" width="12" height="5" rx="2"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Nhập từ USB</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Chép trực tiếp vào NAS</div>
         </div>
 
-        <div class="app-tile" data-tbact="smb" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="smb" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-blue);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Chia sẻ Samba</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Mạng Windows / Mac</div>
         </div>
 
-        <div class="app-tile" data-tbact="docker" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="docker" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Docker Container</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Start / Stop container</div>
         </div>
 
-        <div class="app-tile" data-tbact="logs" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="logs" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-orange);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Nhật Ký NAS</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Log cảnh báo &amp; lỗi</div>
         </div>
 
-        <div class="app-tile" data-tbact="nasBackup" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="nasBackup" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-yellow);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Sao Lưu Cấu Hình</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Backup hệ thống NAS</div>
         </div>
 
-        <div class="app-tile" data-tbact="sleepSchedule" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="sleepSchedule" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-pink);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Lịch Ngủ Tiết Kiệm</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Tắt/ngủ NAS ban đêm</div>
         </div>
 
-        <div class="app-tile" data-tbact="bandwidth" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="bandwidth" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-cyan);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Giới Hạn Tốc Độ</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Băng thông tải lên</div>
         </div>
 
-        <div class="app-tile" data-tbact="download" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="download" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-green);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Tải qBittorrent</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Tải link &amp; torrent</div>
         </div>
 
-        <div class="app-tile" data-tbact="lanWhitelist" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="lanWhitelist" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-purple);"><svg class="svg-ico" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">LAN Whitelist</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Dải IP tin cậy</div>
         </div>
 
-        <div class="app-tile" data-tbact="failedUploads" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="failedUploads" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Tệp Tải Lỗi</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Xem &amp; thử lại file hỏng</div>
         </div>
 
-        <div class="app-tile" data-tbact="photos" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="photos" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-blue);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Ảnh Mới Nhất</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Xem ảnh vừa đồng bộ</div>
         </div>
 
-        <div class="app-tile" data-tbact="videos" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="videos" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-orange);"><svg class="svg-ico" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Video Gần Đây</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Xem video trên NAS</div>
         </div>
 
-        <div class="app-tile" data-tbact="trash" role="button" tabindex="0" style="padding:10px;">
+        <div class="u420 app-tile" data-tbact="trash" role="button" tabindex="0" style="padding:10px;">
           <div class="qa-ico-box" style="color:var(--ux-red);"><svg class="svg-ico" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></div>
           <div class="app-tile-title" style="margin-top:6px;font-size:12.5px;">Thùng Rác</div>
           <div class="app-tile-sub" style="font-size:10.5px;">Khôi phục hoặc dọn dẹp</div>
@@ -781,23 +797,33 @@
       </div>
 
       <!-- Thông tin thiết bị & bộ nhớ điện thoại (2x1 Gauge Grid chuẩn HTML5) -->
+      <div class="u080 hidden" id="backupOrbit">
+        <div class="u080-sys" aria-hidden="true">
+          <div class="u080-o" style="--d:210px;--t:-18deg"></div>
+          <div class="u080-o" style="--d:150px;--t:24deg"></div>
+          <div class="u080-o" style="--d:100px;--t:-58deg"></div>
+          <span class="u080-wave"></span>
+          <span class="u080-core"><svg viewBox="0 0 34 34"><path d="M9 17.5l5.5 5.5L25.5 12"/></svg></span>
+        </div>
+        <div class="u080-msg" role="status"><div class="u080-t"><b></b></div><p class="u080-sub"></p></div>
+      </div>
       <div class="gauge-grid" id="abStorageBox" style="margin-bottom:10px;">
-        <div class="gauge" style="cursor:default;">
+        <div class="u420 gauge" style="cursor:default;">
           <div class="gauge-top">
             <svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-cyan);" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
             <span>BỘ NHỚ MÁY</span>
           </div>
-          <div class="gauge-val" id="abStorageText">--</div>
+          <div class="u426 gauge-val" id="abStorageText">--</div>
           <div class="gauge-sub" id="abDeviceLine">--</div>
           <div class="bar-track"><div class="bar-fill" id="abStorageBar" style="width:0%;background:var(--ux-cyan);"></div></div>
         </div>
-        <div class="gauge" style="cursor:default;">
+        <div class="u420 gauge" style="cursor:default;">
           <div class="gauge-top">
             <svg class="svg-ico" style="width:14px;height:14px;color:var(--ux-green);" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
             <span>ĐÃ GIẢI PHÓNG</span>
           </div>
-          <div class="gauge-val" id="abFreedTotalLine" style="color:var(--ux-green);">0 B</div>
-          <div class="gauge-sub" id="abFreedSessionLine">Phiên này: 0 B</div>
+          <div class="u426 gauge-val" id="abFreedTotalLine" style="color:var(--ux-green);">0 B</div>
+          <div class="u426 gauge-sub" id="abFreedSessionLine">Phiên này: 0 B</div>
           <div class="bar-track"><div class="bar-fill" id="abFreedBar" style="width:0%;background:var(--ux-green);"></div></div>
         </div>
       </div>
@@ -805,7 +831,7 @@
       <div id="abProgressBox" class="hidden" style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:10px 11px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <div id="abFileLine" style="font-size:12px;font-weight:700;color:var(--ux-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">Đang chuẩn bị...</div>
-          <span class="badge" id="abSpeedBadge" style="color:var(--ux-green);">--</span>
+          <span class="u426 badge" id="abSpeedBadge" style="color:var(--ux-green);">--</span>
         </div>
         <div id="abPathLine" style="font-size:11px;color:var(--ux-text-3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
         
@@ -816,14 +842,14 @@
               <svg class="svg-ico" style="width:13px;height:13px;color:var(--ux-cyan);" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               <span id="abImageFile" style="overflow:hidden;text-overflow:ellipsis;">Ảnh: Đang đợi...</span>
             </span>
-            <span id="abImageSpeed" style="font-variant-numeric:tabular-nums;font-weight:700;">--</span>
+            <span class="u426" id="abImageSpeed" style="font-variant-numeric:tabular-nums;font-weight:700;">--</span>
           </div>
           <div class="bar-track" style="margin:5px 0;"><div class="bar-fill" id="abImageProgFill" style="width:0%;background:var(--ux-cyan);"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
-            <span id="abImageCount">0 / 0 ảnh</span>
-            <b id="abImagePct" style="color:var(--ux-cyan);">0.0%</b>
+            <span class="u426" id="abImageCount">0 / 0 ảnh</span>
+            <b class="u426" id="abImagePct" style="color:var(--ux-cyan);">0.0%</b>
           </div>
-          <div id="abImageBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
+          <div class="u426" id="abImageBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
         </div>
 
         <!-- Pipeline Video (Video Direct) -->
@@ -833,35 +859,35 @@
               <svg class="svg-ico" style="width:13px;height:13px;color:var(--ux-yellow);" viewBox="0 0 24 24"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="22 7 17 12 22 17 22 7"/></svg>
               <span id="abVideoFile" style="overflow:hidden;text-overflow:ellipsis;">Video: Đang đợi...</span>
             </span>
-            <span id="abVideoSpeed" style="font-variant-numeric:tabular-nums;font-weight:700;">--</span>
+            <span class="u426" id="abVideoSpeed" style="font-variant-numeric:tabular-nums;font-weight:700;">--</span>
           </div>
 
           <!-- Tiến trình file video đang tải lên -->
           <div id="abVideoFileBox" style="margin-top:6px;">
             <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
-              <span>Tệp hiện tại: <span id="abVideoFileSize" style="color:var(--ux-text-1);">-- / --</span></span>
-              <span id="abVideoFilePct" style="color:var(--ux-yellow);font-weight:700;">--</span>
+              <span>Tệp hiện tại: <span class="u426" id="abVideoFileSize" style="color:var(--ux-text-1);">-- / --</span></span>
+              <span class="u426" id="abVideoFilePct" style="color:var(--ux-yellow);font-weight:700;">--</span>
             </div>
             <div class="bar-track" style="margin:3px 0 6px;height:4px;"><div class="bar-fill" id="abVideoFileProgFill" style="width:0%;background:var(--ux-yellow);"></div></div>
           </div>
 
           <!-- Tiến trình tổng dung lượng video -->
           <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
-            <span id="abVideoCount">Tổng tiến trình: 0 / 0 video</span>
-            <b id="abVideoPct" style="color:var(--ux-yellow);">0.0%</b>
+            <span class="u426" id="abVideoCount">Tổng tiến trình: 0 / 0 video</span>
+            <b class="u426" id="abVideoPct" style="color:var(--ux-yellow);">0.0%</b>
           </div>
           <div class="bar-track" style="margin:3px 0 4px;"><div class="bar-fill" id="abVideoProgFill" style="width:0%;background:rgba(255,196,0,0.55);"></div></div>
-          <div id="abVideoBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
+          <div class="u426" id="abVideoBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
         </div>
 
         <!-- Tổng hợp -->
         <div id="abTotalSummaryBox">
           <div class="bar-track" style="margin:10px 0 6px;"><div class="bar-fill" id="abProgFill" style="width:0%;background:var(--ux-green);"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ux-text-2);font-variant-numeric:tabular-nums;">
-            <span id="abCountLine">Tổng: 0 / 0 tệp</span>
+            <span class="u426" id="abCountLine">Tổng: 0 / 0 tệp</span>
             <b id="abPctLine" style="color:var(--ux-green);">0.0%</b>
           </div>
-          <div id="abTotalBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
+          <div class="u426" id="abTotalBytesLine" style="font-size:10.5px;color:var(--ux-text-3);margin-top:2px;font-variant-numeric:tabular-nums;">Đã tải: 0 B • Còn lại: 0 B / Tổng: 0 B</div>
         </div>
       </div>
 
@@ -869,7 +895,7 @@
       <div id="abDevicesBox" class="hidden" style="background:rgba(9,14,28,0.72);border:1px solid rgba(148,163,184,0.11);border-radius:var(--ux-radius-inner);padding:10px 11px;margin-bottom:10px;">
         <div class="card-header" style="margin-bottom:8px;">
           <span class="card-title">ĐA THIẾT BỊ TRÊN NAS</span>
-          <span class="badge" id="abDevicesCountBadge" style="color:var(--ux-cyan);">0 máy</span>
+          <span class="u426 badge" id="abDevicesCountBadge" style="color:var(--ux-cyan);">0 máy</span>
         </div>
         <div id="abDevicesList" style="display:flex;flex-direction:column;gap:6px;"></div>
       </div>
@@ -1002,7 +1028,7 @@
         <div style="flex:1;min-width:0;padding-right:8px;">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
             <span class="badge" id="dupPrevTypeBadge" style="font-size:10.5px;">--</span>
-            <span id="dupPrevSizeBadge" style="font-size:11px;color:var(--ux-cyan);font-weight:700;">--</span>
+            <span class="u426" id="dupPrevSizeBadge" style="font-size:11px;color:var(--ux-cyan);font-weight:700;">--</span>
           </div>
           <div class="card-title" id="dupPrevTitle" style="font-size:13px;word-break:break-all;line-height:1.3;">--</div>
           <div class="list-sub" id="dupPrevFolder" style="font-size:10.5px;margin-top:2px;">--</div>
@@ -1093,7 +1119,13 @@
     </div>
   </div>
 
-  <div class="ux-toast" id="uxToast"></div>
+  <div class="ux-toast" id="uxToast" role="status" aria-atomic="true"></div>
+  <script src="buttons-438.js"></script>
+  <script src="breadcrumb-415.js"></script>
+  <script src="storage-472.js"></script>
+  <script src="sync-080.js"></script>
+  <script src="performance-277.js"></script>
   <script src="app.js"></script>
+  <script src="stats-426.js"></script>
 </body>
 </html>

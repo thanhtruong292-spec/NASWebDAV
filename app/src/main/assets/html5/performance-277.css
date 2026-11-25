@@ -1,0 +1,34 @@
+/* Lucian UX/UI Prompt #277 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#277 */
+.u277{position:relative;width:340px;height:340px;border-radius:30px;overflow:hidden;background:radial-gradient(120% 80% at 50% 0%,#1E2450,#0D1024 70%);box-shadow:0 0 0 1px var(--ux-border),0 30px 60px -36px rgba(0,0,0,.6);color:#EEF0FF}
+.u277-sv{position:absolute;left:40px;top:14px;width:260px;height:210px;overflow:visible}
+.u277-tl{font-size:9px;font-weight:800;fill:#7C82B8;text-anchor:middle;font-variant-numeric:tabular-nums}
+.u277-nd{transition:opacity .4s}
+.u277.is-idle .u277-nd{opacity:0}
+.u277-ro{position:absolute;left:0;right:0;top:160px;text-align:center;pointer-events:none;transition:opacity .3s}
+.u277.is-idle .u277-ro{opacity:0}
+.u277-num{font-size:30px;font-weight:900;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.u277-ph{margin-top:3px;font-size:10px;font-weight:800;letter-spacing:.06em;color:#9AA0D6}
+.u277-go{position:absolute;left:50%;top:144px;width:94px;height:94px;margin:-47px 0 0 -47px;border:0;border-radius:50%;background:radial-gradient(circle at 50% 35%,#4F46E5,#312E81);color:#fff;font:inherit;font-size:18px;font-weight:900;letter-spacing:.04em;cursor:pointer;box-shadow:0 0 0 2px #22D3EE,0 0 30px -4px rgba(34,211,238,.7);transition:transform .45s cubic-bezier(.3,1.4,.5,1),opacity .3s,top .45s,width .45s,height .45s,margin .45s,border-radius .45s,font-size .3s}
+.u277.is-idle .u277-go{animation:u277-pu 1.8s ease-in-out infinite}
+@keyframes u277-pu{50%{box-shadow:0 0 0 2px #22D3EE,0 0 0 12px rgba(34,211,238,0),0 0 40px -2px rgba(34,211,238,.8)}}
+.u277.is-run .u277-go{transform:scale(.2);opacity:0;pointer-events:none}
+.u277.is-done .u277-go{top:224px;width:96px;height:28px;margin:-14px 0 0 -48px;border-radius:999px;font-size:11.5px;letter-spacing:0;box-shadow:0 0 0 1px rgba(34,211,238,.6)}
+.u277-go:focus-visible{outline:2px solid #fff;outline-offset:4px}
+.u277-ts{position:absolute;left:18px;right:18px;bottom:16px;display:grid;grid-template-columns:.8fr 1fr 1fr;gap:8px}
+.u277-t{height:66px;padding:8px 10px;border-radius:14px;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);transition:box-shadow .3s}
+.u277-t.is-act{box-shadow:inset 0 0 0 1.5px var(--c)}
+.u277-t span{display:flex;align-items:center;gap:4px;font-size:9.5px;font-weight:800;color:#9AA0D6;letter-spacing:.04em}
+.u277-t span i{width:7px;height:7px;border-radius:50%;background:var(--c)}
+.u277-t b{display:block;margin-top:2px;font-size:17px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.u277-t b small{font-size:9px;font-weight:800;color:#9AA0D6;margin-left:2px}
+.u277-t svg{display:block;width:100%;height:14px;margin-top:2px}
+@media (prefers-reduced-motion: reduce){.u277.is-idle .u277-go{animation:none}}
+.u277{width:min(100%, 340px);margin-inline:auto;box-sizing:border-box}
+.u277 .u277-sv{left:50%;translate:-50% 0;max-width:100%}
+.u277 .u277-ts{left:8px;right:8px;gap:5px}
+.u277 .u277-t{min-width:0;padding:8px 6px}
+.u277 .u277-t b{font-size:13px;overflow-wrap:anywhere}
+.u277 .u277-g{max-width:100%}
+.u277 [aria-live]{font-variant-numeric:tabular-nums}
+
+@media (prefers-reduced-motion:reduce){.u277,.u277 *{animation:none!important;transition:none!important}}

@@ -78,12 +78,14 @@ class AuthSessionViewModel(
         user: String,
         pass: String,
         onSuccess: () -> Unit = {},
+        onFailure: ((String, Boolean) -> Unit)? = null,
         onError: (String) -> Unit = {}
     ) {
         loginJob?.cancel()
         isLoading = true
         loginJob = viewModelScope.launch {
             var lastErrorDetail = "Không rõ"
+            var rejectedCredentials = false
 
             withContext(Dispatchers.Main) {
                 SharedStateHolder.updateConnectionStatus(ConnectionStatus.CheckingLan)
@@ -129,6 +131,7 @@ class AuthSessionViewModel(
                                 recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
                                 successUrl = safeUrl
                             } else {
+                                if (response.code == 401) rejectedCredentials = true
                                 errorDetails.add("$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})")
                             }
                         }
@@ -191,7 +194,8 @@ class AuthSessionViewModel(
                     onSuccess()
                 } else {
                     SharedStateHolder.updateConnectionStatus(ConnectionStatus.AuthFailed)
-                    onError(lastErrorDetail)
+                    if (onFailure != null) onFailure(lastErrorDetail, rejectedCredentials)
+                    else onError(lastErrorDetail)
                 }
             }
 

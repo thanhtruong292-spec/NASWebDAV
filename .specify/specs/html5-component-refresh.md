@@ -1,0 +1,3 @@
+# HTML5 dashboard component refresh
+
+Use Lucian UX/UI Prompt patterns 214, 472, 435 and 440 for the dashboard grid, storage breakdown, toast and empty states. Use a single column on phones and a two-column dashboard on wider screens. Keep file tools usable at narrow widths and let long locations scroll horizontally. The storage bar represents the byte distribution among the displayed catalogue categories. Keep the individual counts and byte totals visible. Preserve Android bridge contracts, view IDs, and existing file actions. Verify the layout and controls in Chromium with synthetic data and run the repository Python tests.

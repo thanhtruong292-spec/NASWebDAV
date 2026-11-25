@@ -50,6 +50,9 @@ class AutoBackupViewModel(
 
     // ═══ AUTO BACKUP STATE ═══
 
+    var autoBackupOutcome by androidx.compose.runtime.mutableStateOf("")
+        private set
+
     var isAutoBackupRunning by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var autoBackupCurrentFile by androidx.compose.runtime.mutableStateOf("")
@@ -178,6 +181,7 @@ class AutoBackupViewModel(
         // Cập nhật trạng thái Auto Backup từ WorkManager
         viewModelScope.launch {
             try {
+                var observedWorkId: java.util.UUID? = null
                 androidx.work.WorkManager.getInstance(NasApplication.instance.applicationContext)
                     .getWorkInfosByTagFlow("com.nas.naswebdav.AutoBackupWorker").collect { workInfos ->
                         val workInfo = workInfos.find {
@@ -187,6 +191,8 @@ class AutoBackupViewModel(
                                 it.tags.contains("MANUAL_AUTO_BACKUP")
                         }
                         if (workInfo != null) {
+                            observedWorkId = workInfo.id
+                            autoBackupOutcome = ""
                             isAutoBackupRunning = true
                             autoBackupProgress = workInfo.progress.getFloat("progress", 0f)
                             autoBackupCurrentFile = workInfo.progress.getString("fileName") ?: "Đang sao lưu..."
@@ -237,6 +243,17 @@ class AutoBackupViewModel(
 
                             autoBackupIsPaused = com.nas.naswebdav.AutoBackupState.isPaused.value
                         } else {
+                            val finished = workInfos.firstOrNull { it.id == observedWorkId && it.state.isFinished }
+                            if (finished != null) {
+                                autoBackupOutcome = when (finished.state) {
+                                    androidx.work.WorkInfo.State.SUCCEEDED ->
+                                        if (com.nas.naswebdav.AutoBackupState.resultFailed.value > 0) "issues" else "done"
+                                    androidx.work.WorkInfo.State.CANCELLED -> "cancelled"
+                                    androidx.work.WorkInfo.State.FAILED -> "failed"
+                                    else -> ""
+                                }
+                                observedWorkId = null
+                            }
                             isAutoBackupRunning = false
                             nasQueuePosition = 0
                             refreshPhoneStorage()

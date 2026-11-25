@@ -18,7 +18,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.nas.naswebdav.*
-import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.utils.PreferencesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -57,7 +56,6 @@ fun NasHtmlLoginScreen(onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val authVM = LocalAuthSessionVM.current
-    val globalUiVM = LocalGlobalUiVM.current
     val prefsRepo = remember(context) { PreferencesRepository.get(context) }
 
     val rawHistory = remember { runCatching { SecurePrefsHelper.getUrlList(context) }.getOrElse { emptyList() } }
@@ -196,32 +194,56 @@ fun NasHtmlLoginScreen(onLoginSuccess: () -> Unit) {
                                     scheduleIdleDuplicateScan(context, fullUrlList.first())
                                     scheduleIdleSpeedTest(context, fullUrlList.first())
                                     scheduleFingerprintWorker(context)
-                                    onLoginSuccess()
+                                    evaluateJavascript("window.NasLoginUI && window.NasLoginUI.showLoginSuccess()") { result ->
+                                        postDelayed({ onLoginSuccess() }, result?.toLongOrNull() ?: 0L)
+                                    }
                                 },
-                                onError = { err -> globalUiVM.show(DialogType.ERROR, err) }
+                                onFailure = { err, rejectedCredentials ->
+                                    val message = if (rejectedCredentials) "Kiểm tra tên đăng nhập và mật khẩu." else err
+                                    evaluateJavascript(
+                                        "window.NasLoginUI && window.NasLoginUI.showLoginError(${JSONObject.quote(message)}, $rejectedCredentials)",
+                                        null
+                                    )
+                                }
                             )
                         }
                     }
 
                     @JavascriptInterface
                     fun cancelLogin() {
-                        post { authVM.cancelLogin() }
+                        post {
+                            authVM.cancelLogin()
+                            evaluateJavascript("window.NasLoginUI && window.NasLoginUI.showLoginCancelled()", null)
+                        }
                     }
 
                     @JavascriptInterface
                     fun biometricLogin() {
                         post {
-                            val activity = context as? FragmentActivity ?: return@post
+                            fun updateBiometric(stage: String, text: String, callback: ((String?) -> Unit)? = null) {
+                                val script = "window.NasLoginUI && window.NasLoginUI.updateBiometric(${JSONObject.quote(stage)}, ${JSONObject.quote(text)})"
+                                evaluateJavascript(script) { callback?.invoke(it) }
+                            }
+                            val activity = context as? FragmentActivity
+                            if (activity == null || authVM.isLoading) {
+                                updateBiometric("idle", "Chưa thể mở xác thực sinh trắc học.")
+                                return@post
+                            }
                             val executor = ContextCompat.getMainExecutor(activity)
                             val prompt = BiometricPrompt(
                                 activity,
                                 executor,
                                 object : BiometricPrompt.AuthenticationCallback() {
+                                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                        updateBiometric("idle", errString.toString())
+                                    }
+
                                     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                                         super.onAuthenticationSucceeded(result)
                                         val urlList = runCatching { SecurePrefsHelper.getUrlList(context) }.getOrElse { emptyList() }
                                         val u = runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" }
                                         val p = runCatching { SecurePrefsHelper.getPass(context) }.getOrElse { "" }
+                                        updateBiometric("scan", "Đã xác minh. Đang kết nối NAS")
                                         authVM.connect(
                                             urlList,
                                             u,
@@ -230,9 +252,11 @@ fun NasHtmlLoginScreen(onLoginSuccess: () -> Unit) {
                                                 scheduleIdleDuplicateScan(context, urlList.firstOrNull() ?: "")
                                                 scheduleIdleSpeedTest(context, urlList.firstOrNull() ?: "")
                                                 scheduleFingerprintWorker(context)
-                                                onLoginSuccess()
+                                                updateBiometric("ok", "Đã kết nối NAS") { delayMillis ->
+                                                    postDelayed({ onLoginSuccess() }, delayMillis?.toLongOrNull() ?: 0L)
+                                                }
                                             },
-                                            onError = { msg -> globalUiVM.show(DialogType.ERROR, msg) }
+                                            onError = { msg -> updateBiometric("idle", msg) }
                                         )
                                     }
                                 }

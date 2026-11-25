@@ -1,0 +1,74 @@
+/* Lucian UX/UI Prompt #420 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#420 */
+.u420 {
+  transition: transform .5s cubic-bezier(.3,1.5,.5,1), box-shadow .35s var(--ux-ease);
+}
+
+.u420 :is(.qa-ico-box, .app-tile-ico, .gauge-top) svg *,
+.u420 > .svg-ico * {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform .6s cubic-bezier(.3,1.6,.5,1);
+}
+
+.u420:focus-visible { outline: 2px solid var(--ux-cyan); outline-offset: 2px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .u420:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 0 0 1px var(--ux-border), 0 18px 32px -18px rgba(0,0,0,.7);
+  }
+}
+
+.u420:focus-visible {
+  transform: translateY(-4px);
+  box-shadow: 0 0 0 1px var(--ux-border), 0 18px 32px -18px rgba(0,0,0,.7);
+}
+
+.u420:active { transform: translateY(-2px); }
+
+.u420:is(:hover, :focus-visible, :active) :is(.qa-ico-box, .app-tile-ico, .gauge-top) svg > :nth-child(odd),
+.u420:is(:hover, :focus-visible, :active) > .svg-ico > :nth-child(odd) {
+  transform: translate(2px, 2px);
+}
+
+.u420:is(:hover, :focus-visible, :active) :is(.qa-ico-box, .app-tile-ico, .gauge-top) svg > :nth-child(even),
+.u420:is(:hover, :focus-visible, :active) > .svg-ico > :nth-child(even) {
+  transform: translate(-2px, -2px);
+}
+
+.u420:is([data-action="livestream"], [data-action="usbImport"], [data-tbact="livestream"], [data-tbact="usbImport"]):is(:hover, :focus-visible) svg {
+  animation: u420-zap .55s cubic-bezier(.3,1.6,.5,1);
+}
+
+@keyframes u420-zap {
+  0%,100% { transform: none; }
+  30% { transform: translateY(-2px) scale(1.15) rotate(-6deg); }
+  60% { transform: translateY(1px) scale(.96); }
+}
+
+.u420:is([data-action="photos"], [data-action="organizer"]):is(:hover, :focus-visible) .qa-ico-box svg > :last-child {
+  transition: transform .7s cubic-bezier(.3,1.6,.5,1);
+  transform: rotate(90deg) scale(1.12);
+}
+.u420:is([data-action="guest"], [data-tbact="guest"]):is(:hover, :focus-visible) .qa-ico-box svg > :last-child {
+  animation: u420-lock .8s cubic-bezier(.3,1.6,.5,1);
+}
+@keyframes u420-lock { 0%,100% { transform:none; } 35% { transform:translateY(-3px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .u420, .u420 * { animation:none!important; transition:none!important; }
+  .u420:is(:hover, :focus-visible, :active),
+  .u420:is(:hover, :focus-visible, :active) svg * { transform:none!important; }
+}
+
+.u420 {
+  animation: u420-enter .48s cubic-bezier(.3,1.5,.5,1) both;
+  animation-fill-mode: backwards;
+}
+.u420:nth-child(2) { animation-delay: 55ms; }
+.u420:nth-child(3) { animation-delay: 110ms; }
+.u420:nth-child(n+4) { animation-delay: 165ms; }
+@keyframes u420-enter {
+  from { opacity: .45; translate: 0 12px; }
+  to { opacity: 1; translate: 0 0; }
+}

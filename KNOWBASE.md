@@ -1,5 +1,16 @@
 # NASWebDAV · Knowbase bàn giao
 
+## Giao diện HTML5 ngày 2026-11-25
+
+- Fix giới hạn 300 của danh sách HTML5: tổng số khớp tính trước khi cắt trang trên snapshot thư mục Android. Có Trang trước/Trang sau, giữ tối đa 300 mục mỗi trang. Chrome đạt fixture 650 mục. APK 1.3.204 (261125.1947) đã cài trên Galaxy S21 Ultra; thư mục NAS thật hiện 1.174 mục, trang 2 mở đúng, bộ lọc tìm được mục ngoài 300 mục đầu và xóa lọc khôi phục đủ 1.174 mục.
+- Đã tích hợp #407 vân tay, #415 breadcrumb, #472 lưu trữ, #080 sao lưu và #277 hiệu năng. APK NASWebDAV #403 1.3.204 (261125.1922) đã cài Galaxy S21 Ultra. Trang thật hiển thị thẻ lưu trữ, trình duyệt tệp nhận breadcrumb, hình đồng bộ và đồng hồ hiệu năng mở được. Chrome 320 px kiểm tra trạng thái bằng fixture. Lượt kiểm tra chỉ đọc sau đó trên Galaxy xác nhận chọn nhóm hiện tỷ lệ, mở màn Hiệu năng và Đồng bộ, mở thư mục thật và dùng breadcrumb quay về gốc WebDAV. Chưa quét vân tay, truyền tệp sao lưu hay chạy benchmark thật.
+- Sửa hiệu ứng HTML5 để cuộn số tồn tại qua cập nhật, thẻ chuyển động khi mở màn, nút phản hồi sau khi nhả tay. Bản NASWebDAV #403 1.3.204 (261125.1906) đã cài trên Galaxy S21 Ultra. WebView đang đăng nhập xác nhận các cột số CPU có thay đổi transform, thẻ chạy hiệu ứng khi mở Ứng dụng và nút Đổi chế độ xem chạy hiệu ứng sau chạm. Chrome 390 px đạt thử cập nhật xen giữa và giảm chuyển động.
+- Mở rộng #426 cho số liệu HTML5 sinh động, #420 cho thẻ thao tác và #438 cho nút nhấn cùng phản hồi tải Docker. Chrome kiểm thử ở 390 px hai chế độ màu, bàn phím và giảm chuyển động. APK 1.3.204 (261125.1900) đã cài và mở trên Galaxy S21 Ultra, tài nguyên khớp checkout. Chưa thử các hiệu ứng sau khi đăng nhập NAS thật.
+- Lucian #426 gắn vào 13 số liệu HTML5 trên dashboard, danh sách tệp và các hộp thoại tệp, sao lưu, xem trước tệp trùng. Chrome xác nhận mở lại, hover, giá trị đến trong lúc cuộn và giảm chuyển động. Đã đóng gói và cài thành công trên Galaxy S21 Ultra vào bản NASWebDAV #403, 1.3.204 (261125.1845). Chưa kiểm tra #426 sau khi đăng nhập NAS trên máy.
+- Màn đăng nhập HTML5 dùng Lucian #403 tại `login.html` và `login-403.css`, nối với callback Android trong `NasHtmlLoginScreen.kt`. Chrome đạt kiểm tra ở 320 px cho hai chế độ màu, bàn phím, kết quả xác thực giả lập và giảm chuyển động. Đã cài và mở NASWebDAV #403 (1.3.204, 261125.1810) song song trên Galaxy S21 Ultra. Qua DevTools xác nhận login.html hiển thị thật và đã gắn cầu nối Android. Còn xác nhận đăng nhập với NAS thật.
+- Trên nhánh `codex-wip-20261114`, HEAD `932f005`, thay đổi giao diện theo Lucian nằm trong working tree. Đặc tả tại `.specify/specs/html5-component-refresh.md`.
+- Chrome kiểm tra bố cục hẹp/rộng bằng dữ liệu tổng hợp. APK debug 1.3.204 build thành công, tài nguyên HTML5 khớp checkout. Bản cài song song trên Galaxy S21 Ultra Android 15 vượt 6/6 kiểm tra WebView ở foreground với fixture tổng hợp. Bản đang dùng 1.3.203 có chữ ký khác. Chưa thử luồng kết nối NAS bằng bản cài song song.
+
 Cập nhật ngày 2026-11-24. Đọc mục này cùng `AGENTS.md` trước khi tiếp tục trên checkout dùng chung `\\nguyentruong-pc\Android\NASWebDAV`.
 
 ## Checkout và phạm vi

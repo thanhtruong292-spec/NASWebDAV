@@ -2,34 +2,33 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NASWebDAV Login</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="login-403.css" />
+  <link rel="stylesheet" href="biometric-407.css" />
   <style>
     body {
-      padding: 20px 16px 32px;
+      padding: clamp(24px, 6vh, 48px) 16px 28px;
       display: flex;
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
     }
-    .login-wrap { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
-    .login-hero { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
+    .login-wrap { width: 100%; max-width: 384px; display: flex; flex-direction: column; gap: 16px; }
+    .login-hero { display: flex; align-items: center; justify-content: flex-start; gap: 12px; }
     .login-brand { font-size: 11px; font-weight: 800; letter-spacing: 1.8px; color: var(--ux-cyan); }
     .login-title { font-size: 24px; font-weight: 800; color: var(--ux-text); margin: 2px 0; }
     .login-sub { font-size: 13px; color: var(--ux-text-2); }
     .login-hero-ico {
-      width: 52px; height: 52px; border-radius: 50%; flex-shrink: 0;
+      width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
       background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.28);
       display: flex; align-items: center; justify-content: center; color: var(--ux-cyan);
     }
-    .field-label { display: block; font-size: 11.5px; font-weight: 700; color: var(--ux-text-2); margin-bottom: 5px; }
-    .input-wrap { position: relative; display: flex; align-items: center; }
-    .input-wrap .ux-input { margin: 0; padding-right: 40px; }
-    .input-action {
-      position: absolute; right: 6px; background: transparent; border: none; color: var(--ux-text-2);
-      width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer;
-    }
+    .login-card { margin-bottom: 0; padding: clamp(12px, 4vw, 20px); }
+    .login-remote { display: grid; gap: 8px; }
+    .login-remote-label { text-align: center; font-size: 12px; color: var(--ux-text-2); }
+    .login-version { text-align: center; font-size: 11.5px; color: var(--ux-text-2); }
     .ip-dropdown {
       margin-top: 6px; background: #0b1222; border: 1px solid rgba(148, 163, 184, 0.22);
       border-radius: 12px; overflow: hidden;
@@ -42,81 +41,91 @@
     .ping-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #64748b; }
     .ping-dot.ok { background: var(--ux-green); }
     .ping-dot.fail { background: var(--ux-red); }
-    .btn-connect {
-      width: 100%; height: 48px; border-radius: 14px; border: none; font-size: 15px; font-weight: 800;
-      color: #fff; background: linear-gradient(135deg, #0ea5e9, #2563eb); cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px;
-      transition: opacity 0.15s ease;
-    }
-    .btn-connect:disabled { opacity: 0.38; cursor: not-allowed; filter: grayscale(0.4); }
-    .btn-connect.loading { background: linear-gradient(135deg, #dc2626, #b91c1c); }
-    .btn-bio {
-      width: 100%; height: 46px; border-radius: 14px; background: rgba(167, 139, 250, 0.08);
-      border: 1.5px solid #a78bfa; color: #a78bfa; font-size: 13.5px; font-weight: 700;
-      display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
-    }
-    .emerg-row { display: flex; gap: 10px; }
+    .emerg-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .emerg-btn {
-      flex: 1; height: 44px; border-radius: 14px; background: rgba(15, 23, 42, 0.72);
+      min-height: 44px; padding: 4px; border-radius: 12px; background: var(--ux-surface);
       font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
     }
-    .emerg-btn.cyan { border: 1px solid var(--ux-cyan); color: var(--ux-cyan); }
-    .emerg-btn.orange { border: 1px solid var(--ux-orange); color: var(--ux-orange); }
+    .emerg-btn.cyan { border: 1px solid var(--ux-border); color: var(--ux-text-2); }
+    .emerg-btn.orange { border: 1px solid var(--ux-border); color: var(--ux-text-2); }
   </style>
 </head>
 <body>
   <div class="login-wrap">
     <div class="login-hero">
+      <div class="login-hero-ico" aria-hidden="true">
+        <svg class="svg-ico" style="width:28px;height:28px;" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><line x1="7" y1="7" x2="7.01" y2="7"/><line x1="7" y1="17" x2="7.01" y2="17"/></svg>
+      </div>
       <div>
         <div class="login-brand">NASWEB</div>
         <div class="login-title">Kết nối máy chủ</div>
         <div class="login-sub">Truy cập an toàn vào WebDAV của bạn</div>
       </div>
-      <div class="login-hero-ico">
-        <svg class="svg-ico" style="width:28px;height:28px;" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><line x1="7" y1="7" x2="7.01" y2="7"/><line x1="7" y1="17" x2="7.01" y2="17"/></svg>
+
+    </div>
+
+    <div class="card login-card">
+      <!-- Lucian UX/UI Prompt #403 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#403 -->
+      <div class="u403">
+        <form class="u403-form" id="login403Form">
+          <div class="u403-f u403-host">
+            <input class="u403-in" id="ipInput" type="text" placeholder=" " autocomplete="off" required />
+            <label for="ipInput">Địa chỉ IP / DDNS của NAS</label>
+            <button class="u403-eye" id="ipDropBtn" type="button" aria-label="Danh sách máy chủ" aria-controls="ipDropdown" aria-expanded="false">▾</button>
+          </div>
+          <div class="ip-dropdown hidden" id="ipDropdown"></div>
+          <div class="u403-f">
+            <input class="u403-in" id="userInput" type="text" placeholder=" " autocomplete="username" spellcheck="false" required />
+            <label for="userInput">Tên đăng nhập</label>
+          </div>
+          <div class="u403-f u403-pw">
+            <input class="u403-in" id="passInput" type="password" placeholder=" " autocomplete="current-password" required />
+            <label for="passInput">Mật khẩu</label>
+            <button class="u403-eye" id="togglePassBtn" type="button" aria-label="Hiện/ẩn mật khẩu" aria-pressed="false">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><g class="lid"><path d="M2 10s3-5.2 8-5.2S18 10 18 10s-3 5.2-8 5.2S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/></g><g class="lash"><path d="M3 10.4c2 2.4 4.4 3.4 7 3.4s5-1 7-3.4M6 13l-1 1.6M10 14v1.8M14 13l1 1.6"/></g></svg>
+            </button>
+          </div>
+          <p class="u403-msg" id="login403Message" aria-live="polite"></p>
+          <button class="u403-go" id="connectBtn" type="submit" disabled>
+            <span>Kết nối NAS</span><i aria-hidden="true"></i>
+            <svg viewBox="0 0 22 22" aria-hidden="true"><path d="M5.5 11.5l4 4L17 7.5"/></svg>
+          </button>
+          <button class="btn-pill hidden" id="cancelLoginBtn" type="button">Dừng đăng nhập</button>
+        </form>
+        <p class="u403-live" id="login403Status" role="status"></p>
       </div>
     </div>
 
-    <div class="card" style="display:flex;flex-direction:column;gap:12px;">
-      <div>
-        <div style="font-size:14px;font-weight:800;">Đường truyền & tài khoản</div>
-        <div style="font-size:11.5px;color:var(--ux-text-2);">Chọn máy chủ nhanh nhất</div>
-      </div>
-
-      <div>
-        <label class="field-label" for="ipInput">Địa chỉ IP / DDNS của NAS</label>
-        <div class="input-wrap">
-          <input class="ux-input" id="ipInput" type="text" placeholder="192.168.100.254" autocomplete="off" />
-          <button class="input-action" id="ipDropBtn" type="button" title="Danh sách máy chủ">▾</button>
-        </div>
-        <div class="ip-dropdown hidden" id="ipDropdown"></div>
-      </div>
-
-      <div>
-        <label class="field-label" for="userInput">Tên đăng nhập</label>
-        <input class="ux-input" style="margin:0;" id="userInput" type="text" placeholder="Nhập tên đăng nhập..." autocomplete="username" />
-      </div>
-
-      <div>
-        <label class="field-label" for="passInput">Mật khẩu</label>
-        <div class="input-wrap">
-          <input class="ux-input" id="passInput" type="password" placeholder="Nhập mật khẩu..." autocomplete="current-password" />
-          <button class="input-action" id="togglePassBtn" type="button" title="Hiện/ẩn mật khẩu">👁</button>
-        </div>
-      </div>
-
-      <button class="btn-connect" id="connectBtn" type="button" disabled>Kết nối NAS</button>
+    <div class="u407 hidden" id="bioControl">
+      <button type="button" class="u407-b" id="bioBtn">
+        <span class="u407-t">Đăng nhập bằng vân tay</span>
+        <svg class="u407-fp" viewBox="0 0 64 64" aria-hidden="true">
+          <defs><clipPath id="u407Clip"><rect class="cr" x="0" y="0" width="64" height="66"/></clipPath><linearGradient id="u407Gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-opacity="0"/><stop offset="1" stop-opacity=".24"/></linearGradient></defs>
+          <g class="bs">
+            <path style="--i:0" pathLength="1" d="M28 37v-6a4 4 0 0 1 8 0v3.5c0 3-.6 5.8-1.8 8.3"/>
+            <path style="--i:1" pathLength="1" d="M22 46V31a10 10 0 0 1 20 0v2.5c0 5.6-1.1 10.6-3.2 15"/>
+            <path style="--i:2" pathLength="1" d="M16 41V31a16 16 0 0 1 32 0v1.5"/>
+            <path style="--i:3" pathLength="1" d="M47.8 38.5c-.4 4.6-1.5 8.8-3.2 12.6"/>
+            <path style="--i:4" pathLength="1" d="M10 36v-5a22 22 0 0 1 36.6-16.4"/>
+            <path style="--i:5" pathLength="1" d="M51.2 20.4A22 22 0 0 1 54 31v5"/>
+          </g>
+          <g class="ac" clip-path="url(#u407Clip)"></g>
+          <g class="sl"><rect fill="url(#u407Gradient)" x="4" y="-14" width="56" height="14"/><rect x="4" y="-1" width="56" height="2" rx="1"/></g>
+        </svg>
+        <svg class="u407-ck" viewBox="0 0 30 30" aria-hidden="true"><path d="M7.5 15.5l5 5L22.5 10"/></svg>
+      </button>
+      <p class="u407-feedback" id="bioStatus" role="status"></p>
     </div>
 
-    <button class="btn-bio hidden" id="bioBtn" type="button">Đăng nhập bằng vân tay</button>
-
-    <div style="text-align:center;font-size:11.5px;color:var(--ux-text-3);">Điều khiển từ xa (không cần đăng nhập)</div>
+    <div class="login-remote">
+      <div class="login-remote-label">Điều khiển từ xa</div>
     <div class="emerg-row">
       <button class="emerg-btn cyan" id="wolBtn" type="button">⏻ Bật nguồn</button>
       <button class="emerg-btn orange" id="rebootBtn" type="button">↻ Khởi động lại</button>
     </div>
     <div id="emergMsg" class="hidden" style="text-align:center;font-size:12px;font-weight:600;"></div>
-    <div id="versionLabel" style="text-align:center;font-size:11.5px;color:var(--ux-text-2);margin-top:4px;">Phiên bản --</div>
+    </div>
+    <div id="versionLabel" class="login-version">Phiên bản --</div>
   </div>
 
   <!-- WoL Modal -->
@@ -159,15 +168,51 @@
     var passEl = document.getElementById("passInput");
     var btnEl = document.getElementById("connectBtn");
     var dropEl = document.getElementById("ipDropdown");
+    var dropBtn = document.getElementById("ipDropBtn");
 
     function bridge() { return window.NasLoginBridge || null; }
 
+    var form = document.getElementById("login403Form");
+    var cancelBtn = document.getElementById("cancelLoginBtn");
+    var message = document.getElementById("login403Message");
+    var status = document.getElementById("login403Status");
+    var submitting = false;
+    var succeeded = false;
+    var cancelling = false;
+    var bio = document.getElementById("bioControl");
+    var bioButton = document.getElementById("bioBtn");
+    var bioStatus = document.getElementById("bioStatus");
+    bio.querySelector(".ac").appendChild(bio.querySelector(".bs").cloneNode(true));
+    bioButton.style.setProperty("--fx", "-86px");
+
+    function updateBio(stage, text) {
+      var active = stage !== "idle";
+      bio.classList.toggle("is-scan", active);
+      bio.classList.toggle("is-ok", stage === "ok");
+      bioButton.setAttribute("aria-busy", String(stage === "scan"));
+      bioStatus.textContent = text;
+      syncConnectBtn();
+    }
+
     function syncConnectBtn() {
-      var loading = !!st.isLoading;
-      var ready = ipEl.value.trim().length > 0 && userEl.value.trim().length > 0 && passEl.value.trim().length > 0;
-      btnEl.disabled = !loading && !ready;
-      btnEl.classList.toggle("loading", loading);
-      btnEl.textContent = loading ? "Dừng đăng nhập" : "Kết nối NAS";
+      var loading = submitting || !!st.isLoading;
+      var ready = ipEl.value.trim() && userEl.value.trim() && passEl.value.trim();
+      var bioActive = bio.classList.contains("is-scan");
+      btnEl.disabled = loading || succeeded || bioActive || !ready;
+      bioButton.disabled = loading || succeeded || bioActive;
+      btnEl.classList.toggle("is-busy", loading && !succeeded && !bioActive);
+      btnEl.classList.toggle("is-ok", succeeded);
+      btnEl.setAttribute("aria-busy", String(loading && !succeeded && !bioActive));
+      cancelBtn.classList.toggle("hidden", !loading || succeeded);
+      cancelBtn.disabled = cancelling;
+    }
+
+    function clearLoginError() {
+      passEl.parentElement.classList.remove("is-err", "is-shake");
+      passEl.removeAttribute("aria-invalid");
+      passEl.removeAttribute("aria-describedby");
+      message.classList.remove("is-on");
+      message.textContent = "";
     }
 
     function renderDropdown() {
@@ -188,8 +233,10 @@
       dropEl.innerHTML = html;
       dropEl.querySelectorAll("[data-ip]").forEach(function (row) {
         row.addEventListener("click", function () {
+          clearLoginError();
           ipEl.value = row.getAttribute("data-ip");
           dropEl.classList.add("hidden");
+          dropBtn.setAttribute("aria-expanded", "false");
           syncConnectBtn();
           if (bridge()) bridge().onFieldChange(ipEl.value, userEl.value, passEl.value);
         });
@@ -203,6 +250,7 @@
     }
 
     function onInputChanged() {
+      clearLoginError();
       syncConnectBtn();
       if (bridge()) bridge().onFieldChange(ipEl.value, userEl.value, passEl.value);
     }
@@ -210,20 +258,34 @@
     userEl.addEventListener("input", onInputChanged);
     passEl.addEventListener("input", onInputChanged);
 
-    document.getElementById("ipDropBtn").addEventListener("click", function () {
-      dropEl.classList.toggle("hidden");
+    dropBtn.addEventListener("click", function () {
+      var hidden = dropEl.classList.toggle("hidden");
+      dropBtn.setAttribute("aria-expanded", String(!hidden));
     });
     document.getElementById("togglePassBtn").addEventListener("click", function () {
-      var isPwd = passEl.type === "password";
-      passEl.type = isPwd ? "text" : "password";
+      var show = passEl.type === "password";
+      passEl.type = show ? "text" : "password";
+      this.setAttribute("aria-pressed", String(show));
     });
-    btnEl.addEventListener("click", function () {
-      if (!bridge()) return;
-      if (st.isLoading) bridge().cancelLogin();
-      else bridge().connect(ipEl.value.trim(), userEl.value.trim(), passEl.value.trim());
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!bridge() || btnEl.disabled) return;
+      clearLoginError();
+      submitting = true;
+      status.textContent = "Đang kiểm tra kết nối";
+      syncConnectBtn();
+      bridge().connect(ipEl.value.trim(), userEl.value.trim(), passEl.value.trim());
     });
-    document.getElementById("bioBtn").addEventListener("click", function () {
-      if (bridge()) bridge().biometricLogin();
+    cancelBtn.addEventListener("click", function () {
+      if (!bridge() || cancelling) return;
+      cancelling = true;
+      syncConnectBtn();
+      bridge().cancelLogin();
+    });
+    bioButton.addEventListener("click", function () {
+      if (!bridge() || bioButton.disabled) return;
+      updateBio("scan", "Đang xác minh sinh trắc học");
+      bridge().biometricLogin();
     });
     document.getElementById("wolBtn").addEventListener("click", function () {
       document.getElementById("wolMacInput").value = st.mac || "";
@@ -248,8 +310,47 @@
     });
 
     window.NasLoginUI = {
+      updateBiometric: function (stage, text) {
+        updateBio(stage, text);
+        if (stage === "ok") {
+          return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 150 : 720;
+        }
+        return 0;
+      },
+      showLoginSuccess: function () {
+        submitting = false;
+        succeeded = true;
+        status.textContent = "Đã kết nối NAS";
+        syncConnectBtn();
+        return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 150 : 550;
+      },
+      showLoginCancelled: function () {
+        submitting = false;
+        cancelling = false;
+        st.isLoading = false;
+        status.textContent = "Đã dừng đăng nhập";
+        if (bio.classList.contains("is-scan")) updateBio("idle", "Đã dừng kết nối NAS");
+        syncConnectBtn();
+        btnEl.focus();
+      },
+      showLoginError: function (text, rejectedCredentials) {
+        submitting = false;
+        st.isLoading = false;
+        clearLoginError();
+        status.textContent = "";
+        message.textContent = text;
+        message.classList.add("is-on");
+        syncConnectBtn();
+        if (rejectedCredentials) {
+          passEl.parentElement.classList.add("is-err", "is-shake");
+          passEl.setAttribute("aria-invalid", "true");
+          passEl.setAttribute("aria-describedby", message.id);
+          passEl.focus({ preventScroll: true });
+        }
+      },
       updateState: function (newState) {
         st = newState || st;
+        if (st.isLoading) submitting = false;
         if (!initializedFields) {
           initializedFields = true;
           ipEl.value = st.ip || "";
@@ -258,7 +359,7 @@
         } else if (!ipEl.value && st.bestIp) {
           ipEl.value = st.bestIp;
         }
-        document.getElementById("bioBtn").classList.toggle("hidden", !st.showBio);
+        bio.classList.toggle("hidden", !st.showBio && !bio.classList.contains("is-scan"));
         document.getElementById("versionLabel").textContent = "Phiên bản " + (st.version || "");
         var emEl = document.getElementById("emergMsg");
         if (st.emergMsg) {

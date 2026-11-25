@@ -435,17 +435,39 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.cat-row {
-  display: grid;
-  grid-template-columns: 60px 1fr 98px;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 11.5px;
+.storage-meter {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ux-surface-elevated);
+  margin: 12px 0;
 }
 
-.cat-name { color: var(--ux-text-2); font-weight: 600; }
-.cat-meta { color: var(--ux-text-2); text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; }
+.storage-meter span {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.cat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.cat-name { color: var(--ux-text); font-weight: 600; }
+.cat-meta { color: var(--ux-text-2); text-align: right; font-variant-numeric: tabular-nums; }
+
+.cat-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 8px;
+}
 
 .file-row {
   display: flex;
@@ -602,12 +624,8 @@ body {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(8, 13, 26, 0.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--ux-border);
-  border-radius: 15px;
-  padding: 10px 11px;
+  background: var(--ux-bg);
+  padding: 4px 0 8px;
   margin-bottom: 10px;
 }
 
@@ -621,34 +639,8 @@ select:focus-visible, textarea:focus-visible {
 .files-path-bar {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
-}
-
-.files-nav-back {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--ux-surface-elevated);
-  border: 1px solid var(--ux-border);
-  border-radius: 10px;
-  color: var(--ux-cyan);
-  cursor: pointer;
-  transition: transform 0.14s ease, background 0.16s ease, border-color 0.16s ease;
-}
-.files-nav-back:active {
-  transform: scale(0.92);
-  background: rgba(34, 211, 238, 0.2);
-  border-color: rgba(34, 211, 238, 0.45);
-}
-.files-nav-back svg {
-  width: 17px;
-  height: 17px;
+  gap: 3px;
+  margin-bottom: 5px;
 }
 
 .files-path-box {
@@ -687,9 +679,8 @@ select:focus-visible, textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(34, 211, 238, 0.12);
-  border: 1px solid rgba(34, 211, 238, 0.28);
-  border-radius: 8px;
+  background: transparent;
+  border: 0;
   color: var(--ux-cyan);
   font-size: 11.5px;
   font-weight: 800;
@@ -697,6 +688,17 @@ select:focus-visible, textarea:focus-visible {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+
+.files-pager {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+}
+.files-pager button:disabled { opacity: .45; cursor: default; }
+#filesPageRange { color: var(--ux-text-2); font-variant-numeric: tabular-nums; }
 
 /* Thanh công cụ thao tác tệp (Files Action Toolbar) */
 .files-actions-bar {
@@ -1482,4 +1484,74 @@ select:focus-visible, textarea:focus-visible {
   .files-grid {
     grid-template-columns: repeat(6, 1fr);
   }
+}
+
+/* Dashboard and file workspace */
+:root {
+  --ux-bg: #0b111a;
+  --ux-text-3: #91a1b4;
+}
+
+body { background-image: none; }
+
+.card {
+  background: #121c29;
+  border-color: #2a3747;
+  box-shadow: none;
+}
+
+.search-wrap input, #fileSearchInput { font-size: 16px; }
+
+.files-path-text {
+  min-width: 0;
+  overflow-x: auto;
+  text-overflow: clip;
+  user-select: text;
+}
+
+.files-path-text:focus-visible { outline: 2px solid var(--ux-cyan); }
+
+.files-center-state {
+  border: 1px dashed var(--ux-border);
+  border-radius: 16px;
+  background: var(--ux-surface);
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--ux-text-2);
+}
+
+.files-empty-title {
+  color: var(--ux-text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ux-toast {
+  bottom: max(20px, env(safe-area-inset-bottom));
+  width: max-content;
+  max-width: calc(100vw - 40px);
+  border-radius: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 840px) {
+  #view-dashboard {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+  }
+
+  #view-dashboard > * { grid-column: 1 / -1; }
+  #view-dashboard > #sysCard,
+  #view-dashboard > #chartCard,
+  #view-dashboard > #storageCard,
+  #view-dashboard > #dashLogsCard {
+    grid-column: auto;
+  }
+
+  #view-dashboard > .card,
+  #view-dashboard > .search-wrap,
+  #view-dashboard > .wide-btn { margin-bottom: 0; }
 }

@@ -1,0 +1,36 @@
+/* Lucian UX/UI Prompt #407 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#407 */
+.u407{position:relative;width:100%;display:grid;place-items:center}
+.u407-b{position:relative;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;overflow:clip;width:min(260px,100%);height:52px;padding:0;border:0;border-radius:26px;background:var(--ux-text);color:var(--ux-bg);font-size:14.5px;font-weight:600;transition:width .6s cubic-bezier(.34,1.45,.64,1),height .6s cubic-bezier(.34,1.45,.64,1),border-radius .5s var(--ux-ease),background .35s,color .35s,box-shadow .35s,transform .4s cubic-bezier(.34,1.45,.64,1)}
+.u407:not(.is-scan) .u407-b:hover{transform:translateY(-1px)}
+.u407:not(.is-scan) .u407-b:active{transform:scale(.97,.94);transition-duration:.6s,.6s,.5s,.35s,.35s,.35s,.1s}
+.u407 .u407-b:focus-visible{outline:2px solid var(--ux-cyan);outline-offset:3px}
+.u407-b>*{grid-area:1/1}
+.u407-t{padding-left:34px;white-space:nowrap;transition:opacity .2s,transform .45s cubic-bezier(.34,1.45,.64,1),filter .2s}
+.u407-fp{width:64px;height:64px;overflow:visible;transform:translate(var(--fx,-60px),1.5px) scale(.38);transition:transform .6s cubic-bezier(.34,1.45,.64,1),opacity .25s}
+.u407-fp path{fill:none;stroke:currentColor;stroke-width:3.3;stroke-linecap:round;stroke-dasharray:1;transition:stroke-width .5s}
+.u407-fp .ac path{stroke:var(--ux-cyan)}
+.u407-fp .cr{transform:translateY(-66px)}
+.u407-fp .sl{opacity:0}
+.u407-fp .sl rect:last-child{fill:var(--ux-cyan)}
+.u407-fp stop{stop-color:var(--ux-cyan)}
+.u407.is-scan .u407-b{width:120px;height:120px;border-radius:36px;background:var(--ux-surface-elevated);color:color-mix(in srgb,var(--ux-text-3) 55%,transparent);box-shadow:inset 0 0 0 1px var(--ux-border),0 18px 40px -22px rgba(0,0,0,.55);cursor:default}
+.u407.is-scan .u407-t{opacity:0;transform:scale(.9);filter:blur(2px)}
+.u407.is-scan .u407-fp{transform:none}
+.u407.is-scan .u407-fp path{stroke-width:2.6;animation:u407-draw .6s var(--ux-ease) backwards;animation-delay:calc(.15s + var(--i) * 70ms)}
+.u407.is-scan .u407-fp .cr{animation:u407-sweep 1.2s cubic-bezier(.45,0,.4,1) .75s forwards}
+.u407.is-scan .u407-fp .sl{animation:u407-line 1.2s cubic-bezier(.45,0,.4,1) .75s forwards}
+@keyframes u407-draw{from{stroke-dashoffset:1}}
+@keyframes u407-sweep{to{transform:translateY(0)}}
+@keyframes u407-line{0%{opacity:0;transform:translateY(2px)}12%{opacity:1}88%{opacity:1}100%{opacity:0;transform:translateY(56px)}}
+.u407-ck{width:30px;height:30px;fill:none;stroke:currentColor;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;opacity:0;transform:scale(.4);transition:opacity .2s,transform .5s cubic-bezier(.34,1.45,.64,1)}
+.u407-ck path{stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset .4s var(--ux-ease) .18s}
+.u407.is-scan.is-ok .u407-b{width:72px;height:72px;border-radius:36px;background:var(--ux-green);color:var(--ux-bg);box-shadow:0 14px 30px -18px var(--ux-green)}
+.u407.is-ok .u407-fp{opacity:0;transform:scale(.5)}
+.u407.is-ok .u407-ck{opacity:1;transform:none}
+.u407.is-ok .u407-ck path{stroke-dashoffset:0}
+.u407-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){
+  .u407 *, .u407 *::before, .u407 *::after { animation:none!important;transition:none!important; }
+}
+.u407-feedback { text-align:center; font-size:12px; color:var(--ux-text-2); }
+.u407-feedback:empty { display:none; }

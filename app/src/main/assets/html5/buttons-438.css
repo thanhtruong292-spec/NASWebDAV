@@ -1,0 +1,60 @@
+/* Lucian UX/UI Prompt #438 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#438 */
+.u438 :is(button,[role="button"]):active:not(:disabled):not([aria-disabled="true"]) {
+  scale: .93;
+  transition: scale .12s var(--ux-ease);
+}
+.u438 button[data-u438-state] {
+  position: relative;
+  min-width: 2em;
+  transition: background-color .35s var(--ux-ease), scale .5s cubic-bezier(.34,1.7,.5,1);
+}
+.u438 button[data-u438-state] > .u438-label { opacity: 0; }
+.u438 .u438-spinner, .u438 .u438-check, .u438 .u438-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  pointer-events: none;
+}
+.u438 .u438-spinner {
+  width: 1em;
+  height: 1em;
+  border: 2px solid var(--ux-border);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: u438-spin .75s linear infinite;
+}
+.u438 button[data-u438-state="ok"] {
+  background: var(--ux-green);
+  color: var(--ux-bg);
+  animation: u438-pop .5s cubic-bezier(.34,1.7,.5,1);
+}
+.u438 .u438-check { width: 1.1em; height: 1.1em; fill: none; stroke: currentColor; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; }
+.u438 .u438-check path { stroke-dasharray: 20; animation: u438-draw .38s var(--ux-ease) .12s both; }
+.u438 .u438-ring { width: 100%; height: 100%; border-radius: inherit; box-shadow: 0 0 0 2px var(--ux-green); animation: u438-ring .7s var(--ux-ease) both; }
+@keyframes u438-spin { to { rotate: 360deg; } }
+@keyframes u438-pop { 40% { scale: 1.12; } }
+@keyframes u438-draw { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+@keyframes u438-ring { from { opacity: .7; scale: 1; } to { opacity: 0; scale: 1.7; } }
+.u438 .u438-status { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .u438 :is(button,[role="button"]):active { scale: none; transition: none; }
+  .u438 button[data-u438-state], .u438 button[data-u438-state] * { animation: none; transition: none; }
+  .u438 .u438-ring { opacity: 0; }
+}
+
+.u438 .u438-tapped { animation: u438-release .32s cubic-bezier(.34,1.7,.5,1); }
+.u438 button[data-u438-state="busy"] {
+  background: var(--ux-surface-elevated);
+  color: var(--ux-cyan);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.u438 .u438-spinner, .u438 .u438-check { width: 20px; height: 20px; }
+@keyframes u438-release {
+  0% { scale: .91; }
+  55% { scale: 1.045; }
+  100% { scale: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .u438 .u438-tapped { animation: none; }
+}
