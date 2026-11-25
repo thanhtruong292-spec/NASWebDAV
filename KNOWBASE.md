@@ -16,7 +16,7 @@ Cập nhật 2026-11-26 trên nhánh `codex-wip-20261114`. Đọc cùng `AGENTS.
 | Hộp thoại phản hồi | Thành công, Cảnh báo và Lỗi dùng bố cục #436. Thông tin thường vẫn hiện ngắn ở cuối màn hình. Galaxy kiểm tra ba tình huống sao chép giả lập, Đóng, Escape và Android Back. Chưa xác nhận focus trở về nút mở khi dùng Android Back. |
 | #032 | Hộp tải lên dùng trình chọn nhiều tệp của Android, trạng thái và tiến độ từng tệp từ WebDAV, bỏ qua trùng tên, và đặt nút Thử lại ở mép phải. Galaxy đã kiểm tra mở/hủy trình chọn và đóng bằng Back. Các hàng tiến độ/thành công/thử lại trên Galaxy dùng fixture. Chưa thử PUT hoặc retry thật đến NAS. Kéo thả Android chưa được tích hợp. |
 
-APK kiểm thử mới nhất đã cài qua ADB là `NASWebDAV-upload-032-uicheck.apk` (package `com.nas.naswebdav.uicheck`). APK đó có trước chỉnh sửa cuối cùng căn phải nút Thử lại. Ảnh và APK kiểm thử nằm trong thư mục build cục bộ `%LOCALAPPDATA%/NASWebDAV-build-20261125-173837`. Bộ pytest gần nhất cho #032 đạt 341, bỏ qua 7, một cảnh báo SQLite. Bản test cũ và dữ liệu giả lập không xác nhận thao tác ghi NAS.
+APK kiểm thử mới nhất đã cài qua ADB là `NASWebDAV-upload-032-aligned-uicheck.apk` (package `com.nas.naswebdav.uicheck`). Galaxy S21 Ultra xác nhận nút Thử lại cách mép phải hàng 12 CSS px với dữ liệu giả lập. Trình chọn tệp Android, thao tác hủy chọn và Android Back đều đạt. Ảnh `galaxy-upload-retry-proof.png` và APK nằm trong thư mục build cục bộ `%LOCALAPPDATA%/NASWebDAV-build-20261125-173837`. Lượt pytest sau chỉnh sửa đạt 341, bỏ qua 7, một cảnh báo SQLite. Chưa thử tải hoặc tải lại tệp lên NAS.
 
 ## Phối hợp và việc còn mở
 
